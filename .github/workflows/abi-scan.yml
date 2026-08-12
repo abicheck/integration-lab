@@ -1,0 +1,45 @@
+name: ABICheck PR scan
+
+on:
+  pull_request:
+    paths:
+      - 'BUILD.bazel'
+      - 'MODULE.bazel'
+      - 'include/**'
+      - 'src/**'
+      - '.github/workflows/abi-scan.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: abicheck-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build candidate shared library with Bazel
+        run: bazel build //:math
+      - name: Scan candidate against main baseline
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          sources: .
+          against: abi/math.abicheck.json
+          since: origin/${{ github.base_ref }}
+          depth: source
+          budget: 10m
+          fail-on-breaking: true
+          fail-on-api-break: true
+          pr-comment: true
+          pr-comment-on: always
+          pr-comment-detail: standard

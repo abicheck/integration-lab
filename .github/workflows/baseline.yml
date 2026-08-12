@@ -1,0 +1,48 @@
+name: ABICheck base collection
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'abi/math.abicheck.json'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abicheck-baseline-main
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+      - name: Build shared library with Bazel
+        run: bazel build //:math
+      - name: Collect source-aware ABI baseline
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: dump
+          new-library: bazel-bin/libmath.so
+          header: include/abicheck_lab/math.h
+          sources: .
+          depth: source
+          new-version: main-${{ github.sha }}
+          output-file: abi/math.abicheck.json
+          fail-on-breaking: true
+      - name: Commit refreshed baseline
+        run: |
+          if git diff --quiet -- abi/math.abicheck.json; then
+            echo 'Baseline unchanged.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add abi/math.abicheck.json
+          git commit -m 'chore: refresh ABICheck baseline'
+          git push
