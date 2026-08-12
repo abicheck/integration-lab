@@ -6,6 +6,15 @@
 # needs a human to sign off, so `baseline.yml`'s bot-authored refresh
 # commits are the only unreviewed path this file can change through.
 #
+# That protection covers the baseline's *output* -- but baseline.yml runs
+# with `contents: write` and can commit/push any abi/math.abicheck.json,
+# so a PR could equally bypass review by editing the *producer* instead:
+# change what baseline.yml or normalize_baseline.py generates rather than
+# editing abi/math.abicheck.json directly (Codex review). Same ownership
+# boundary on both, so neither path around the other is unreviewed.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
+.github/workflows/baseline.yml @napetrov
+scripts/normalize_baseline.py @napetrov
