@@ -70,6 +70,14 @@ ANY_INDEX = object()
 DELETE_PATHS = frozenset({
     # Wall-clock timestamp at the document root.
     ("created_at",),
+    # The built .so's own filesystem metadata: a fresh build gets a new
+    # mtime every run regardless of whether its content (and therefore the
+    # ABI) changed at all -- lost from the allowlist in the exact-path
+    # redesign, restored here (Codex review).
+    ("source_mtime",),
+    ("source_mtime_epoch",),
+    ("source_size",),
+    ("build_id",),
     # baseline.yml passes `new-version: main-${{ github.sha }}`, so both of
     # these change on every push to main regardless of whether the ABI
     # did -- defeating the "commit only when the ABI actually changed"
