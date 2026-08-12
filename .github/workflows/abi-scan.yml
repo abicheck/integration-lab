@@ -64,7 +64,7 @@ jobs:
             bazel-disk-${{ runner.os }}-
 
       - name: Build candidate shared library with Bazel
-        run: bazel build //:math
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
       # Single canonical analysis: this one scan is the gate, the source
       # of the PR comment (rendered below, since abicheck's built-in
@@ -261,7 +261,7 @@ jobs:
             bazel-disk-${{ runner.os }}-
 
       - name: Build candidate shared library with Bazel
-        run: bazel build //:math
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
       - name: ABICheck source scan (canary — abicheck/main, non-blocking)
         id: canary_scan

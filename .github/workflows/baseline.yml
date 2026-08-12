@@ -37,7 +37,7 @@ jobs:
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
       - name: Build shared library with Bazel
-        run: bazel build //:math
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
       - name: Collect source-aware ABI baseline
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:

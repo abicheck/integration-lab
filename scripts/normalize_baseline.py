@@ -40,6 +40,18 @@ future comparison (Codex review). Restricting the stripping to
 fields have actually been observed -- keeps the blast radius to provenance
 metadata only.
 
+That scoping alone isn't quite enough, though: `build_source` itself
+contains at least one name-keyed map of real ABI-relevant build context,
+not provenance -- `build_source.build_evidence.compile_units[].defines`
+(preprocessor defines actually used to compile each translation unit,
+which affect the ABI, e.g. via `#ifdef`-conditional declarations). A
+define legitimately named `timeout_s` would otherwise be deleted by the
+same in-subtree suffix stripping that clears real timing fields (Codex
+review). `defines` (and any future name-keyed content map added inside a
+provenance subtree) is carved out via `_ABI_CONTENT_KEYS_INSIDE_PROVENANCE`
+and passed through completely untouched by both the key stripper and the
+path normalizer below, even though it nests inside `build_source`.
+
 Path rewriting was originally applied to every string in the document on
 the theory that it acts on *values* rather than *keys*, so it couldn't
 collide with and delete a same-named ABI entity the way key stripping
@@ -93,6 +105,15 @@ TOP_LEVEL_VOLATILE_KEYS = {
 # by the key-based stripping below.
 _PROVENANCE_CONTAINER_KEYS = ("build_source_pack", "build_source")
 
+# Name-keyed maps of real ABI-relevant content that happen to nest *inside*
+# a provenance container above (e.g. compile_units[].defines: the actual
+# preprocessor defines a translation unit was built with, which can affect
+# the ABI via #ifdef-conditional declarations). Not provenance -- carved
+# out of both the key stripper and the path normalizer below so a define
+# or similar entry legitimately named like a volatile field, or holding a
+# path-looking value, is never touched.
+_ABI_CONTENT_KEYS_INSIDE_PROVENANCE = {"defines"}
+
 # Keys dropped wherever they appear *inside a provenance container* above.
 # These only ever carry run-provenance / timing information there.
 _PROVENANCE_VOLATILE_KEYS = {
@@ -137,10 +158,15 @@ def _is_provenance_volatile_key(key):
 def _strip_provenance_volatile_keys(node):
     """Recursively drop volatile keys -- used only inside a provenance
     container, where every key is metadata and none is an ABI entity name.
+
+    Except: `_ABI_CONTENT_KEYS_INSIDE_PROVENANCE` values are real ABI
+    content that happens to nest here too, so they're copied through
+    unchanged rather than recursed into for stripping.
     """
     if isinstance(node, dict):
         return {
-            key: _strip_provenance_volatile_keys(value)
+            key: (value if key in _ABI_CONTENT_KEYS_INSIDE_PROVENANCE
+                  else _strip_provenance_volatile_keys(value))
             for key, value in node.items()
             if not _is_provenance_volatile_key(key)
         }
@@ -180,15 +206,16 @@ def normalize_paths(node, repo_root_marker, *, in_provenance=False):
     """
     if isinstance(node, dict):
         return {
-            key: normalize_paths(
-                value,
-                repo_root_marker,
-                in_provenance=(
-                    in_provenance
-                    or key in _PATH_BEARING_KEYS
-                    or key in _PROVENANCE_CONTAINER_KEYS
-                ),
-            )
+            key: (value if key in _ABI_CONTENT_KEYS_INSIDE_PROVENANCE
+                  else normalize_paths(
+                      value,
+                      repo_root_marker,
+                      in_provenance=(
+                          in_provenance
+                          or key in _PATH_BEARING_KEYS
+                          or key in _PROVENANCE_CONTAINER_KEYS
+                      ),
+                  ))
             for key, value in node.items()
         }
     if isinstance(node, list):

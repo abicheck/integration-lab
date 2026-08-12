@@ -12,10 +12,15 @@
 build --cxxopt=-std=c++17
 build --host_cxxopt=-std=c++17
 
-# Shared disk cache location. CI mounts this path via actions/cache so
-# warm runs skip re-fetching/re-compiling unchanged inputs -- see the
-# "Set up Bazel disk cache" step in .github/workflows/*.yml. Harmless
-# locally too (just a local build cache directory).
-build --disk_cache=~/.cache/bazel-disk
+# The shared disk cache location is deliberately NOT set here as
+# `--disk_cache=~/.cache/bazel-disk`: .bazelrc is read directly by Bazel,
+# with no shell in between to expand `~`, so Bazel would treat it as a
+# literal relative path under the workspace instead of the runner's home
+# directory -- silently pointing at a different directory than the one
+# actions/cache saves/restores (`~/.cache/bazel-disk`, expanded by the
+# Node-based cache action itself), making the cache a no-op (Codex
+# review). Passed explicitly as `--disk_cache=$HOME/.cache/bazel-disk` on
+# the `bazel build` command line in .github/workflows/*.yml instead, where
+# the shell expands $HOME before Bazel ever sees it.
 
 common --announce_rc=false
