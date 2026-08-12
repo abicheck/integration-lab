@@ -22,12 +22,19 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
+      # actions/cache never re-saves an already-existing key (it can only
+      # restore it) -- so a fixed key means the cache is frozen at whatever
+      # it held on the very first save and never accumulates new disk-cache
+      # entries from later runs (Codex review). A run-id suffix on the save
+      # key makes every run's cache saveable; restore-keys still falls back
+      # to the most recent cache for this config, then any cache for this OS.
       - name: Set up Bazel disk cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-${{ github.run_id }}
           restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
       - name: Build shared library with Bazel
         run: bazel build //:math

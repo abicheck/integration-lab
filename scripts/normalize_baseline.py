@@ -17,9 +17,11 @@ This script strips or rewrites exactly that class of field:
     duration timing field, cache_hit_rate/ratio, and the hash digests
     computed over that volatile payload (content_hash, graph_id, artifacts)
   * absolute paths that contain the repo checkout directory are rewritten
-    to repo-relative paths, everywhere in the document
-  * absolute paths into the Bazel execroot/output tree are rewritten to
-    the bazel-out-relative fragment, everywhere in the document
+    to repo-relative paths, and absolute paths into the Bazel
+    execroot/output tree are rewritten to the bazel-out-relative fragment
+    -- but only in known path-bearing fields (source_location,
+    source_header, source_path) and inside the provenance subtrees, not
+    every string in the document (see below)
   * "<number>s" timing fragments inside the free-text extractor "detail"
     field specifically (not arbitrary strings, so a genuine API constant
     like a `30s` chrono literal is never touched) are replaced with a
@@ -38,9 +40,18 @@ future comparison (Codex review). Restricting the stripping to
 fields have actually been observed -- keeps the blast radius to provenance
 metadata only.
 
-Path rewriting and the "detail"-scoped timing substitution stay global:
-they act on string *values*, not dict *keys*, so they can't collide with
-and delete a same-named ABI entity the way key stripping could.
+Path rewriting was originally applied to every string in the document on
+the theory that it acts on *values* rather than *keys*, so it couldn't
+collide with and delete a same-named ABI entity the way key stripping
+could. That's true for deletion, but not for corruption: a public
+constant, macro, or default value that happens to hold an absolute-path-
+looking string (e.g. `/opt/abicheck-bazel-lab/config`) would be truncated
+the same as a real path, and two distinct values with different prefixes
+could truncate to the same suffix -- silently hiding a real change from
+comparison (Codex review). Path rewriting is now scoped the same way key
+stripping is: only fields actually known to hold filesystem paths
+(`source_location`, `source_header`, `source_path`) plus anything inside
+the provenance subtrees, where every string actually is provenance.
 
 Everything that reflects the actual public ABI/API (symbols, types,
 signatures, coverage status, source-relative locations, toolchain
@@ -148,19 +159,41 @@ def strip_volatile_keys(report):
     return report
 
 
-def normalize_paths(node, repo_root_marker):
+# Field names actually known to hold a filesystem path emitted by
+# `abicheck --mode dump`. Path rewriting outside a provenance container is
+# restricted to these -- see the module docstring for why "every string
+# that looks like a path" is unsafe.
+_PATH_BEARING_KEYS = {"source_location", "source_header", "source_path"}
+
+
+def normalize_paths(node, repo_root_marker, *, in_provenance=False):
     """Rewrite absolute paths to relative ones.
 
     Any string containing the repo's directory name is truncated to the
     repo-relative suffix. Any string that still looks like an absolute
     path but reaches into a Bazel execroot/output tree is truncated to
     the `bazel-out/...` (or `external/...`) relative fragment.
+
+    Only applied to known path-bearing field names, or unconditionally
+    within a provenance subtree (`in_provenance=True`) where every value
+    actually is build/collection metadata, never ABI content.
     """
     if isinstance(node, dict):
-        return {key: normalize_paths(value, repo_root_marker) for key, value in node.items()}
+        return {
+            key: normalize_paths(
+                value,
+                repo_root_marker,
+                in_provenance=(
+                    in_provenance
+                    or key in _PATH_BEARING_KEYS
+                    or key in _PROVENANCE_CONTAINER_KEYS
+                ),
+            )
+            for key, value in node.items()
+        }
     if isinstance(node, list):
-        return [normalize_paths(item, repo_root_marker) for item in node]
-    if isinstance(node, str):
+        return [normalize_paths(item, repo_root_marker, in_provenance=in_provenance) for item in node]
+    if isinstance(node, str) and in_provenance:
         return _normalize_path_string(node, repo_root_marker)
     return node
 
