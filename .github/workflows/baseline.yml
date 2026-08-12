@@ -37,12 +37,12 @@ jobs:
           fail-on-breaking: true
       - name: Commit refreshed baseline
         run: |
-          if git diff --quiet -- abi/math.abicheck.json; then
+          git add -f abi/math.abicheck.json
+          if git diff --cached --quiet -- abi/math.abicheck.json; then
             echo 'Baseline unchanged.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add abi/math.abicheck.json
           git commit -m 'chore: refresh ABICheck baseline'
           git push
