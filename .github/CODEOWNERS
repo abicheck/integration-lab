@@ -13,8 +13,16 @@
 # editing abi/math.abicheck.json directly (Codex review). Same ownership
 # boundary on both, so neither path around the other is unreviewed.
 #
+# And neither of those matters if the *consumer* of the comparison isn't
+# protected either: a PR touching .github/workflows/abi-scan.yml could
+# remove or gut the "Enforce gate" step while keeping the `scan` job name
+# branch protection requires, so the required check reports success
+# without the trusted-baseline comparison ever actually running (Codex
+# review). Same boundary here too.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
 .github/workflows/baseline.yml @napetrov
+.github/workflows/abi-scan.yml @napetrov
 scripts/normalize_baseline.py @napetrov

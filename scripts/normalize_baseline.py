@@ -9,19 +9,38 @@ when nothing observable changed.
 
 This script strips or rewrites exactly that class of field:
 
-  * volatile keys (created_at, source_mtime*, source_size, build_id, any
-    `*_s`/elapsed/duration timing field, cache_hit_rate/ratio, and hash
-    digests computed over that volatile payload -- content_hash, graph_id,
-    artifacts) are dropped wherever they occur, at any depth
+  * a handful of known top-level scalar fields (created_at, source_mtime*,
+    source_size, build_id) are dropped
+  * within the `build_source_pack`/`build_source` provenance subtrees only
+    (never elsewhere in the document -- see below), volatile keys are
+    dropped wherever they occur inside those subtrees: any `*_s`/elapsed/
+    duration timing field, cache_hit_rate/ratio, and the hash digests
+    computed over that volatile payload (content_hash, graph_id, artifacts)
   * absolute paths that contain the repo checkout directory are rewritten
-    to repo-relative paths
+    to repo-relative paths, everywhere in the document
   * absolute paths into the Bazel execroot/output tree are rewritten to
-    the bazel-out-relative fragment
+    the bazel-out-relative fragment, everywhere in the document
   * "<number>s" timing fragments inside the free-text extractor "detail"
     field specifically (not arbitrary strings, so a genuine API constant
     like a `30s` chrono literal is never touched) are replaced with a
     constant placeholder so re-running the same build twice produces
     byte-identical prose
+
+Why the key-name stripping is scoped to two named subtrees rather than
+applied to the whole document: the report also carries actual ABI content
+under name-keyed maps (`constants`, `functions`, `variables`, `types`,
+`enums`, `typedefs`, ...). A real public constant or entity can legitimately
+be named `timeout_s` or `elapsed`; stripping by key name anywhere in the
+tree would silently delete that entity from the committed baseline instead
+of just some provenance metadata, hiding a real removal/change from every
+future comparison (Codex review). Restricting the stripping to
+`build_source_pack`/`build_source` -- the only places these volatile
+fields have actually been observed -- keeps the blast radius to provenance
+metadata only.
+
+Path rewriting and the "detail"-scoped timing substitution stay global:
+they act on string *values*, not dict *keys*, so they can't collide with
+and delete a same-named ABI entity the way key stripping could.
 
 Everything that reflects the actual public ABI/API (symbols, types,
 signatures, coverage status, source-relative locations, toolchain
@@ -35,15 +54,29 @@ import json
 import re
 import sys
 
-# Keys dropped wherever they appear in the report, at any nesting depth.
-# These only ever carry run-provenance / timing information, never ABI
-# content — so it's safe to strip by name regardless of where they nest.
-VOLATILE_KEYS = {
+# Top-level scalar fields dropped unconditionally. These are only ever
+# emitted at the document root by `abicheck --mode dump`, never as a
+# same-named entity nested under functions/types/constants/etc., so
+# there's no ambiguity in stripping them by name here.
+TOP_LEVEL_VOLATILE_KEYS = {
     "created_at",
     "source_mtime",
     "source_mtime_epoch",
     "source_size",
     "build_id",
+}
+
+# Named subtrees that hold nothing but build/collection provenance -- never
+# ABI content -- so it's safe to strip volatile keys recursively *within*
+# them. Everything outside these subtrees (functions, variables, types,
+# constants, enums, typedefs, elf/dwarf symbol tables, ...) is left alone
+# by the key-based stripping below.
+_PROVENANCE_CONTAINER_KEYS = ("build_source_pack", "build_source")
+
+# Keys dropped wherever they appear *inside a provenance container* above.
+# These only ever carry run-provenance / timing information there.
+_PROVENANCE_VOLATILE_KEYS = {
+    "created_at",
     "cache_hit_rate",
     "cache_hit_ratio",
     # Content digests computed by abicheck over the raw (pre-normalization)
@@ -63,8 +96,9 @@ VOLATILE_KEYS = {
 # counter, or an explicit elapsed/duration field. Plain `str.endswith`
 # rather than a `$`-anchored regex fed to `re.match` -- `re.match` only
 # anchors at the *start* of the string, so a `_s$` alternative there would
-# only ever match the literal two-character key "_s".
-_VOLATILE_KEY_EXACT = {"elapsed", "elapsed_s", "duration", "duration_s"}
+# only ever match the literal two-character key "_s". Applied only inside
+# a provenance container, same as _PROVENANCE_VOLATILE_KEYS above.
+_PROVENANCE_VOLATILE_KEY_EXACT = {"elapsed", "elapsed_s", "duration", "duration_s"}
 
 # Only applied to the extractor "detail" free-text field -- not to
 # arbitrary strings, so a genuine ABI-relevant string constant (e.g. a
@@ -72,20 +106,37 @@ _VOLATILE_KEY_EXACT = {"elapsed", "elapsed_s", "duration", "duration_s"}
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
 
 
-def _is_volatile_key(key):
-    return key in VOLATILE_KEYS or key in _VOLATILE_KEY_EXACT or key.endswith("_s")
+def _is_provenance_volatile_key(key):
+    return (
+        key in _PROVENANCE_VOLATILE_KEYS
+        or key in _PROVENANCE_VOLATILE_KEY_EXACT
+        or key.endswith("_s")
+    )
 
 
-def strip_volatile_keys(node):
+def _strip_provenance_volatile_keys(node):
+    """Recursively drop volatile keys -- used only inside a provenance
+    container, where every key is metadata and none is an ABI entity name.
+    """
     if isinstance(node, dict):
         return {
-            key: strip_volatile_keys(value)
+            key: _strip_provenance_volatile_keys(value)
             for key, value in node.items()
-            if not _is_volatile_key(key)
+            if not _is_provenance_volatile_key(key)
         }
     if isinstance(node, list):
-        return [strip_volatile_keys(item) for item in node]
+        return [_strip_provenance_volatile_keys(item) for item in node]
     return node
+
+
+def strip_volatile_keys(report):
+    report = dict(report)
+    for key in TOP_LEVEL_VOLATILE_KEYS:
+        report.pop(key, None)
+    for container_key in _PROVENANCE_CONTAINER_KEYS:
+        if container_key in report:
+            report[container_key] = _strip_provenance_volatile_keys(report[container_key])
+    return report
 
 
 def normalize_paths(node, repo_root_marker):
