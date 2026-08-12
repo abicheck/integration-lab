@@ -28,6 +28,7 @@ MARKER = "<!-- abicheck-lab-canonical-report -->"
 
 _VERDICT_LINES = {
     "COMPATIBLE": "✅ **COMPATIBLE** — no gated incompatibility detected.",
+    "COMPATIBLE_WITH_RISK": "⚠️ **COMPATIBLE_WITH_RISK** — no gated incompatibility, but a non-gating risk finding was recorded.",
     "SEVERITY_ERROR": "⚠️ **SEVERITY_ERROR** — a severity-level issue was detected.",
     "API_BREAK": "🛑 **API_BREAK** — a source-level API break was detected.",
     "BREAKING": "🛑 **BREAKING** — a binary ABI break was detected.",
