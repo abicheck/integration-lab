@@ -16,6 +16,17 @@ on:
       - 'abi/**'
       - '.abicheck.yml'
       - '.github/workflows/abi-scan.yml'
+      # Every CODEOWNERS-protected path needs to be in this filter too: if
+      # a required "scan" check is configured in branch protection, a PR
+      # touching only a path outside this filter never triggers the
+      # workflow at all, so the required check sits at "Pending" forever
+      # and the PR can never merge -- even though it needed owner review
+      # and passed it (Codex review). Keep this list a superset of
+      # .github/CODEOWNERS's paths.
+      - '.github/workflows/baseline.yml'
+      - '.github/CODEOWNERS'
+      - 'scripts/normalize_baseline.py'
+      - 'scripts/render_scan_comment.py'
 
 permissions:
   contents: read
