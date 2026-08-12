@@ -103,13 +103,20 @@ produce a commit even when the public ABI didn't change.
 
 `scripts/normalize_baseline.py` runs between `dump` and the commit step and:
 
-- drops volatile keys wherever they occur in the report: `created_at`,
-  `source_mtime*`, `source_size`, `build_id`, `cache_hit_rate`/`ratio`, any
-  `*_s`/`elapsed`/`duration` timing field, and the hash digests computed
-  over that volatile payload (`content_hash`, `graph_id`, `artifacts`) —
-  those digests still vary run-to-run even after everything else is
-  normalized, so the honest fix is to drop them rather than commit a digest
-  that claims to be stable and isn't
+- drops a handful of known volatile scalar fields at the report root
+  (`created_at`, `source_mtime*`, `source_size`, `build_id`), and, *within
+  the `build_source_pack`/`build_source` provenance subtrees specifically*
+  (never elsewhere — see the module docstring for why), any `*_s`/`elapsed`/
+  `duration` timing field, `cache_hit_rate`/`ratio`, and the hash digests
+  computed over that volatile payload (`content_hash`, `graph_id`,
+  `artifacts`) — those digests still vary run-to-run even after everything
+  else is normalized, so the honest fix is to drop them rather than commit
+  a digest that claims to be stable and isn't. Stripping by key name is
+  deliberately *not* applied to the rest of the document (`constants`,
+  `functions`, `variables`, `types`, ...), because those are ABI content
+  name-keyed by the entity's own name — a real constant or function could
+  legitimately be called `timeout_s` or `elapsed`, and a global strip would
+  silently delete it instead of just provenance metadata
 - rewrites absolute paths under the repo checkout to repo-relative paths,
   and absolute paths into the Bazel execroot/output tree to their
   `bazel-out/...`-relative fragment
@@ -119,9 +126,14 @@ produce a commit even when the public ABI didn't change.
 
 so that two builds of the same commit on different runners/machines
 normalize to byte-identical JSON — verified idempotent (double-normalizing
-is a no-op) against the committed baseline. `git_commit`/`version` are
-intentionally left untouched — they're meant to track the `main` SHA the
-baseline was collected from, not to be stripped as noise.
+is a no-op) against the committed baseline. `git_commit`/`version` are also
+stripped at the report root: `baseline.yml` passes `new-version:
+main-${{ github.sha }}`, so both fields would otherwise change on *every*
+push to `main` regardless of whether the ABI did, defeating the "commit
+only when the ABI actually changed" point of normalizing at all. Git
+history on `abi/math.abicheck.json` already records which commit each
+refresh corresponds to, so nothing is lost by not duplicating that SHA
+inside the file too.
 
 ## Build environment
 

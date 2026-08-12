@@ -64,6 +64,15 @@ TOP_LEVEL_VOLATILE_KEYS = {
     "source_mtime_epoch",
     "source_size",
     "build_id",
+    # baseline.yml passes `new-version: main-${{ github.sha }}`, so both of
+    # these change on *every* push to main regardless of whether the ABI
+    # did -- defeating the "commit only when the ABI actually changed"
+    # goal this whole script exists for (Codex review: a diff-suppression
+    # check that never suppresses isn't one). git history on this file
+    # already records which commit each baseline refresh corresponds to,
+    # so there's no information lost by not duplicating that SHA here too.
+    "version",
+    "git_commit",
 }
 
 # Named subtrees that hold nothing but build/collection provenance -- never

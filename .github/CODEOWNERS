@@ -20,9 +20,15 @@
 # without the trusted-baseline comparison ever actually running (Codex
 # review). Same boundary here too.
 #
+# And none of the above holds if this file itself is unprotected: without
+# a self-ownership rule, a PR could just delete or weaken the entries
+# above (with no owner sign-off) before touching the baseline, its
+# producer, or the gating workflow (CodeRabbit review).
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
 .github/workflows/baseline.yml @napetrov
 .github/workflows/abi-scan.yml @napetrov
 scripts/normalize_baseline.py @napetrov
+.github/CODEOWNERS @napetrov
