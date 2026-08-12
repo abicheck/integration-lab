@@ -31,7 +31,7 @@ jobs:
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
           mode: scan
-          new-library: bazel-bin/libmath.so
+          new-library: bazel-bin/math.so
           new-header: include/abicheck_lab/math.h
           sources: .
           against: abi/math.abicheck.json

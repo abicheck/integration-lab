@@ -1,10 +1,17 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 cc_library(
-    name = "math",
-    srcs = ["src/math.cc"],
+    name = "math_api",
     hdrs = ["include/abicheck_lab/math.h"],
     includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "math",
+    srcs = ["src/math.cc"],
+    deps = [":math_api"],
     linkshared = True,
     visibility = ["//visibility:public"],
 )
