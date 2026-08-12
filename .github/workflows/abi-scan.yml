@@ -5,8 +5,16 @@ on:
     paths:
       - 'BUILD.bazel'
       - 'MODULE.bazel'
+      - 'MODULE.bazel.lock'
+      - '**/BUILD'
+      - '**/BUILD.bazel'
+      - '**/*.bzl'
+      - '.bazelrc'
+      - '.bazelversion'
       - 'include/**'
       - 'src/**'
+      - 'abi/**'
+      - '.abicheck.yml'
       - '.github/workflows/abi-scan.yml'
 
 permissions:
@@ -19,16 +27,35 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # The candidate library is always built from the PR head (the
+      # checkout above). The baseline it gets compared against must come
+      # from the PR's exact base commit, read straight out of git history
+      # rather than the working tree — otherwise a PR could rewrite
+      # abi/math.abicheck.json in the same diff that breaks the ABI and
+      # have the gate "pass" against its own edited baseline.
+      - name: Resolve trusted baseline from PR base SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
       - name: Build candidate shared library with Bazel
         run: bazel build //:math
-      - name: Source-intelligence scan against main baseline
-        id: source_scan
+
+      # Single canonical analysis: this one scan is the gate, the PR
+      # comment, and the job summary. Nothing downstream re-derives the
+      # verdict from a second, differently-scoped run.
+      - name: ABICheck source scan (gate + PR report)
+        id: scan
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -36,29 +63,56 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           sources: .
-          against: abi/math.abicheck.json
-          since: origin/${{ github.base_ref }}
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
+          format: json
+          output-file: abicheck-report.json
           fail-on-breaking: true
           fail-on-api-break: true
-      - name: Publish sticky ABI report on this PR
-        id: abi_report
-        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
-        with:
-          mode: compare
-          old-library: abi/math.abicheck.json
-          new-library: bazel-bin/libmath.so
-          new-header: include/abicheck_lab/math.h
-          format: json
-          output-file: abicheck-compare.json
-          fail-on-breaking: false
-          fail-on-api-break: false
           pr-comment: true
           pr-comment-on: always
           pr-comment-detail: standard
-      - name: Enforce source scan gate
-        if: steps.source_scan.outcome == 'failure'
+
+      # Publish evidence unconditionally: a red gate is exactly when this
+      # report is most useful for debugging, and this must never be
+      # skipped just because the gate step above failed.
+      - name: Upload ABICheck report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa9 # v4.6.2
+        with:
+          name: abicheck-report
+          path: abicheck-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Write job summary
+        if: always()
+        shell: bash
         run: |
-          echo 'ABICheck source scan found a gated incompatibility.' >&2
+          set -euo pipefail
+          {
+            echo "### ABICheck source scan"
+            echo
+            echo "- requested depth: \`source\`"
+            echo "- base SHA: \`${{ github.event.pull_request.base.sha }}\`"
+            echo "- gate outcome: \`${{ steps.scan.outcome }}\`"
+            if [ -f abicheck-report.json ]; then
+              echo
+              echo "Full report: see the \`abicheck-report\` artifact on this run."
+            else
+              echo
+              echo "_No report file was produced by the scan step._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The scan step above is the single source of truth for the gate.
+      # We ran it with continue-on-error so evidence still gets published
+      # on a red result; fail the job explicitly here instead of letting
+      # a later, differently-scoped step decide.
+      - name: Enforce gate
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo 'ABICheck source scan found a gated incompatibility (see the abicheck-report artifact and PR comment for details).' >&2
           exit 1

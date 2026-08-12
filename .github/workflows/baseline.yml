@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   collect:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
@@ -33,13 +33,18 @@ jobs:
           sources: .
           depth: source
           new-version: main-${{ github.sha }}
-          output-file: abi/math.abicheck.json
+          output-file: ${{ runner.temp }}/math.raw.abicheck.json
           fail-on-breaking: true
+      - name: Normalize baseline (strip volatile provenance/timing metadata)
+        run: |
+          python3 scripts/normalize_baseline.py \
+            "$RUNNER_TEMP/math.raw.abicheck.json" \
+            abi/math.abicheck.json
       - name: Commit refreshed baseline
         run: |
           git add -f abi/math.abicheck.json
           if git diff --cached --quiet -- abi/math.abicheck.json; then
-            echo 'Baseline unchanged.'
+            echo 'Baseline unchanged (no semantic ABI diff after normalization).'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
