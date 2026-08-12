@@ -1,0 +1,1285 @@
+{
+  "library": "libmath.so",
+  "version": "main-ccff7c901e213aac0f3812259d58cb2b76028ea4",
+  "functions": [
+    {
+      "name": "api_version",
+      "mangled": "_ZN12abicheck_lab11api_versionEv",
+      "return_type": "int",
+      "params": [],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:13",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": false,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": "default",
+      "ref_qualifier": "",
+      "is_explicit": null,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "Calculator",
+      "mangled": "__abicheck_ctor__Calculator()",
+      "return_type": "void",
+      "params": [],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:8",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": false,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "add",
+      "mangled": "_ZNK12abicheck_lab10Calculator3addEii",
+      "return_type": "int",
+      "params": [
+        {
+          "name": "left",
+          "type": "int",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        },
+        {
+          "name": "right",
+          "type": "int",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:9",
+      "is_static": false,
+      "is_const": true,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": false,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": "default",
+      "ref_qualifier": "",
+      "is_explicit": false,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "multiply",
+      "mangled": "_ZNK12abicheck_lab10Calculator8multiplyEii",
+      "return_type": "int",
+      "params": [
+        {
+          "name": "left",
+          "type": "int",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        },
+        {
+          "name": "right",
+          "type": "int",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:10",
+      "is_static": false,
+      "is_const": true,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": false,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": "default",
+      "ref_qualifier": "",
+      "is_explicit": false,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "Calculator",
+      "mangled": "__abicheck_ctor__Calculator(const Calculator&)",
+      "return_type": "void",
+      "params": [
+        {
+          "name": "",
+          "type": "const Calculator&",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "hidden",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": false,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "operator=",
+      "mangled": "_ZN12abicheck_lab10CalculatoraSERKS0_",
+      "return_type": "Calculator&",
+      "params": [
+        {
+          "name": "",
+          "type": "const Calculator&",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "hidden",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": null,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "Calculator",
+      "mangled": "__abicheck_ctor__Calculator(Calculator&&)",
+      "return_type": "void",
+      "params": [
+        {
+          "name": "",
+          "type": "Calculator&&",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "hidden",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": false,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "operator=",
+      "mangled": "_ZN12abicheck_lab10CalculatoraSEOS0_",
+      "return_type": "Calculator&",
+      "params": [
+        {
+          "name": "",
+          "type": "Calculator&&",
+          "kind": "value",
+          "default": null,
+          "pointer_depth": 0,
+          "is_restrict": false,
+          "is_va_list": false
+        }
+      ],
+      "visibility": "hidden",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": null,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    },
+    {
+      "name": "Calculator",
+      "mangled": "Calculator",
+      "return_type": "void",
+      "params": [],
+      "visibility": "hidden",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": false,
+      "vtable_index": null,
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "deleted_from_dwarf": false,
+      "is_inline": true,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": "",
+      "is_explicit": null,
+      "is_hidden_friend": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "is_variadic": false,
+      "contract_attributes": [],
+      "exception_spec": ""
+    }
+  ],
+  "variables": [],
+  "types": [
+    {
+      "name": "Calculator",
+      "kind": "class",
+      "size_bits": 8,
+      "alignment_bits": 8,
+      "fields": [],
+      "bases": [],
+      "virtual_bases": [],
+      "vtable": [],
+      "source_location": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h:6",
+      "is_union": false,
+      "is_opaque": false,
+      "is_final": false,
+      "is_template_pattern": false,
+      "has_anonymous_aggregate_fields": false,
+      "source_header": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
+      "origin": "unknown",
+      "data_size_bits": null,
+      "is_standard_layout": null,
+      "is_trivially_copyable": null,
+      "vptr_offset_bits": null,
+      "base_offsets": {},
+      "qualified_name": "abicheck_lab::Calculator"
+    }
+  ],
+  "elf": {
+    "soname": "",
+    "needed": [
+      "libc.so.6"
+    ],
+    "rpath": "",
+    "runpath": "",
+    "versions_defined": [],
+    "versions_required": {
+      "libc.so.6": [
+        "GLIBC_2.2.5"
+      ]
+    },
+    "symbols": [
+      {
+        "name": "_end",
+        "binding": "global",
+        "sym_type": "notype",
+        "size": 0,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 1
+      },
+      {
+        "name": "_edata",
+        "binding": "global",
+        "sym_type": "notype",
+        "size": 0,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 8
+      },
+      {
+        "name": "__bss_start",
+        "binding": "global",
+        "sym_type": "notype",
+        "size": 0,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 8
+      },
+      {
+        "name": "_ZNK12abicheck_lab10Calculator3addEii",
+        "binding": "global",
+        "sym_type": "func",
+        "size": 28,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 2
+      },
+      {
+        "name": "_ZNK12abicheck_lab10Calculator8multiplyEii",
+        "binding": "global",
+        "sym_type": "func",
+        "size": 27,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 2
+      },
+      {
+        "name": "_ZN12abicheck_lab11api_versionEv",
+        "binding": "global",
+        "sym_type": "func",
+        "size": 15,
+        "version": "",
+        "is_default": true,
+        "visibility": "default",
+        "origin_lib": null,
+        "value_alignment": 1
+      }
+    ],
+    "imports": [
+      {
+        "name": "__gmon_start__",
+        "binding": "weak",
+        "sym_type": "notype",
+        "version": "",
+        "is_default": true,
+        "version_soname": ""
+      },
+      {
+        "name": "_ITM_deregisterTMCloneTable",
+        "binding": "weak",
+        "sym_type": "notype",
+        "version": "",
+        "is_default": true,
+        "version_soname": ""
+      },
+      {
+        "name": "__cxa_finalize",
+        "binding": "weak",
+        "sym_type": "func",
+        "version": "GLIBC_2.2.5",
+        "is_default": true,
+        "version_soname": "libc.so.6"
+      },
+      {
+        "name": "_ITM_registerTMCloneTable",
+        "binding": "weak",
+        "sym_type": "notype",
+        "version": "",
+        "is_default": true,
+        "version_soname": ""
+      }
+    ],
+    "interpreter": "",
+    "ei_data": "LSB",
+    "min_kernel_version": "",
+    "dynamic_flags": [],
+    "has_init": true,
+    "has_fini": true,
+    "has_executable_stack": false,
+    "relro": "full",
+    "bind_now": true,
+    "is_pie": false,
+    "has_stack_canary": false,
+    "has_fortify_source": false,
+    "has_writable_executable_segment": false,
+    "is_symbolic": false,
+    "has_textrel": false,
+    "pointer_size": 8,
+    "machine": "EM_X86_64",
+    "elf_class": 64,
+    "osabi": "ELFOSABI_SYSV",
+    "e_flags": 0,
+    "abi_flags": [],
+    "has_static_tls": false,
+    "has_tls_symbols": false,
+    "gnu_properties": [
+      "IBT",
+      "SHSTK"
+    ],
+    "has_dt_relr": false,
+    "hash_styles": [
+      "gnu"
+    ]
+  },
+  "pe": null,
+  "macho": null,
+  "dwarf": {
+    "structs": {},
+    "enums": {},
+    "base_types": {},
+    "has_dwarf": false
+  },
+  "dwarf_advanced": {
+    "has_dwarf": false,
+    "target_arch": "",
+    "toolchain": {
+      "producer_string": "",
+      "compiler": "",
+      "version": "",
+      "abi_flags": [],
+      "vector_abi_flags": [],
+      "wchar_flags": []
+    },
+    "calling_conventions": {},
+    "value_abi_traits": {},
+    "return_value_sizes": {},
+    "return_memory_classified": [],
+    "packed_structs": [],
+    "all_struct_names": [],
+    "frame_registers": {},
+    "callee_saved_regs": {}
+  },
+  "sycl": null,
+  "python_ext": null,
+  "kabi": null,
+  "python_api": null,
+  "numpy_capi": {
+    "consumes_array_api": false,
+    "consumes_ufunc_api": false,
+    "capi_target_version": null
+  },
+  "enums": [],
+  "typedefs": {},
+  "constants": {},
+  "elf_only_mode": false,
+  "from_headers": true,
+  "platform": "elf",
+  "language_profile": null,
+  "scope_fallback": null,
+  "dependency_info": null,
+  "git_commit": "ccff7c901e213aac0f3812259d58cb2b76028ea4",
+  "git_tag": null,
+  "created_at": "2026-08-12T17:41:59.818584+00:00",
+  "build_id": null,
+  "build_mode": null,
+  "source_path": "/home/runner/.cache/bazel/_bazel_runner/31722ba91c74fbff7df1326f020442d1/execroot/_main/bazel-out/k8-fastbuild/bin/libmath.so",
+  "source_mtime": 1786556484.8560927,
+  "source_mtime_epoch": false,
+  "source_size": 7600,
+  "build_source_pack": {
+    "schema_version": 1,
+    "content_hash": "sha256:663b96aaf93a60e256cb80a59fa4be3f5d496a7e2e51bbb3f07374f1a3d6da91",
+    "path_hint": ".",
+    "coverage_summary": {
+      "L3_build": {
+        "status": "present",
+        "confidence": "reduced"
+      },
+      "L4_source_abi": {
+        "status": "partial",
+        "confidence": "reduced"
+      },
+      "L5_source_graph": {
+        "status": "present",
+        "confidence": "reduced"
+      }
+    }
+  },
+  "build_source": {
+    "manifest": {
+      "build_source_pack_version": 1,
+      "abicheck_version": "",
+      "created_at": "2026-08-12T17:42:01.988950+00:00",
+      "source_root": {
+        "path_redacted": true,
+        "repo_hash": ""
+      },
+      "inputs": {
+        "sources": ".",
+        "build_info": null,
+        "collected": "inline"
+      },
+      "extractors": [
+        {
+          "name": "build_query_auto",
+          "version": "",
+          "status": "ok",
+          "inputs": [],
+          "artifacts": [],
+          "detail": "auto-ran `bazel aquery`; 1 compile unit(s)"
+        },
+        {
+          "name": "source_abi:auto",
+          "version": "",
+          "status": "ok",
+          "inputs": [],
+          "artifacts": [],
+          "detail": "scope=target, 1/1 TUs parsed, 0 failures, 1.55s"
+        },
+        {
+          "name": "call_graph:clang",
+          "version": "",
+          "status": "partial",
+          "inputs": [],
+          "artifacts": [],
+          "detail": "0 call edges from 1 compile unit(s), 0.00s, jobs=1"
+        },
+        {
+          "name": "type_graph:clang",
+          "version": "",
+          "status": "partial",
+          "inputs": [],
+          "artifacts": [],
+          "detail": "0 type edges from 1 compile unit(s), 0.00s, jobs=1"
+        },
+        {
+          "name": "include_graph:clang",
+          "version": "",
+          "status": "ok",
+          "inputs": [],
+          "artifacts": [],
+          "detail": "2 include edges from 1 compile unit(s)"
+        }
+      ],
+      "artifacts": [
+        "sha256:48d7c0dbe7635a75bf440d1e29a708605d807d77bb79a5238b3e196ee9bc7605",
+        "sha256:e0385adf2ad3ba62cd1bdab04b3965d94e4457e9d7f6090c6eb2be2a6a21d6ea",
+        "sha256:f8dabbefae478be52fbcfb641aa2de865b6f10f4c453aacbc430911381e9941a"
+      ],
+      "coverage": [
+        {
+          "layer": "L3_build",
+          "status": "present",
+          "confidence": "reduced",
+          "detail": "bazel, 1 compile units, 0 targets",
+          "elapsed_s": 0.0
+        },
+        {
+          "layer": "L4_source_abi",
+          "status": "partial",
+          "confidence": "reduced",
+          "detail": "scope=target, 1/1 TUs parsed, 0/6 symbols matched, 3/6 accounted, 6 unmatched, cache 0/1 hit (0%), 1.55s",
+          "elapsed_s": 1.549
+        },
+        {
+          "layer": "L5_source_graph",
+          "status": "present",
+          "confidence": "reduced",
+          "detail": "",
+          "elapsed_s": 0.0
+        }
+      ],
+      "redaction": {}
+    },
+    "build_evidence": {
+      "schema_version": 1,
+      "source_root": "",
+      "build_root": "",
+      "generators": [
+        {
+          "kind": "bazel",
+          "version": "",
+          "generator": ""
+        }
+      ],
+      "toolchains": [],
+      "targets": [],
+      "compile_units": [
+        {
+          "id": "cu://src/math.cc#cfg:220fe8d40421",
+          "source": "src/math.cc",
+          "output": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "directory": "~/work/abicheck-bazel-lab/abicheck-bazel-lab",
+          "target_id": "target:////:math",
+          "compiler": "",
+          "argv": [
+            "/usr/bin/gcc",
+            "-U_FORTIFY_SOURCE",
+            "-fstack-protector",
+            "-Wall",
+            "-Wunused-but-set-parameter",
+            "-Wno-free-nonheap-object",
+            "-fno-omit-frame-pointer",
+            "-std=c++17",
+            "-MD",
+            "-MF",
+            "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.d",
+            "-frandom-seed=bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+            "-fPIC",
+            "-iquote",
+            ".",
+            "-iquote",
+            "bazel-out/k8-fastbuild/bin",
+            "-Iinclude",
+            "-Ibazel-out/k8-fastbuild/bin/include",
+            "-c",
+            "src/math.cc",
+            "-o",
+            "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+            "-fno-canonical-system-headers",
+            "-Wno-builtin-macro-redefined",
+            "-D__DATE__=\"redacted\"",
+            "-D__TIMESTAMP__=\"redacted\"",
+            "-D__TIME__=\"redacted\""
+          ],
+          "language": "CXX",
+          "standard": "c++17",
+          "defines": {
+            "__DATE__": "\"redacted\"",
+            "__TIMESTAMP__": "\"redacted\"",
+            "__TIME__": "\"redacted\""
+          },
+          "undefines": [
+            "_FORTIFY_SOURCE"
+          ],
+          "include_paths": [
+            "~/work/abicheck-bazel-lab/abicheck-bazel-lab/include",
+            "~/work/abicheck-bazel-lab/abicheck-bazel-lab/bazel-out/k8-fastbuild/bin/include"
+          ],
+          "system_include_paths": [],
+          "input_files": [],
+          "sysroot": null,
+          "target_triple": "",
+          "abi_relevant_flags": [
+            "-fno-omit-frame-pointer",
+            "-std=c++17",
+            "-fPIC"
+          ],
+          "raw_ref": ""
+        }
+      ],
+      "link_units": [
+        {
+          "id": "link://bazel-out/k8-fastbuild/bin/libmath.so",
+          "target_id": "target:////:math",
+          "output": "bazel-out/k8-fastbuild/bin/libmath.so",
+          "kind": "shared_library",
+          "inputs": [
+            "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o"
+          ],
+          "linker_argv": [
+            "/usr/bin/gcc",
+            "-shared",
+            "-o",
+            "bazel-out/k8-fastbuild/bin/libmath.so",
+            "-Wl,-S",
+            "-fuse-ld=gold",
+            "-B/usr/bin",
+            "-Wl,-no-as-needed",
+            "-Wl,-z,relro,-z,now",
+            "-pass-exit-codes",
+            "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+            "-Wl,--push-state,-as-needed",
+            "-lstdc++",
+            "-Wl,--pop-state",
+            "-Wl,--push-state,-as-needed",
+            "-lm",
+            "-Wl,--pop-state"
+          ],
+          "version_script": "",
+          "soname": ""
+        }
+      ],
+      "generated_files": [],
+      "build_options": [
+        {
+          "key": "std:CXX",
+          "value": "c++17",
+          "abi_relevant": true,
+          "scope": "global",
+          "raw": "-std=c++17"
+        },
+        {
+          "key": "-fno-omit-frame-pointer",
+          "value": "-fno-omit-frame-pointer",
+          "abi_relevant": true,
+          "scope": "global",
+          "raw": "-fno-omit-frame-pointer"
+        },
+        {
+          "key": "-fPIC",
+          "value": "-fPIC",
+          "abi_relevant": true,
+          "scope": "global",
+          "raw": "-fPIC"
+        }
+      ],
+      "diagnostics": [
+        "call_graph: clang invocation failed: [Errno 2] No such file or directory: '~/work/abicheck-bazel-lab/abicheck-bazel-lab'",
+        "type_graph: clang invocation failed: [Errno 2] No such file or directory: '~/work/abicheck-bazel-lab/abicheck-bazel-lab'"
+      ],
+      "raw_artifacts": []
+    },
+    "source_abi": {
+      "schema_version": 1,
+      "library": "",
+      "target_id": "",
+      "roots": {
+        "exported_symbols": [
+          "_ZN12abicheck_lab11api_versionEv",
+          "_ZNK12abicheck_lab10Calculator3addEii",
+          "_ZNK12abicheck_lab10Calculator8multiplyEii",
+          "__bss_start",
+          "_edata",
+          "_end"
+        ],
+        "public_header_declarations": [],
+        "forced_public": []
+      },
+      "reachable_source_surface": {
+        "declarations": [],
+        "types": [],
+        "macros": [],
+        "templates": [],
+        "inline_bodies": []
+      },
+      "source_edges": [
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "__int128_t",
+          "dst": "__int128",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "__uint128_t",
+          "dst": "unsigned __int128",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "__NSConstantString",
+          "dst": "__NSConstantString_tag",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "__builtin_va_list",
+          "dst": "__va_list_tag",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        }
+      ],
+      "mappings": {
+        "source_decl_to_binary_symbol": {},
+        "source_type_to_debug_type": {},
+        "public_header_to_target": {},
+        "synthesized_symbol_to_owner": {},
+        "template_instantiation_symbol_to_decl": {},
+        "allocator_interposer_symbol_to_owner": {},
+        "non_public_symbol_to_reason": {
+          "__bss_start": "internal_or_private_export",
+          "_edata": "internal_or_private_export",
+          "_end": "internal_or_private_export"
+        }
+      },
+      "odr_conflicts": [],
+      "identity_collisions": [],
+      "unmatched": {
+        "symbols_without_decl": [
+          "_ZN12abicheck_lab11api_versionEv",
+          "_ZNK12abicheck_lab10Calculator3addEii",
+          "_ZNK12abicheck_lab10Calculator8multiplyEii",
+          "__bss_start",
+          "_edata",
+          "_end"
+        ],
+        "decls_without_symbol": []
+      },
+      "coverage": {
+        "reachable_declarations": 0,
+        "reachable_types": 0,
+        "reachable_macros": 0,
+        "reachable_templates": 0,
+        "reachable_inline_bodies": 0,
+        "exported_symbols": 6,
+        "matched_symbols": 0,
+        "synthesized_symbols_matched": 0,
+        "template_instantiation_symbols_matched": 0,
+        "allocator_interposer_symbols_matched": 0,
+        "non_public_symbols_classified": 3,
+        "unmatched_symbols": 6,
+        "odr_conflicts": 0,
+        "fact_set": {
+          "name": "abicheck-clang-canonical",
+          "version": 1,
+          "producer": "abicheck-cc-clang-extractor",
+          "producer_version": "0.7",
+          "compiler_family": "clang",
+          "compiler_version": "18.1.3"
+        },
+        "fact_family_states": {
+          "functions": "empty-confirmed",
+          "variables": "empty-confirmed",
+          "types": "empty-confirmed",
+          "macros": "empty-confirmed",
+          "templates": "empty-confirmed",
+          "inline_bodies": "empty-confirmed",
+          "constexpr_values": "empty-confirmed",
+          "source_edges": "complete",
+          "read_files": "complete"
+        },
+        "replay_scope": "target",
+        "include_graph_used": false,
+        "compile_units_selected": 1,
+        "compile_units_parsed": 1,
+        "extractor_failures": 0,
+        "cache_lookup_s": 0.0,
+        "extract_s": 1.534,
+        "link_s": 0.014,
+        "elapsed_s": 1.549,
+        "extractor_jobs": 1,
+        "cache_misses": 1
+      }
+    },
+    "source_graph": {
+      "schema_version": 1,
+      "graph_id": "sha256:1f493e7a9cf21a8375e3534a6b92efbc36df7d3be1ecd8d57ac1728385fa8876",
+      "coverage": {
+        "targets": 0,
+        "compile_units": 1,
+        "source_decls": 0,
+        "binary_symbol_mappings": 0,
+        "include_edges": {
+          "collected": true,
+          "count": 2
+        },
+        "call_edges": {
+          "collected": false,
+          "count": 0
+        },
+        "type_edges": {
+          "collected": true,
+          "count": 4
+        },
+        "reference_edges": {
+          "collected": false,
+          "count": 0
+        },
+        "node_kinds": {
+          "build_option": 3,
+          "compile_unit": 1,
+          "file": 1,
+          "link_unit": 1,
+          "object_file": 1,
+          "record_type": 8,
+          "source": 1
+        },
+        "edge_kinds": {
+          "COMPILE_UNIT_BUILDS_SOURCE": 1,
+          "COMPILE_UNIT_EMITS_OBJECT": 1,
+          "COMPILE_UNIT_INCLUDES_FILE": 2,
+          "COMPILE_UNIT_USES_OPTION": 3,
+          "LINK_UNIT_HAS_INPUT": 1,
+          "TYPE_HAS_FIELD_TYPE": 4
+        }
+      },
+      "nodes": [
+        {
+          "id": "cu://src/math.cc#cfg:220fe8d40421",
+          "kind": "compile_unit",
+          "label": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "attrs": {
+            "language": "CXX",
+            "standard": "c++17",
+            "target_id": "target:////:math"
+          },
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "source://src/math.cc",
+          "kind": "source",
+          "label": "src/math.cc",
+          "attrs": {},
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "build_option://-fno-omit-frame-pointer",
+          "kind": "build_option",
+          "label": "-fno-omit-frame-pointer",
+          "attrs": {
+            "abi_relevant": true
+          },
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "build_option://-std=c++17",
+          "kind": "build_option",
+          "label": "-std=c++17",
+          "attrs": {
+            "abi_relevant": true
+          },
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "build_option://-fPIC",
+          "kind": "build_option",
+          "label": "-fPIC",
+          "attrs": {
+            "abi_relevant": true
+          },
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "kind": "object_file",
+          "label": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "attrs": {},
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "link://bazel-out/k8-fastbuild/bin/libmath.so",
+          "kind": "link_unit",
+          "label": "bazel-out/k8-fastbuild/bin/libmath.so",
+          "attrs": {
+            "kind": "shared_library",
+            "target_id": "target:////:math",
+            "soname": ""
+          },
+          "provenance": "build_evidence",
+          "confidence": "high"
+        },
+        {
+          "id": "type://__int128_t",
+          "kind": "record_type",
+          "label": "__int128_t",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__int128",
+          "kind": "record_type",
+          "label": "__int128",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__uint128_t",
+          "kind": "record_type",
+          "label": "__uint128_t",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://unsigned __int128",
+          "kind": "record_type",
+          "label": "unsigned __int128",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__NSConstantString",
+          "kind": "record_type",
+          "label": "__NSConstantString",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__NSConstantString_tag",
+          "kind": "record_type",
+          "label": "__NSConstantString_tag",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__builtin_va_list",
+          "kind": "record_type",
+          "label": "__builtin_va_list",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "type://__va_list_tag",
+          "kind": "record_type",
+          "label": "__va_list_tag",
+          "attrs": {},
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced"
+        },
+        {
+          "id": "file://include/abicheck_lab/math.h",
+          "kind": "file",
+          "label": "include/abicheck_lab/math.h",
+          "attrs": {},
+          "provenance": "include_graph",
+          "confidence": "high"
+        }
+      ],
+      "edges": [
+        {
+          "edge": "COMPILE_UNIT_BUILDS_SOURCE",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "source://src/math.cc",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "COMPILE_UNIT_USES_OPTION",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "build_option://-fno-omit-frame-pointer",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "COMPILE_UNIT_USES_OPTION",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "build_option://-std=c++17",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "COMPILE_UNIT_USES_OPTION",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "build_option://-fPIC",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "COMPILE_UNIT_EMITS_OBJECT",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "LINK_UNIT_HAS_INPUT",
+          "src": "link://bazel-out/k8-fastbuild/bin/libmath.so",
+          "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "provenance": "build_evidence",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "type://__int128_t",
+          "dst": "type://__int128",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "type://__uint128_t",
+          "dst": "type://unsigned __int128",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "type://__NSConstantString",
+          "dst": "type://__NSConstantString_tag",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "src": "type://__builtin_va_list",
+          "dst": "type://__va_list_tag",
+          "provenance": "clang-ast-inline",
+          "confidence": "reduced",
+          "attrs": {
+            "role": "alias"
+          }
+        },
+        {
+          "edge": "COMPILE_UNIT_INCLUDES_FILE",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "source://src/math.cc",
+          "provenance": "include_graph",
+          "confidence": "high",
+          "attrs": {}
+        },
+        {
+          "edge": "COMPILE_UNIT_INCLUDES_FILE",
+          "src": "cu://src/math.cc#cfg:220fe8d40421",
+          "dst": "file://include/abicheck_lab/math.h",
+          "provenance": "include_graph",
+          "confidence": "high",
+          "attrs": {}
+        }
+      ],
+      "indexes": {
+        "by_target": {},
+        "by_file": {
+          "source://src/math.cc": [
+            "cu://src/math.cc#cfg:220fe8d40421"
+          ],
+          "file://include/abicheck_lab/math.h": [
+            "cu://src/math.cc#cfg:220fe8d40421"
+          ]
+        },
+        "by_binary_symbol": {},
+        "by_source_decl": {}
+      },
+      "external_graph_refs": [],
+      "extractor_passes": {
+        "include_graph": true
+      },
+      "narrowed_passes": {},
+      "narrowed_scope": {},
+      "degraded_passes": {
+        "call_graph": true,
+        "type_graph": true
+      }
+    }
+  },
+  "parsed_with_build_context": false,
+  "build_context_defines": [],
+  "conditional_fields": {},
+  "schema_version": 8
+}
