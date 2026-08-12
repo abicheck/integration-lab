@@ -7,192 +7,130 @@ and per-run timing numbers. None of that reflects the public ABI, so
 committing it verbatim turns every baseline refresh into a noisy diff even
 when nothing observable changed.
 
-This script strips or rewrites exactly that class of field:
+## Design: an explicit allowlist of exact paths, not a key-name pattern
 
-  * a handful of known top-level scalar fields (created_at, source_mtime*,
-    source_size, build_id) are dropped
-  * within the `build_source_pack`/`build_source` provenance subtrees only
-    (never elsewhere in the document -- see below), volatile keys are
-    dropped wherever they occur inside those subtrees: any `*_s`/elapsed/
-    duration timing field, cache_hit_rate/ratio, and the hash digests
-    computed over that volatile payload (content_hash, graph_id, artifacts)
-  * absolute paths that contain the repo checkout directory are rewritten
-    to repo-relative paths, and absolute paths into the Bazel
-    execroot/output tree are rewritten to the bazel-out-relative fragment
-    -- but only in known path-bearing fields (source_location,
-    source_header, source_path) and inside the provenance subtrees, not
-    every string in the document (see below)
-  * "<number>s" timing fragments inside the free-text extractor "detail"
-    field specifically (not arbitrary strings, so a genuine API constant
-    like a `30s` chrono literal is never touched) are replaced with a
-    constant placeholder so re-running the same build twice produces
-    byte-identical prose
+Earlier revisions of this script tried to strip "any key that looks
+volatile" -- by name, or by name within a `build_source`/`build_source_pack`
+subtree assumed to be pure provenance. Both turned out to be unsafe, twice
+over (Codex review, in order of discovery):
 
-Why the key-name stripping is scoped to two named subtrees rather than
-applied to the whole document: the report also carries actual ABI content
-under name-keyed maps (`constants`, `functions`, `variables`, `types`,
-`enums`, `typedefs`, ...). A real public constant or entity can legitimately
-be named `timeout_s` or `elapsed`; stripping by key name anywhere in the
-tree would silently delete that entity from the committed baseline instead
-of just some provenance metadata, hiding a real removal/change from every
-future comparison (Codex review). Restricting the stripping to
-`build_source_pack`/`build_source` -- the only places these volatile
-fields have actually been observed -- keeps the blast radius to provenance
-metadata only.
+  1. A key-name pattern applied to the *whole document* can match a real
+     ABI entity's own name (a constant or function legitimately called
+     `timeout_s` or `elapsed`), silently deleting it.
+  2. Scoping that same pattern to "inside build_source/build_source_pack"
+     doesn't fix it: those subtrees aren't pure provenance either --
+     `build_source.build_evidence.compile_units[].defines` (preprocessor
+     defines, ABI-relevant) and `build_source.source_abi`/`source_graph`
+     (the actual source-linkage evidence: `mappings`, `source_edges`,
+     `nodes`, `edges`, `indexes.by_target`/`by_file`/`by_binary_symbol`/
+     `by_source_decl`, ...) are real content, keyed by real identifiers
+     (file paths, symbol names, target labels) that could just as easily
+     collide with a volatile-looking name.
 
-That scoping alone isn't quite enough, though: `build_source` itself
-contains at least one name-keyed map of real ABI-relevant build context,
-not provenance -- `build_source.build_evidence.compile_units[].defines`
-(preprocessor defines actually used to compile each translation unit,
-which affect the ABI, e.g. via `#ifdef`-conditional declarations). A
-define legitimately named `timeout_s` would otherwise be deleted by the
-same in-subtree suffix stripping that clears real timing fields (Codex
-review). `defines` (and any future name-keyed content map added inside a
-provenance subtree) is carved out via `_ABI_CONTENT_KEYS_INSIDE_PROVENANCE`
-and passed through completely untouched by both the key stripper and the
-path normalizer below, even though it nests inside `build_source`.
+The pattern in both cases is the same: **a name-keyed map, where the *key*
+is itself arbitrary content, can't safely be filtered by key name** --
+anywhere. The only names safe to match are ones that are *fixed schema
+fields* of a dataclass-shaped object (always spelled exactly that way by
+abicheck itself: `content_hash`, `created_at`, `elapsed_s`, `detail`, ...),
+never the key of a name-keyed content map.
 
-Path rewriting was originally applied to every string in the document on
-the theory that it acts on *values* rather than *keys*, so it couldn't
-collide with and delete a same-named ABI entity the way key stripping
-could. That's true for deletion, but not for corruption: a public
-constant, macro, or default value that happens to hold an absolute-path-
-looking string (e.g. `/opt/abicheck-bazel-lab/config`) would be truncated
-the same as a real path, and two distinct values with different prefixes
-could truncate to the same suffix -- silently hiding a real change from
-comparison (Codex review). Path rewriting is now scoped the same way key
-stripping is: only fields actually known to hold filesystem paths
-(`source_location`, `source_header`, `source_path`) plus anything inside
-the provenance subtrees, where every string actually is provenance.
+So instead of trying to characterize "safe" subtrees, this script deletes
+only the exact, evidence-verified paths in `DELETE_PATHS` below -- each one
+checked against the real committed `abi/math.abicheck.json` before being
+added. A future abicheck version adding a new volatile field somewhere
+else in the tree will show up as a small amount of committed-baseline
+noise (annoying, visible, safe) rather than a silently deleted ABI entity
+(invisible, unsafe). That asymmetry is deliberate.
+
+Path rewriting (absolute -> repo/bazel-out-relative) uses the same
+reasoning: only `source_location`/`source_header`/`source_path` are
+matched by name, because those are fixed schema fields of function/type
+descriptors (never a name-keyed map's key), and no absolute repo/execroot
+paths have been observed anywhere else in the tree -- verified against the
+committed baseline; the only other absolute paths present
+(`compile_units[].argv[0]`, `link_units[].linker_argv[0]`, e.g.
+`/usr/bin/gcc`) are stable toolchain paths, not run-to-run noise, and are
+left untouched.
 
 Everything that reflects the actual public ABI/API (symbols, types,
 signatures, coverage status, source-relative locations, toolchain
-identity) is left untouched. The digest fields are the one exception:
-abicheck computes them over the raw payload *before* this script runs, so
-they still vary run-to-run even after normalization; we drop the stale
-digest rather than commit one that claims to be stable and isn't.
+identity) is left untouched.
 """
 import argparse
 import json
 import re
 import sys
 
-# Top-level scalar fields dropped unconditionally. These are only ever
-# emitted at the document root by `abicheck --mode dump`, never as a
-# same-named entity nested under functions/types/constants/etc., so
-# there's no ambiguity in stripping them by name here.
-TOP_LEVEL_VOLATILE_KEYS = {
-    "created_at",
-    "source_mtime",
-    "source_mtime_epoch",
-    "source_size",
-    "build_id",
+# Sentinel marking "any index of a list" in a DELETE_PATHS entry.
+ANY_INDEX = object()
+
+# Exact paths to delete, each verified against the real committed
+# abi/math.abicheck.json before being added here -- see the module
+# docstring for why this is a strict allowlist rather than a name pattern.
+DELETE_PATHS = frozenset({
+    # Wall-clock timestamp at the document root.
+    ("created_at",),
     # baseline.yml passes `new-version: main-${{ github.sha }}`, so both of
-    # these change on *every* push to main regardless of whether the ABI
+    # these change on every push to main regardless of whether the ABI
     # did -- defeating the "commit only when the ABI actually changed"
-    # goal this whole script exists for (Codex review: a diff-suppression
-    # check that never suppresses isn't one). git history on this file
-    # already records which commit each baseline refresh corresponds to,
-    # so there's no information lost by not duplicating that SHA here too.
-    "version",
-    "git_commit",
-}
+    # goal this script exists for. Git history on abi/math.abicheck.json
+    # already records which commit each refresh corresponds to.
+    ("version",),
+    ("git_commit",),
+    # Content digest computed over the raw (pre-normalization) payload --
+    # still varies run-to-run even after everything else here is
+    # normalized. We can't recompute abicheck's own hash algorithm, so the
+    # honest fix is to drop the stale digest rather than commit one that
+    # claims to be stable and isn't.
+    ("build_source_pack", "content_hash"),
+    ("build_source", "manifest", "created_at"),
+    ("build_source", "manifest", "artifacts"),
+    ("build_source", "manifest", "extractors", ANY_INDEX, "artifacts"),
+    ("build_source", "manifest", "coverage", ANY_INDEX, "elapsed_s"),
+    ("build_source", "source_abi", "coverage", "cache_lookup_s"),
+    ("build_source", "source_abi", "coverage", "extract_s"),
+    ("build_source", "source_abi", "coverage", "link_s"),
+    ("build_source", "source_abi", "coverage", "elapsed_s"),
+    ("build_source", "source_graph", "graph_id"),
+})
 
-# Named subtrees that hold nothing but build/collection provenance -- never
-# ABI content -- so it's safe to strip volatile keys recursively *within*
-# them. Everything outside these subtrees (functions, variables, types,
-# constants, enums, typedefs, elf/dwarf symbol tables, ...) is left alone
-# by the key-based stripping below.
-_PROVENANCE_CONTAINER_KEYS = ("build_source_pack", "build_source")
+# Field names actually known to hold a filesystem path emitted by
+# `abicheck --mode dump` -- fixed schema fields of function/type
+# descriptors, never the key of a name-keyed content map. See the module
+# docstring for why that distinction is what makes name-based matching
+# safe here but not for DELETE_PATHS-style stripping.
+_PATH_BEARING_KEYS = {"source_location", "source_header", "source_path"}
 
-# Name-keyed maps of real ABI-relevant content that happen to nest *inside*
-# a provenance container above (e.g. compile_units[].defines: the actual
-# preprocessor defines a translation unit was built with, which can affect
-# the ABI via #ifdef-conditional declarations). Not provenance -- carved
-# out of both the key stripper and the path normalizer below so a define
-# or similar entry legitimately named like a volatile field, or holding a
-# path-looking value, is never touched.
-_ABI_CONTENT_KEYS_INSIDE_PROVENANCE = {"defines"}
-
-# Keys dropped wherever they appear *inside a provenance container* above.
-# These only ever carry run-provenance / timing information there.
-_PROVENANCE_VOLATILE_KEYS = {
-    "created_at",
-    "cache_hit_rate",
-    "cache_hit_ratio",
-    # Content digests computed by abicheck over the raw (pre-normalization)
-    # payload, which still embeds the volatile fields above -- so the
-    # digest itself varies run-to-run even when the ABI doesn't. We can't
-    # recompute abicheck's own hash algorithm here, so the honest fix is
-    # to drop the stale digest rather than commit one that lies about
-    # being stable.
-    "content_hash",
-    "graph_id",
-    "artifacts",
-}
-
-# Catches other per-run numeric timing fields without having to enumerate
-# every extractor's field name (e.g. a future `parse_s`, `query_s`,
-# `cache_lookup_s`, ...): anything named like a "<phase>_s" seconds
-# counter, or an explicit elapsed/duration field. Plain `str.endswith`
-# rather than a `$`-anchored regex fed to `re.match` -- `re.match` only
-# anchors at the *start* of the string, so a `_s$` alternative there would
-# only ever match the literal two-character key "_s". Applied only inside
-# a provenance container, same as _PROVENANCE_VOLATILE_KEYS above.
-_PROVENANCE_VOLATILE_KEY_EXACT = {"elapsed", "elapsed_s", "duration", "duration_s"}
-
-# Only applied to the extractor "detail" free-text field -- not to
-# arbitrary strings, so a genuine ABI-relevant string constant (e.g. a
-# `30s` chrono literal in a default argument) is never rewritten.
+# Only applied to the extractor "detail" free-text field -- a fixed schema
+# field name, not arbitrary content -- so a genuine ABI-relevant string
+# constant (e.g. a `30s` chrono literal in a default argument) is never
+# rewritten.
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
 
 
-def _is_provenance_volatile_key(key):
-    return (
-        key in _PROVENANCE_VOLATILE_KEYS
-        or key in _PROVENANCE_VOLATILE_KEY_EXACT
-        or key.endswith("_s")
-    )
+def _matches(path, pattern):
+    if len(path) != len(pattern):
+        return False
+    return all(p is ANY_INDEX or p == a for p, a in zip(pattern, path))
 
 
-def _strip_provenance_volatile_keys(node):
-    """Recursively drop volatile keys -- used only inside a provenance
-    container, where every key is metadata and none is an ABI entity name.
+def _should_delete(path):
+    return any(_matches(path, pattern) for pattern in DELETE_PATHS)
 
-    Except: `_ABI_CONTENT_KEYS_INSIDE_PROVENANCE` values are real ABI
-    content that happens to nest here too, so they're copied through
-    unchanged rather than recursed into for stripping.
-    """
+
+def strip_volatile_paths(node, path=()):
     if isinstance(node, dict):
         return {
-            key: (value if key in _ABI_CONTENT_KEYS_INSIDE_PROVENANCE
-                  else _strip_provenance_volatile_keys(value))
+            key: strip_volatile_paths(value, path + (key,))
             for key, value in node.items()
-            if not _is_provenance_volatile_key(key)
+            if not _should_delete(path + (key,))
         }
     if isinstance(node, list):
-        return [_strip_provenance_volatile_keys(item) for item in node]
+        return [strip_volatile_paths(item, path + (ANY_INDEX,)) for item in node]
     return node
 
 
-def strip_volatile_keys(report):
-    report = dict(report)
-    for key in TOP_LEVEL_VOLATILE_KEYS:
-        report.pop(key, None)
-    for container_key in _PROVENANCE_CONTAINER_KEYS:
-        if container_key in report:
-            report[container_key] = _strip_provenance_volatile_keys(report[container_key])
-    return report
-
-
-# Field names actually known to hold a filesystem path emitted by
-# `abicheck --mode dump`. Path rewriting outside a provenance container is
-# restricted to these -- see the module docstring for why "every string
-# that looks like a path" is unsafe.
-_PATH_BEARING_KEYS = {"source_location", "source_header", "source_path"}
-
-
-def normalize_paths(node, repo_root_marker, *, in_provenance=False):
+def normalize_paths(node, repo_root_marker, *, key=None):
     """Rewrite absolute paths to relative ones.
 
     Any string containing the repo's directory name is truncated to the
@@ -200,27 +138,14 @@ def normalize_paths(node, repo_root_marker, *, in_provenance=False):
     path but reaches into a Bazel execroot/output tree is truncated to
     the `bazel-out/...` (or `external/...`) relative fragment.
 
-    Only applied to known path-bearing field names, or unconditionally
-    within a provenance subtree (`in_provenance=True`) where every value
-    actually is build/collection metadata, never ABI content.
+    Only applied to known path-bearing field names (see
+    `_PATH_BEARING_KEYS`) -- not every string in the document.
     """
     if isinstance(node, dict):
-        return {
-            key: (value if key in _ABI_CONTENT_KEYS_INSIDE_PROVENANCE
-                  else normalize_paths(
-                      value,
-                      repo_root_marker,
-                      in_provenance=(
-                          in_provenance
-                          or key in _PATH_BEARING_KEYS
-                          or key in _PROVENANCE_CONTAINER_KEYS
-                      ),
-                  ))
-            for key, value in node.items()
-        }
+        return {k: normalize_paths(v, repo_root_marker, key=k) for k, v in node.items()}
     if isinstance(node, list):
-        return [normalize_paths(item, repo_root_marker, in_provenance=in_provenance) for item in node]
-    if isinstance(node, str) and in_provenance:
+        return [normalize_paths(item, repo_root_marker, key=key) for item in node]
+    if isinstance(node, str) and key in _PATH_BEARING_KEYS:
         return _normalize_path_string(node, repo_root_marker)
     return node
 
@@ -245,21 +170,18 @@ def _normalize_path_string(value, repo_root_marker):
     return value
 
 
-def normalize_timing_prose(node, in_detail_field=False):
+def normalize_timing_prose(node, *, key=None):
     if isinstance(node, dict):
-        return {
-            key: normalize_timing_prose(value, in_detail_field=(key == "detail"))
-            for key, value in node.items()
-        }
+        return {k: normalize_timing_prose(v, key=k) for k, v in node.items()}
     if isinstance(node, list):
-        return [normalize_timing_prose(item, in_detail_field=in_detail_field) for item in node]
-    if isinstance(node, str) and in_detail_field:
+        return [normalize_timing_prose(item, key=key) for item in node]
+    if isinstance(node, str) and key == "detail":
         return TIMING_RE.sub("Ns", node)
     return node
 
 
 def normalize(report, repo_root_marker):
-    report = strip_volatile_keys(report)
+    report = strip_volatile_paths(report)
     report = normalize_paths(report, repo_root_marker)
     report = normalize_timing_prose(report)
     return report

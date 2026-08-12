@@ -101,39 +101,50 @@ timings, and content-hash fields computed over that volatile payload before
 this script ever sees it. Left in place, every baseline refresh would
 produce a commit even when the public ABI didn't change.
 
-`scripts/normalize_baseline.py` runs between `dump` and the commit step and:
+`scripts/normalize_baseline.py` runs between `dump` and the commit step.
+It deletes an **explicit allowlist of exact paths** (`DELETE_PATHS`), each
+verified against the real committed `abi/math.abicheck.json` before being
+added — not a key-name pattern applied broadly. Two earlier attempts at a
+broader pattern both turned out to delete real ABI content: a name-keyed
+map's *key* is itself arbitrary content (a real constant or function could
+legitimately be called `timeout_s` or `elapsed`; `build_source`'s own
+source-linkage evidence — `mappings`, `source_edges`, `indexes.by_target`/
+`by_file`/..., preprocessor `defines` — is keyed by real file paths, symbol
+names, and target labels, not just provenance), so no subtree of the
+document is safe to filter by key-name pattern. The exact paths currently
+stripped: the document-root `created_at`/`version`/`git_commit` (the
+latter two because `baseline.yml` passes `new-version:
+main-${{ github.sha }}`, which would otherwise change on every push
+regardless of whether the ABI did — git history on the file already
+records which commit each refresh reflects), `build_source_pack
+.content_hash`, and inside `build_source`: `manifest.created_at`,
+`manifest.artifacts`, each extractor's `artifacts`, each coverage entry's
+`elapsed_s`, `source_abi.coverage`'s `cache_lookup_s`/`extract_s`/
+`link_s`/`elapsed_s`, and `source_graph.graph_id`. A future abicheck
+version adding a new volatile field elsewhere shows up as a small amount
+of visible, debuggable baseline noise rather than a silently deleted ABI
+entity — that asymmetry is deliberate.
 
-- drops a handful of known volatile scalar fields at the report root
-  (`created_at`, `source_mtime*`, `source_size`, `build_id`), and, *within
-  the `build_source_pack`/`build_source` provenance subtrees specifically*
-  (never elsewhere — see the module docstring for why), any `*_s`/`elapsed`/
-  `duration` timing field, `cache_hit_rate`/`ratio`, and the hash digests
-  computed over that volatile payload (`content_hash`, `graph_id`,
-  `artifacts`) — those digests still vary run-to-run even after everything
-  else is normalized, so the honest fix is to drop them rather than commit
-  a digest that claims to be stable and isn't. Stripping by key name is
-  deliberately *not* applied to the rest of the document (`constants`,
-  `functions`, `variables`, `types`, ...), because those are ABI content
-  name-keyed by the entity's own name — a real constant or function could
-  legitimately be called `timeout_s` or `elapsed`, and a global strip would
-  silently delete it instead of just provenance metadata
-- rewrites absolute paths under the repo checkout to repo-relative paths,
-  and absolute paths into the Bazel execroot/output tree to their
-  `bazel-out/...`-relative fragment
-- collapses `<N>s` timing fragments in the extractor `detail` field
-  specifically (not arbitrary strings, so a genuine ABI-relevant literal
-  like a `30s` chrono constant is never rewritten) to a constant placeholder
+Absolute-path rewriting (repo checkout → repo-relative,
+Bazel execroot/output → `bazel-out/...`-relative) is scoped the same way:
+only `source_location`/`source_header`/`source_path`, fixed schema field
+names of function/type descriptors that are never the key of a
+name-keyed content map, so matching them by name can't collide with real
+content the way `DELETE_PATHS`-style stripping could. No other absolute
+paths that vary run-to-run have been found anywhere else in the tree; the
+only other absolute paths present (`compile_units[].argv[0]`,
+`link_units[].linker_argv[0]`, e.g. `/usr/bin/gcc`) are stable toolchain
+paths, not noise, and are left untouched. `<N>s` timing fragments in the
+extractor `detail` field (also a fixed schema field name) are collapsed to
+a constant placeholder.
 
-so that two builds of the same commit on different runners/machines
-normalize to byte-identical JSON — verified idempotent (double-normalizing
-is a no-op) against the committed baseline. `git_commit`/`version` are also
-stripped at the report root: `baseline.yml` passes `new-version:
-main-${{ github.sha }}`, so both fields would otherwise change on *every*
-push to `main` regardless of whether the ABI did, defeating the "commit
-only when the ABI actually changed" point of normalizing at all. Git
-history on `abi/math.abicheck.json` already records which commit each
-refresh corresponds to, so nothing is lost by not duplicating that SHA
-inside the file too.
+Verified idempotent (double-normalizing is a no-op) against the committed
+baseline, and against a synthetic report exercising every collision this
+design guards against (a `constants.timeout_s` entry, a function named
+`elapsed_s`, a `source_graph.indexes.by_target` key containing `timeout_s`,
+a `defines` map with `timeout_s`/`elapsed`, and path-like constant values)
+— all survive `normalize()` unchanged while the real volatile fields
+listed above are still stripped.
 
 ## Build environment
 
