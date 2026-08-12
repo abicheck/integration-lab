@@ -1,2 +1,4 @@
 bazel-*
 *.abicheck.json.tmp
+__pycache__/
+*.pyc

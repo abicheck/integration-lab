@@ -9,15 +9,18 @@ when nothing observable changed.
 
 This script strips or rewrites exactly that class of field:
 
-  * volatile keys (created_at, source_mtime*, source_size, build_id, ...)
-    are dropped wherever they occur, at any depth
+  * volatile keys (created_at, source_mtime*, source_size, build_id,
+    elapsed_s, extract_s, link_s, and any other `*_s`/timing/cache-rate
+    field, ...) are dropped wherever they occur, at any depth
   * absolute paths that contain the repo checkout directory are rewritten
     to repo-relative paths
   * absolute paths into the Bazel execroot/output tree are rewritten to
     the bazel-out-relative fragment
-  * "<number>s" timing fragments inside free-text extractor "detail"
-    strings are replaced with a constant placeholder so re-running the
-    same build twice produces byte-identical prose
+  * "<number>s" timing fragments inside the free-text extractor "detail"
+    field specifically (not arbitrary strings, so a genuine API constant
+    like a `30s` chrono literal is never touched) are replaced with a
+    constant placeholder so re-running the same build twice produces
+    byte-identical prose
 
 Everything that reflects the actual public ABI/API (symbols, types,
 signatures, coverage status, source-relative locations, toolchain
@@ -29,16 +32,35 @@ import re
 import sys
 
 # Keys dropped wherever they appear in the report, at any nesting depth.
-# These only ever carry run-provenance / timing information.
+# These only ever carry run-provenance / timing information, never ABI
+# content — so it's safe to strip by name regardless of where they nest.
 VOLATILE_KEYS = {
     "created_at",
     "source_mtime",
     "source_mtime_epoch",
     "source_size",
     "build_id",
+    "elapsed_s",
+    "extract_s",
+    "link_s",
+    "cache_hit_rate",
+    "cache_hit_ratio",
 }
 
+# Catches other per-run numeric timing fields without having to enumerate
+# every extractor's field name (e.g. a future `parse_s`, `query_s`, ...):
+# anything named like a "<phase>_s" seconds counter, or an explicit
+# elapsed/duration field.
+VOLATILE_KEY_RE = re.compile(r"^(elapsed|duration)(_s)?$|_s$")
+
+# Only applied to the extractor "detail" free-text field — not to
+# arbitrary strings, so a genuine ABI-relevant string constant (e.g. a
+# `30s` chrono literal in a default argument) is never rewritten.
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
+
+
+def _is_volatile_key(key):
+    return key in VOLATILE_KEYS or bool(VOLATILE_KEY_RE.match(key))
 
 
 def strip_volatile_keys(node):
@@ -46,7 +68,7 @@ def strip_volatile_keys(node):
         return {
             key: strip_volatile_keys(value)
             for key, value in node.items()
-            if key not in VOLATILE_KEYS
+            if not _is_volatile_key(key)
         }
     if isinstance(node, list):
         return [strip_volatile_keys(item) for item in node]
@@ -90,12 +112,15 @@ def _normalize_path_string(value, repo_root_marker):
     return value
 
 
-def normalize_timing_prose(node):
+def normalize_timing_prose(node, in_detail_field=False):
     if isinstance(node, dict):
-        return {key: normalize_timing_prose(value) for key, value in node.items()}
+        return {
+            key: normalize_timing_prose(value, in_detail_field=(key == "detail"))
+            for key, value in node.items()
+        }
     if isinstance(node, list):
-        return [normalize_timing_prose(item) for item in node]
-    if isinstance(node, str):
+        return [normalize_timing_prose(item, in_detail_field=in_detail_field) for item in node]
+    if isinstance(node, str) and in_detail_field:
         return TIMING_RE.sub("Ns", node)
     return node
 
