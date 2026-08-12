@@ -48,13 +48,23 @@ jobs:
             "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
             > "$RUNNER_TEMP/math.base.abicheck.json"
 
+      - name: Set up Bazel disk cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-
+
       - name: Build candidate shared library with Bazel
         run: bazel build //:math
 
-      # Single canonical analysis: this one scan is the gate, the PR
-      # comment, and the job summary. Nothing downstream re-derives the
-      # verdict from a second, differently-scoped run.
-      - name: ABICheck source scan (gate + PR report)
+      # Single canonical analysis: this one scan is the gate, the source
+      # of the PR comment (rendered below, since abicheck's built-in
+      # pr-comment is a compare-mode-only no-op as of v0.5.0/main — see
+      # scripts/render_scan_comment.py), and the job summary (abicheck's
+      # native add-job-summary, which does support scan mode).
+      - name: ABICheck source scan (gate + canonical report)
         id: scan
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
@@ -71,9 +81,11 @@ jobs:
           output-file: abicheck-report.json
           fail-on-breaking: true
           fail-on-api-break: true
-          pr-comment: true
-          pr-comment-on: always
-          pr-comment-detail: standard
+          add-job-summary: true
+          # scan mode has no built-in PR-comment renderer to disable, but
+          # setting this explicitly documents that we deliberately don't
+          # rely on it (see the render-comment step below).
+          pr-comment: false
 
       # Publish evidence unconditionally: a red gate is exactly when this
       # report is most useful for debugging, and this must never be
@@ -87,25 +99,71 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Write job summary
+      # Supplementary, explicitly non-gating binary/header-only diff for
+      # humans who want a detailed side-by-side. It is deliberately NOT
+      # posted as a PR comment (pr-comment: false) and NEVER gates
+      # (fail-on-breaking/fail-on-api-break: false) — it must not be
+      # mistaken for the canonical report above, which is why it isn't
+      # given the sticky-comment channel at all, only an artifact.
+      - name: Binary/header-only diagnostic (non-gating, artifact only)
+        id: diagnostic
+        if: always()
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          format: json
+          output-file: abicheck-diagnostic-compare.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: false
+          pr-comment: false
+
+      - name: Upload diagnostic compare artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-diagnostic-compare
+          path: abicheck-diagnostic-compare.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Render canonical PR comment from the gating scan
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          {
-            echo "### ABICheck source scan"
-            echo
-            echo "- requested depth: \`source\`"
-            echo "- base SHA: \`${{ github.event.pull_request.base.sha }}\`"
-            echo "- gate outcome: \`${{ steps.scan.outcome }}\`"
-            if [ -f abicheck-report.json ]; then
-              echo
-              echo "Full report: see the \`abicheck-report\` artifact on this run."
-            else
-              echo
-              echo "_No report file was produced by the scan step._"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python3 scripts/render_scan_comment.py abicheck-report.json \
+            -o "$RUNNER_TEMP/pr-comment.md" \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --requested-depth source \
+            --run-url "$RUN_URL" \
+            --artifact-note "A non-gating binary/header-only diagnostic is available in the \`abicheck-diagnostic-compare\` workflow artifact."
+
+      - name: Post/update sticky PR comment
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.RUNNER_TEMP + '/pr-comment.md', 'utf8');
+            const marker = '<!-- abicheck-lab-canonical-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
 
       # The scan step above is the single source of truth for the gate.
       # We ran it with continue-on-error so evidence still gets published
@@ -114,5 +172,86 @@ jobs:
       - name: Enforce gate
         if: steps.scan.outcome == 'failure'
         run: |
-          echo 'ABICheck source scan found a gated incompatibility (see the abicheck-report artifact and PR comment for details).' >&2
+          echo 'ABICheck source scan found a gated incompatibility (see the PR comment, job summary, and abicheck-report artifact for details).' >&2
           exit 1
+
+  # Non-blocking canary: the same scan, pinned to an exact commit on
+  # abicheck/main instead of the last release, so this PR shows what the
+  # *next* abicheck release will do before it ships. Never gates (the
+  # abicheck step's own continue-on-error, plus no enforce-gate step at
+  # all) and never posts a PR comment — job summary only, so it can't be
+  # confused with the canonical stable-lane report above.
+  #
+  # It also exercises --contract-evaluation (ADR-049), main-only as of
+  # this writing: with --against set, it stamps an orthogonal
+  # coverage/contract verdict (COVERAGE_INCOMPLETE) when the requested
+  # evidence depth wasn't actually achievable — the "depth: source asked,
+  # binary depth delivered, but still reported COMPATIBLE" gap called out
+  # against the stable lane. Update the pinned SHA periodically; do not
+  # float this to @main.
+  canary:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve trusted baseline from PR base SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      - name: Set up Bazel disk cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate shared library with Bazel
+        run: bazel build //:math
+
+      - name: ABICheck source scan (canary — abicheck/main, non-blocking)
+        id: canary_scan
+        continue-on-error: true
+        uses: abicheck/abicheck@e5fabd40357f36a946b572948866f34f6c9f0575 # main (pin updated manually — see comment above)
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          sources: .
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          budget: 10m
+          format: json
+          output-file: abicheck-canary-report.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+          extra-args: '--contract-evaluation'
+
+      - name: Upload canary report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-canary-report
+          path: abicheck-canary-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Note canary status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Canary lane (non-blocking)"
+            echo
+            echo "Ran against \`abicheck/main@e5fabd40357f36a946b572948866f34f6c9f0575\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
+          } >> "$GITHUB_STEP_SUMMARY"

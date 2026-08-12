@@ -9,9 +9,10 @@ when nothing observable changed.
 
 This script strips or rewrites exactly that class of field:
 
-  * volatile keys (created_at, source_mtime*, source_size, build_id,
-    elapsed_s, extract_s, link_s, and any other `*_s`/timing/cache-rate
-    field, ...) are dropped wherever they occur, at any depth
+  * volatile keys (created_at, source_mtime*, source_size, build_id, any
+    `*_s`/elapsed/duration timing field, cache_hit_rate/ratio, and hash
+    digests computed over that volatile payload -- content_hash, graph_id,
+    artifacts) are dropped wherever they occur, at any depth
   * absolute paths that contain the repo checkout directory are rewritten
     to repo-relative paths
   * absolute paths into the Bazel execroot/output tree are rewritten to
@@ -24,7 +25,10 @@ This script strips or rewrites exactly that class of field:
 
 Everything that reflects the actual public ABI/API (symbols, types,
 signatures, coverage status, source-relative locations, toolchain
-identity, semantic content hash) is left untouched.
+identity) is left untouched. The digest fields are the one exception:
+abicheck computes them over the raw payload *before* this script runs, so
+they still vary run-to-run even after normalization; we drop the stale
+digest rather than commit one that claims to be stable and isn't.
 """
 import argparse
 import json
@@ -40,27 +44,36 @@ VOLATILE_KEYS = {
     "source_mtime_epoch",
     "source_size",
     "build_id",
-    "elapsed_s",
-    "extract_s",
-    "link_s",
     "cache_hit_rate",
     "cache_hit_ratio",
+    # Content digests computed by abicheck over the raw (pre-normalization)
+    # payload, which still embeds the volatile fields above -- so the
+    # digest itself varies run-to-run even when the ABI doesn't. We can't
+    # recompute abicheck's own hash algorithm here, so the honest fix is
+    # to drop the stale digest rather than commit one that lies about
+    # being stable.
+    "content_hash",
+    "graph_id",
+    "artifacts",
 }
 
 # Catches other per-run numeric timing fields without having to enumerate
-# every extractor's field name (e.g. a future `parse_s`, `query_s`, ...):
-# anything named like a "<phase>_s" seconds counter, or an explicit
-# elapsed/duration field.
-VOLATILE_KEY_RE = re.compile(r"^(elapsed|duration)(_s)?$|_s$")
+# every extractor's field name (e.g. a future `parse_s`, `query_s`,
+# `cache_lookup_s`, ...): anything named like a "<phase>_s" seconds
+# counter, or an explicit elapsed/duration field. Plain `str.endswith`
+# rather than a `$`-anchored regex fed to `re.match` -- `re.match` only
+# anchors at the *start* of the string, so a `_s$` alternative there would
+# only ever match the literal two-character key "_s".
+_VOLATILE_KEY_EXACT = {"elapsed", "elapsed_s", "duration", "duration_s"}
 
-# Only applied to the extractor "detail" free-text field — not to
+# Only applied to the extractor "detail" free-text field -- not to
 # arbitrary strings, so a genuine ABI-relevant string constant (e.g. a
 # `30s` chrono literal in a default argument) is never rewritten.
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
 
 
 def _is_volatile_key(key):
-    return key in VOLATILE_KEYS or bool(VOLATILE_KEY_RE.match(key))
+    return key in VOLATILE_KEYS or key in _VOLATILE_KEY_EXACT or key.endswith("_s")
 
 
 def strip_volatile_keys(node):

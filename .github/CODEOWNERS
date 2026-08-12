@@ -1,0 +1,11 @@
+# The committed ABI baseline is the trusted "old side" every PR gets
+# compared against (abi-scan.yml reads it from the PR's base SHA via
+# `git show`, not from the PR's own working tree, specifically so a PR
+# can't rewrite its own baseline). Requiring review on it here is the
+# second half of that defense: even a baseline edit that *lands on main*
+# needs a human to sign off, so `baseline.yml`'s bot-authored refresh
+# commits are the only unreviewed path this file can change through.
+#
+# This only has teeth once branch protection on `main` requires review
+# from code owners for matching paths.
+abi/** @napetrov
