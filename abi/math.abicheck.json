@@ -159,21 +159,6 @@
         {
           "build_system": "bazel",
           "confidence": "high",
-          "dependencies": [],
-          "id": "target:////:math_api",
-          "kind": "static_library",
-          "name": "math_api",
-          "outputs": [],
-          "private_headers": [],
-          "public_headers": [
-            "include/abicheck_lab/math.h"
-          ],
-          "source_files": [],
-          "visibility": "public"
-        },
-        {
-          "build_system": "bazel",
-          "confidence": "high",
           "dependencies": [
             "target:////:math_api"
           ],
@@ -190,6 +175,21 @@
             "src/math.cc"
           ],
           "visibility": "unknown"
+        },
+        {
+          "build_system": "bazel",
+          "confidence": "high",
+          "dependencies": [],
+          "id": "target:////:math_api",
+          "kind": "static_library",
+          "name": "math_api",
+          "outputs": [],
+          "private_headers": [],
+          "public_headers": [
+            "include/abicheck_lab/math.h"
+          ],
+          "source_files": [],
+          "visibility": "public"
         },
         {
           "build_system": "bazel",
@@ -262,32 +262,6 @@
           "build_system": "bazel",
           "confidence": "high",
           "dependencies": [],
-          "id": "target://@bazel_tools//tools/cpp:current_cc_toolchain",
-          "kind": "unknown",
-          "name": "current_cc_toolchain",
-          "outputs": [],
-          "private_headers": [],
-          "public_headers": [],
-          "source_files": [],
-          "visibility": "unknown"
-        },
-        {
-          "build_system": "bazel",
-          "confidence": "high",
-          "dependencies": [],
-          "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc-compiler-k8",
-          "kind": "unknown",
-          "name": "cc-compiler-k8",
-          "outputs": [],
-          "private_headers": [],
-          "public_headers": [],
-          "source_files": [],
-          "visibility": "unknown"
-        },
-        {
-          "build_system": "bazel",
-          "confidence": "high",
-          "dependencies": [],
           "id": "target://@bazel_tools//tools/def_parser:def_parser",
           "kind": "unknown",
           "name": "def_parser",
@@ -306,6 +280,32 @@
           "id": "target://@bazel_tools//tools/cpp:toolchain_type",
           "kind": "unknown",
           "name": "toolchain_type",
+          "outputs": [],
+          "private_headers": [],
+          "public_headers": [],
+          "source_files": [],
+          "visibility": "unknown"
+        },
+        {
+          "build_system": "bazel",
+          "confidence": "high",
+          "dependencies": [],
+          "id": "target://@bazel_tools//tools/cpp:current_cc_toolchain",
+          "kind": "unknown",
+          "name": "current_cc_toolchain",
+          "outputs": [],
+          "private_headers": [],
+          "public_headers": [],
+          "source_files": [],
+          "visibility": "unknown"
+        },
+        {
+          "build_system": "bazel",
+          "confidence": "high",
+          "dependencies": [],
+          "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc-compiler-k8",
+          "kind": "unknown",
+          "name": "cc-compiler-k8",
           "outputs": [],
           "private_headers": [],
           "public_headers": [],
@@ -1011,14 +1011,6 @@
         {
           "attrs": {},
           "confidence": "high",
-          "dst": "header://include/abicheck_lab/math.h",
-          "edge": "TARGET_HAS_PUBLIC_HEADER",
-          "provenance": "build_evidence",
-          "src": "target:////:math_api"
-        },
-        {
-          "attrs": {},
-          "confidence": "high",
           "dst": "source://src/math.cc",
           "edge": "TARGET_HAS_SOURCE",
           "provenance": "build_evidence",
@@ -1031,6 +1023,14 @@
           "edge": "TARGET_DEPENDS_ON",
           "provenance": "build_evidence",
           "src": "target:////:math"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "dst": "header://include/abicheck_lab/math.h",
+          "edge": "TARGET_HAS_PUBLIC_HEADER",
+          "provenance": "build_evidence",
+          "src": "target:////:math_api"
         },
         {
           "attrs": {},
@@ -1422,26 +1422,6 @@
         {
           "attrs": {
             "build_system": "bazel",
-            "kind": "static_library",
-            "visibility": "public"
-          },
-          "confidence": "high",
-          "id": "target:////:math_api",
-          "kind": "target",
-          "label": "math_api",
-          "provenance": "build_evidence"
-        },
-        {
-          "attrs": {},
-          "confidence": "high",
-          "id": "header://include/abicheck_lab/math.h",
-          "kind": "header",
-          "label": "include/abicheck_lab/math.h",
-          "provenance": "build_evidence"
-        },
-        {
-          "attrs": {
-            "build_system": "bazel",
             "kind": "shared_library",
             "visibility": "unknown"
           },
@@ -1457,6 +1437,26 @@
           "id": "source://src/math.cc",
           "kind": "source",
           "label": "src/math.cc",
+          "provenance": "build_evidence"
+        },
+        {
+          "attrs": {
+            "build_system": "bazel",
+            "kind": "static_library",
+            "visibility": "public"
+          },
+          "confidence": "high",
+          "id": "target:////:math_api",
+          "kind": "target",
+          "label": "math_api",
+          "provenance": "build_evidence"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "id": "header://include/abicheck_lab/math.h",
+          "kind": "header",
+          "label": "include/abicheck_lab/math.h",
           "provenance": "build_evidence"
         },
         {
@@ -1526,30 +1526,6 @@
             "visibility": "unknown"
           },
           "confidence": "high",
-          "id": "target://@bazel_tools//tools/cpp:current_cc_toolchain",
-          "kind": "target",
-          "label": "current_cc_toolchain",
-          "provenance": "build_evidence"
-        },
-        {
-          "attrs": {
-            "build_system": "bazel",
-            "kind": "unknown",
-            "visibility": "unknown"
-          },
-          "confidence": "high",
-          "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc-compiler-k8",
-          "kind": "target",
-          "label": "cc-compiler-k8",
-          "provenance": "build_evidence"
-        },
-        {
-          "attrs": {
-            "build_system": "bazel",
-            "kind": "unknown",
-            "visibility": "unknown"
-          },
-          "confidence": "high",
           "id": "target://@bazel_tools//tools/def_parser:def_parser",
           "kind": "target",
           "label": "def_parser",
@@ -1573,6 +1549,30 @@
           "id": "target://@bazel_tools//tools/cpp:toolchain_type",
           "kind": "target",
           "label": "toolchain_type",
+          "provenance": "build_evidence"
+        },
+        {
+          "attrs": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          },
+          "confidence": "high",
+          "id": "target://@bazel_tools//tools/cpp:current_cc_toolchain",
+          "kind": "target",
+          "label": "current_cc_toolchain",
+          "provenance": "build_evidence"
+        },
+        {
+          "attrs": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          },
+          "confidence": "high",
+          "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc-compiler-k8",
+          "kind": "target",
+          "label": "cc-compiler-k8",
           "provenance": "build_evidence"
         },
         {
