@@ -43,11 +43,22 @@ noise (annoying, visible, safe) rather than a silently deleted ABI entity
 (invisible, unsafe). That asymmetry is deliberate.
 
 Path rewriting (absolute -> repo/bazel-out-relative) uses the same
-reasoning: only `source_location`/`source_header`/`source_path` are
-matched by name, because those are fixed schema fields of function/type
-descriptors (never a name-keyed map's key), and no absolute repo/execroot
-paths have been observed anywhere else in the tree -- verified against the
-committed baseline; the only other absolute paths present
+allowlist-of-exact-paths reasoning as DELETE_PATHS, not a name-name match
+applied anywhere in the tree. An earlier revision matched `source_location`/
+`source_header`/`source_path` by key name alone, regardless of where that
+key appeared -- safe today (verified against the committed baseline: those
+names only occur as the fixed `Function`/`Variable`/`RecordType`/`EnumType`
+dataclass fields abicheck's own `model.py` defines them as), but a
+name-keyed map elsewhere in the schema (e.g. `constants`, currently empty
+in this baseline) could in principle have an entry whose own key happens to
+be `source_path`, and its value -- real ABI content, not provenance --
+would get silently rewritten (Codex review). `PATH_REWRITE_PATHS` below is
+the same exact-path allowlist as `DELETE_PATHS`, each entry verified
+against the real committed baseline (`functions[]`/`variables[]`/`types[]`/
+`enums[].source_location`/`.source_header`, and the top-level
+`source_path`), so a schema field at an unverified location is left
+untouched (annoying, visible, safe) rather than silently mis-rewritten if
+its value happens to collide. The only other absolute paths present
 (`compile_units[].argv[0]`, `link_units[].linker_argv[0]`, e.g.
 `/usr/bin/gcc`) are stable toolchain paths, not run-to-run noise, and are
 left untouched.
@@ -102,12 +113,24 @@ DELETE_PATHS = frozenset({
     ("build_source", "source_graph", "graph_id"),
 })
 
-# Field names actually known to hold a filesystem path emitted by
-# `abicheck --mode dump` -- fixed schema fields of function/type
-# descriptors, never the key of a name-keyed content map. See the module
-# docstring for why that distinction is what makes name-based matching
-# safe here but not for DELETE_PATHS-style stripping.
-_PATH_BEARING_KEYS = {"source_location", "source_header", "source_path"}
+# Exact paths known to hold an absolute filesystem path emitted by
+# `abicheck --mode dump` -- verified against abicheck's own model.py:
+# source_location/source_header are fixed dataclass fields of Function,
+# Variable, RecordType (-> types), and EnumType; source_path is a fixed
+# top-level AbiSnapshot field. Matched by exact path, not by key name alone
+# -- see the module docstring for why a name-keyed map elsewhere in the
+# schema (e.g. constants) makes name-only matching unsafe here too.
+PATH_REWRITE_PATHS = frozenset({
+    ("functions", ANY_INDEX, "source_location"),
+    ("functions", ANY_INDEX, "source_header"),
+    ("variables", ANY_INDEX, "source_location"),
+    ("variables", ANY_INDEX, "source_header"),
+    ("types", ANY_INDEX, "source_location"),
+    ("types", ANY_INDEX, "source_header"),
+    ("enums", ANY_INDEX, "source_location"),
+    ("enums", ANY_INDEX, "source_header"),
+    ("source_path",),
+})
 
 # Only applied to the extractor "detail" free-text field -- a fixed schema
 # field name, not arbitrary content -- so a genuine ABI-relevant string
@@ -122,8 +145,8 @@ def _matches(path, pattern):
     return all(p is ANY_INDEX or p == a for p, a in zip(pattern, path, strict=True))
 
 
-def _should_delete(path):
-    return any(_matches(path, pattern) for pattern in DELETE_PATHS)
+def _in_pathset(path, pathset):
+    return any(_matches(path, pattern) for pattern in pathset)
 
 
 def strip_volatile_paths(node, path=()):
@@ -131,14 +154,14 @@ def strip_volatile_paths(node, path=()):
         return {
             key: strip_volatile_paths(value, (*path, key))
             for key, value in node.items()
-            if not _should_delete((*path, key))
+            if not _in_pathset((*path, key), DELETE_PATHS)
         }
     if isinstance(node, list):
         return [strip_volatile_paths(item, (*path, ANY_INDEX)) for item in node]
     return node
 
 
-def normalize_paths(node, repo_root_marker, *, key=None):
+def normalize_paths(node, repo_root_marker, path=()):
     """Rewrite absolute paths to relative ones.
 
     Any string containing the repo's directory name is truncated to the
@@ -146,14 +169,16 @@ def normalize_paths(node, repo_root_marker, *, key=None):
     path but reaches into a Bazel execroot/output tree is truncated to
     the `bazel-out/...` (or `external/...`) relative fragment.
 
-    Only applied to known path-bearing field names (see
-    `_PATH_BEARING_KEYS`) -- not every string in the document.
+    Only applied at the exact schema paths in `PATH_REWRITE_PATHS` -- not
+    every string whose immediate key happens to match one of those names,
+    which would also rewrite an unrelated name-keyed map entry that
+    happens to be named e.g. `source_path` (Codex review).
     """
     if isinstance(node, dict):
-        return {k: normalize_paths(v, repo_root_marker, key=k) for k, v in node.items()}
+        return {k: normalize_paths(v, repo_root_marker, (*path, k)) for k, v in node.items()}
     if isinstance(node, list):
-        return [normalize_paths(item, repo_root_marker, key=key) for item in node]
-    if isinstance(node, str) and key in _PATH_BEARING_KEYS:
+        return [normalize_paths(item, repo_root_marker, (*path, ANY_INDEX)) for item in node]
+    if isinstance(node, str) and _in_pathset(path, PATH_REWRITE_PATHS):
         return _normalize_path_string(node, repo_root_marker)
     return node
 

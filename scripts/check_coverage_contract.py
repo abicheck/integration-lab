@@ -40,9 +40,19 @@ import sys
 L3_BUILD_RE = re.compile(r"(\d+)\s+compile\s+units?,\s+(\d+)\s+targets?")
 L4_SYMBOLS_RE = re.compile(r"(\d+)/(\d+)\s+symbols\s+matched")
 
-# crosscheck layers that report a fixed reason when public-header
-# provenance wasn't supplied -- verified against the real report.
-_NO_PROVENANCE_REASON = "no public-header provenance"
+# crosscheck layers that require public-header provenance to run at all --
+# verified against the real report: with no --public-header/--public-header-dir
+# supplied, all four report status "skipped", detail "no public-header
+# provenance (supply --public-header/--public-header-dir ...)". Other
+# crosscheck: layers (header_build_context_mismatch, unversioned_exported_symbol,
+# odr_type_variant, ...) run independently of header provenance and don't
+# belong in this set -- their status says nothing about provenance.
+_PROVENANCE_GATED_LAYERS = frozenset({
+    "crosscheck:exported_not_public",
+    "crosscheck:public_not_exported",
+    "crosscheck:private_header_leak",
+    "crosscheck:rtti_for_internal_type",
+})
 
 
 def _coverage_by_layer(report):
@@ -70,22 +80,22 @@ def _extract_l4(coverage):
 
 
 def _has_public_header_provenance(coverage):
-    # Fail closed, not open: require *positive* evidence of provenance,
-    # not just the absence of a specific skip reason. If a degraded scan
-    # emits no crosscheck: layers at all (schema change, renamed layers,
-    # a crosscheck stage that didn't run), there is no evidence either
-    # way -- treating that as "provenance present" would be exactly the
-    # silent-pass-on-missing-evidence bug this whole script exists to
-    # close (CodeRabbit + Codex review).
-    crosschecks = [layer for layer in coverage if layer and layer.startswith("crosscheck:")]
+    # Fail closed, not open: require *positive* evidence of provenance --
+    # at least one provenance-gated crosscheck actually completed (status
+    # other than "skipped") -- not just the absence of one specific skip
+    # phrase. An earlier revision only rejected a skip whose detail matched
+    # "no public-header provenance" exactly, so a layer skipped for any
+    # other reason (upstream stage unavailable, ...) still counted as
+    # "provenance present" with zero completed checks (Codex review). And
+    # if none of the provenance-gated layers appear at all (schema change,
+    # renamed layers, a crosscheck stage that didn't run), there is no
+    # evidence either way -- treating that as "provenance present" would be
+    # the same silent-pass-on-missing-evidence bug (CodeRabbit + Codex
+    # review, first round).
+    crosschecks = [layer for layer in coverage if layer in _PROVENANCE_GATED_LAYERS]
     if not crosschecks:
         return False
-    skipped_for_provenance = [
-        layer for layer in crosschecks
-        if coverage[layer].get("status") == "skipped"
-        and _NO_PROVENANCE_REASON in coverage[layer].get("detail", "")
-    ]
-    return not skipped_for_provenance
+    return any(coverage[layer].get("status") != "skipped" for layer in crosschecks)
 
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
