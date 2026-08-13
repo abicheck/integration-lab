@@ -52,6 +52,12 @@
 # report "not relevant" would make the required check succeed trivially
 # on every PR, never actually gating anything.
 #
+# scripts/build_bazel_evidence_pack.py feeds --build-info for the scan
+# step: it decides which Bazel targets/compile-units the gate believes
+# exist. A PR that quietly weakens it (e.g. to fabricate targets, or to
+# stop checking that cquery/aquery actually produced anything) could make
+# the coverage contract pass on evidence that was never really collected.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
@@ -61,4 +67,5 @@ scripts/normalize_baseline.py @napetrov
 scripts/check_coverage_contract.py @napetrov
 scripts/render_scan_comment.py @napetrov
 scripts/paths_changed.py @napetrov
+scripts/build_bazel_evidence_pack.py @napetrov
 .github/CODEOWNERS @napetrov

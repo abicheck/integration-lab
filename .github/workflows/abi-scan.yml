@@ -111,11 +111,64 @@ jobs:
         if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
+      # abicheck v0.5.0's zero-config `--sources` path only ever auto-runs
+      # `bazel aquery`, never `cquery` -- so BuildEvidence.targets stays 0
+      # no matter what the workspace contains (verified against abicheck's
+      # own source; see scripts/build_bazel_evidence_pack.py's docstring
+      # for the full trace). This captures both ourselves so the next two
+      # steps can hand abicheck combined evidence via --build-info instead.
+      # Best-effort: any failure here just means the gate falls back to
+      # abicheck's normal (targets-less) auto-inference, same as before
+      # these three steps existed -- never a regression, never gates on
+      # its own (continue-on-error, chained via each step's own outcome).
+      - name: Capture Bazel cquery/aquery for target-aware L3 evidence
+        id: bazel_queries
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//...)' \
+            > "$RUNNER_TEMP/bazel-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//...))" \
+            > "$RUNNER_TEMP/bazel-aquery.json"
+
+      - name: Install abicheck (for the Bazel evidence-pack helper script)
+        id: abicheck_pip
+        if: steps.bazel_queries.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      - name: Build combined Bazel evidence pack (targets + compile units)
+        id: bazel_pack
+        if: steps.abicheck_pip.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack"
+          echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
+
       # Single canonical analysis: this one scan is the gate, the source
       # of the PR comment (rendered below, since abicheck's built-in
       # pr-comment is a compare-mode-only no-op as of v0.5.0/main — see
       # scripts/render_scan_comment.py), and the job summary (abicheck's
       # native add-job-summary, which does support scan mode).
+      #
+      # build-info: steps.bazel_pack's output is "" when any of the three
+      # steps above didn't run or failed -- abicheck's own run.sh only adds
+      # --build-info when the value is non-empty (verified against
+      # action/run.sh's add_single_flag), so an empty value here is exactly
+      # equivalent to omitting build-info and falling back to auto-inference.
+      #
+      # public-header-dir: not a typed action input in v0.5.0 (added later,
+      # main-only) but the underlying CLI flag exists at this pin too
+      # (verified against cli_scan.py) and extra-args passes it through --
+      # this is what turns the four provenance-gated crosschecks from
+      # "skipped: no public-header provenance" into real evidence.
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
@@ -126,6 +179,8 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           sources: .
+          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          extra-args: '--public-header-dir include'
           against: ${{ runner.temp }}/math.base.abicheck.json
           since: ${{ github.event.pull_request.base.sha }}
           depth: source
@@ -375,6 +430,12 @@ jobs:
         if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
+      # Deliberately doesn't duplicate the scan job's Bazel cquery/aquery +
+      # pip-install-abicheck + evidence-pack steps here -- this lane is
+      # non-gating, and doubling the pip install / query cost on every PR
+      # for a report nobody's blocked on isn't worth it. It still gets the
+      # public-header-dir fix (below) since that's a single extra-args
+      # word, not a multi-step pipeline.
       - name: ABICheck source scan (canary — abicheck/main, non-blocking)
         id: canary_scan
         if: steps.relevance.outputs.relevant == 'true'
@@ -395,7 +456,9 @@ jobs:
           fail-on-api-break: false
           add-job-summary: true
           pr-comment: false
-          extra-args: '--contract-evaluation'
+          # --public-header-dir: same fix as the scan job above -- not a
+          # typed input at either pin, forwarded via extra-args.
+          extra-args: '--contract-evaluation --public-header-dir include'
 
       - name: Upload canary report artifact
         if: always() && steps.relevance.outputs.relevant == 'true'

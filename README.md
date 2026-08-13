@@ -110,16 +110,45 @@ NOT_FULLY_EVALUATED`, and exactly which requirement failed — as its own
 clearly-labeled section, never merged into abicheck's own verdict line
 above it.
 
-Practical consequence, stated plainly: **this correctly turns the gate red
-for `depth: source` PRs in this lab today**, because the underlying
-Bazel-integration gap (mapping `bazel-bin/libmath.so` back to `//:math`,
-real compile actions via `aquery`/`CcInfo`, public-header provenance) is a
-real defect in `abicheck` itself, not something this repo can fix. That's
-the intended, honest behavior — the alternative (staying green) is exactly
-the bug this whole item exists to close. The `canary` job's
-`--contract-evaluation` run against `abicheck/main` remains useful
-alongside this: it shows whether the upstream fix, once it ships, agrees
-with this lab-side check's verdict.
+**Update: two of the three evidence gaps above are now actually closed at
+the workflow level**, not just gated red and documented:
+
+- **Public-header provenance** — `abicheck` v0.5.0 supports
+  `--public-header-dir` on `scan`/`dump` at the CLI level; it just isn't a
+  typed input on the v0.5.0 Action yet. `abi-scan.yml` passes it through
+  `extra-args: '--public-header-dir include'`, which is what turns the
+  four provenance-gated crosschecks from "skipped: no public-header
+  provenance" into real evidence.
+- **Bazel target resolution** — v0.5.0's zero-config `--sources` path only
+  ever auto-runs `bazel aquery` (never `cquery`), and `BazelAdapter`'s
+  cquery-only code path is the *only* one that ever populates
+  `BuildEvidence.targets` — verified against abicheck's own source, not
+  guessed. `abi-scan.yml` now runs both `bazel cquery` and `bazel aquery`
+  itself, then `scripts/build_bazel_evidence_pack.py` combines them into
+  one `BuildSourcePack` (abicheck's own on-disk evidence format) via
+  `BazelAdapter(cquery=..., aquery=...)` directly — the same combination
+  the CLI's now-removed `collect --from bazel-cquery=... --from
+  bazel-aquery=...` used to wire up — and hands it to the gating scan via
+  `--build-info`. Fails closed and falls back to the pre-existing
+  (targets-less) auto-inference on any problem, so this can only improve
+  evidence, never regress it.
+
+The one gap this doesn't (and structurally can't) close is
+**export-to-source symbol matching** on a PR that doesn't actually touch
+any C++ source: `depth: source` defaults to `scope=changed` replay, so a
+workflow-only PR genuinely has zero compile units in scope to match
+against — 0/6 isn't a broken pipeline there, it's an accurate "nothing to
+check" for that diff. A PR that changes `src/`/`include/` should see real
+matching now that compile units are correctly linked to their Bazel
+targets.
+
+This was verified as far as static analysis of the pinned commit allows —
+the actual effect (does `bazel_targets` really read > 0, does the
+provenance crosscheck really flip to `present`) is confirmed against real
+CI runs on this repo's own PRs, same as every other claim in this
+document. The `canary` job's `--contract-evaluation` run against
+`abicheck/main` remains useful alongside this: it shows whether upstream's
+own fix, once it ships, agrees with this lab-side check's verdict.
 
 Every field `check_coverage_contract.py` reads was verified against a real
 downloaded scan report, not guessed — see its module docstring for the
