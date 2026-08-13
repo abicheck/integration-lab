@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run scenarios/manifest.yaml's fixture pairs through `abicheck compare`
 and check the actual verdict against each scenario's `expected_verdict`
-oracle.
+(or per-profile `expected`) oracle.
 
 Why this exists: the gate this repo runs on itself (abi-scan.yml) only
 ever exercises whatever the *current* PR's diff to //:math happens to be
@@ -50,7 +50,7 @@ def run_bazel_build(*targets):
     subprocess.run(["bazel", "build", *targets], check=True)
 
 
-def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=None):
+def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=None, ast_frontend=None):
     # abicheck's bare CLI (unlike the GitHub Action wrapper) exits
     # non-zero on a gated result by default -- that's exactly what a
     # BREAKING scenario is supposed to produce, so this deliberately does
@@ -78,6 +78,14 @@ def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=N
     ]
     if old_header is not None:
         cmd += ["--header", f"old={old_header}"]
+    # ast_frontend is optional and defaults to None (abicheck's own
+    # default, currently CastXML -- AGENTS.md: "dumper_castxml.py ...
+    # default L2 header backend"). Passed explicitly when a scenario's
+    # manifest entry declares per-profile expectations (`expected:`), so
+    # the same fixture pair can be run once per header frontend and
+    # checked against each frontend's own oracle verdict.
+    if ast_frontend is not None:
+        cmd += ["--ast-frontend", ast_frontend]
     cmd += [
         "--version",
         "old=old",
@@ -95,11 +103,29 @@ def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=N
     subprocess.run(cmd, check=False)
 
 
-def run_one(scenario, results_dir):
-    name = scenario["name"]
-    run_bazel_build(scenario["old_target"], scenario["new_target"])
+def _scenario_profiles(scenario):
+    """Return {profile_name: expected_verdict} for *scenario*.
 
-    output_json = results_dir / f"{name}.json"
+    A scenario declares EITHER a single, backward-compatible
+    `expected_verdict` (run once, with abicheck's own default --ast-frontend
+    -- every scenario before this function existed uses this form) OR a
+    per-profile `expected: {castxml: V, clang: V, ...}` map (run once per
+    named profile, each with `--ast-frontend <profile>` explicit). The two
+    are mutually exclusive in one manifest entry -- a scenario whose
+    verdict genuinely differs by header frontend (or that specifically
+    wants to pin agreement across frontends) uses `expected`; everything
+    else keeps the simpler single-oracle form.
+    """
+    expected_map = scenario.get("expected")
+    if expected_map:
+        return dict(expected_map)
+    return {None: scenario["expected_verdict"]}
+
+
+def run_one_profile(scenario, profile, expected, results_dir):
+    name = scenario["name"]
+    result_name = name if profile is None else f"{name}.{profile}"
+    output_json = results_dir / f"{result_name}.json"
     # run_abicheck_compare() deliberately doesn't check the subprocess
     # return code -- a BREAKING scenario is *supposed* to exit non-zero.
     # But that also means a run that fails before writing anything (a
@@ -117,6 +143,7 @@ def run_one(scenario, results_dir):
         REPO_ROOT / scenario["new_header"],
         output_json,
         old_header=(REPO_ROOT / old_header) if old_header else None,
+        ast_frontend=profile,
     )
 
     try:
@@ -130,15 +157,27 @@ def run_one(scenario, results_dir):
         actual = None
         read_error = str(exc)
 
-    expected = scenario["expected_verdict"]
     return {
         "name": name,
+        "profile": profile,
         "description": scenario.get("description", "").strip(),
         "expected_verdict": expected,
         "actual_verdict": actual,
         "passed": actual == expected,
         "read_error": read_error,
     }
+
+
+def run_one(scenario, results_dir):
+    """Build *scenario*'s fixture pair once, then run every declared profile
+    against it. Returns a list of per-profile results (length 1 for a
+    single-oracle scenario, one per named profile for a per-profile one)."""
+    run_bazel_build(scenario["old_target"], scenario["new_target"])
+    profiles = _scenario_profiles(scenario)
+    return [
+        run_one_profile(scenario, profile, expected, results_dir)
+        for profile, expected in profiles.items()
+    ]
 
 
 def main():
@@ -180,14 +219,19 @@ def main():
     results = []
     for scenario in scenarios:
         print(f"--- {scenario['name']} ---")
-        result = run_one(scenario, results_dir)
-        results.append(result)
-        status = "PASS" if result["passed"] else "FAIL"
-        print(
-            f"{status}: expected={result['expected_verdict']} "
-            f"actual={result['actual_verdict']}"
-            + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
-        )
+        # run_one() now runs every profile a scenario declares against one
+        # built fixture pair and returns one result dict per profile --
+        # length 1 for the ordinary single-oracle scenarios, one per named
+        # profile for a per-profile `expected:` scenario.
+        for result in run_one(scenario, results_dir):
+            results.append(result)
+            status = "PASS" if result["passed"] else "FAIL"
+            profile_label = f" [{result['profile']}]" if result["profile"] else ""
+            print(
+                f"{status}{profile_label}: expected={result['expected_verdict']} "
+                f"actual={result['actual_verdict']}"
+                + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
+            )
 
     summary_path = results_dir / "summary.json"
     with open(summary_path, "w", encoding="utf-8") as fh:
@@ -195,15 +239,16 @@ def main():
 
     failed = [r for r in results if not r["passed"]]
     if failed:
-        print(f"\n{len(failed)}/{len(results)} scenario(s) FAILED:", file=sys.stderr)
+        print(f"\n{len(failed)}/{len(results)} scenario/profile run(s) FAILED:", file=sys.stderr)
         for r in failed:
+            profile_label = f" [{r['profile']}]" if r["profile"] else ""
             print(
-                f"  - {r['name']}: expected {r['expected_verdict']}, got {r['actual_verdict']}",
+                f"  - {r['name']}{profile_label}: expected {r['expected_verdict']}, got {r['actual_verdict']}",
                 file=sys.stderr,
             )
         return 1
 
-    print(f"\nAll {len(results)} scenario(s) passed.")
+    print(f"\nAll {len(results)} scenario/profile run(s) passed.")
     return 0
 
 

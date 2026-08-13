@@ -10,6 +10,24 @@
 # naming convention already verified elsewhere in this repo (target name
 # "math" -> bazel-bin/libmath.so): each fixture's target is named "impl",
 # so its output is bazel-bin/<package>/libimpl.so.
+#
+# A scenario declares its oracle one of two ways (scripts/run_scenario.py's
+# `_scenario_profiles`):
+#   expected_verdict: V              -- single run, abicheck's own default
+#                                        header frontend (currently CastXML).
+#   expected: {castxml: V, clang: V} -- one run per named profile, each with
+#                                        --ast-frontend <profile> explicit.
+#                                        Use this whenever a scenario should
+#                                        also regression-test that the two
+#                                        header backends agree (the l2-castxml
+#                                        / l2-clang profile pair this repo's
+#                                        abi-scan.yml runs against //:math
+#                                        itself) -- every scenario below uses
+#                                        this form, since none of these
+#                                        changes has a reason to differ by
+#                                        frontend, and a future divergence
+#                                        would be a real cross-backend bug
+#                                        worth catching here.
 scenarios:
   - name: add_function
     description: >
@@ -21,7 +39,9 @@ scenarios:
     old_output: bazel-bin/fixtures/add_function/v1/libimpl.so
     new_output: bazel-bin/fixtures/add_function/v2/libimpl.so
     new_header: fixtures/add_function/v2/lib.h
-    expected_verdict: COMPATIBLE
+    expected:
+      castxml: COMPATIBLE
+      clang: COMPATIBLE
 
   - name: remove_function
     description: >
@@ -33,7 +53,9 @@ scenarios:
     old_output: bazel-bin/fixtures/remove_function/v1/libimpl.so
     new_output: bazel-bin/fixtures/remove_function/v2/libimpl.so
     new_header: fixtures/remove_function/v2/lib.h
-    expected_verdict: BREAKING
+    expected:
+      castxml: BREAKING
+      clang: BREAKING
 
   - name: default_argument_added
     description: >
@@ -63,7 +85,9 @@ scenarios:
     new_output: bazel-bin/fixtures/default_argument_added/v2/libimpl.so
     old_header: fixtures/default_argument_added/v1/lib.h
     new_header: fixtures/default_argument_added/v2/lib.h
-    expected_verdict: NO_CHANGE
+    expected:
+      castxml: NO_CHANGE
+      clang: NO_CHANGE
 
   - name: change_signature
     description: >
@@ -76,4 +100,6 @@ scenarios:
     old_output: bazel-bin/fixtures/change_signature/v1/libimpl.so
     new_output: bazel-bin/fixtures/change_signature/v2/libimpl.so
     new_header: fixtures/change_signature/v2/lib.h
-    expected_verdict: BREAKING
+    expected:
+      castxml: BREAKING
+      clang: BREAKING
