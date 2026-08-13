@@ -132,10 +132,19 @@ PATH_REWRITE_PATHS = frozenset({
     ("source_path",),
 })
 
-# Only applied to the extractor "detail" free-text field -- a fixed schema
-# field name, not arbitrary content -- so a genuine ABI-relevant string
-# constant (e.g. a `30s` chrono literal in a default argument) is never
-# rewritten.
+# Exact paths whose "detail" free-text field is provenance prose that
+# embeds a per-run timing number -- verified against the real committed
+# baseline (both locations that actually contain a "N.NNs" fragment).
+# Matched by exact path, not by the key name "detail" anywhere in the
+# tree: a genuine ABI-relevant public constant literally named "detail"
+# with a value like "30s" (a chrono literal, say) would otherwise get
+# silently corrupted (Codex review) -- same collision class DELETE_PATHS
+# and PATH_REWRITE_PATHS were already redesigned around.
+TIMING_REWRITE_PATHS = frozenset({
+    ("build_source", "manifest", "extractors", ANY_INDEX, "detail"),
+    ("build_source", "manifest", "coverage", ANY_INDEX, "detail"),
+})
+
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
 
 
@@ -203,12 +212,12 @@ def _normalize_path_string(value, repo_root_marker):
     return value
 
 
-def normalize_timing_prose(node, *, key=None):
+def normalize_timing_prose(node, path=()):
     if isinstance(node, dict):
-        return {k: normalize_timing_prose(v, key=k) for k, v in node.items()}
+        return {k: normalize_timing_prose(v, (*path, k)) for k, v in node.items()}
     if isinstance(node, list):
-        return [normalize_timing_prose(item, key=key) for item in node]
-    if isinstance(node, str) and key == "detail":
+        return [normalize_timing_prose(item, (*path, ANY_INDEX)) for item in node]
+    if isinstance(node, str) and _in_pathset(path, TIMING_REWRITE_PATHS):
         return TIMING_RE.sub("Ns", node)
     return node
 

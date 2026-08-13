@@ -31,6 +31,15 @@
 # open) could make a degraded scan report the contract as satisfied
 # without review (Codex review). Same boundary as the gate it's part of.
 #
+# scripts/render_scan_comment.py doesn't gate anything itself, but it runs
+# with the same job's `pull-requests: write` token and produces the
+# bot-authored "canonical report" comment everyone reads as the gate's
+# result. An unreviewed same-repo PR could change it to claim a passing
+# verdict or omit a failed coverage-contract section while the actual
+# gate code -- and its real (failing) outcome -- is untouched (Codex
+# review). Same trust boundary: the reader-facing report is as much a
+# part of "what the gate says" as the check that produces exit codes.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
@@ -38,4 +47,5 @@ abi/** @napetrov
 .github/workflows/abi-scan.yml @napetrov
 scripts/normalize_baseline.py @napetrov
 scripts/check_coverage_contract.py @napetrov
+scripts/render_scan_comment.py @napetrov
 .github/CODEOWNERS @napetrov
