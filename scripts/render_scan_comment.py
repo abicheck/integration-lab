@@ -48,12 +48,22 @@ def _render_coverage_contract(contract):
     if contract is None:
         return []
     lines = ["---", ""]
-    if contract.get("gate_status") == "PASS":
+    status = contract.get("gate_status")
+    if status == "PASS":
         lines.append(
             f"✅ **Coverage contract: satisfied** — `depth: {contract.get('requested_depth')}` "
             "evidence met the minimum requirements (Bazel target resolved, "
             "export-to-source linkage, public-header provenance)."
         )
+    elif status == "UNKNOWN":
+        lines.append(
+            "⚠️ **Coverage contract: result unavailable** — the gate step ran but "
+            "its result couldn't be read here. Treat this the same as a failed "
+            "contract: do not assume it passed."
+        )
+        lines.append("")
+        for failure in contract.get("failures", []):
+            lines.append(f"- {failure}")
     else:
         lines.append(
             f"🛑 **Coverage contract: NOT satisfied** — `analysis_status: "
@@ -166,8 +176,21 @@ def main():
         try:
             with open(args.coverage_contract, "r", encoding="utf-8") as fh:
                 coverage_contract = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
-            coverage_contract = None
+        except (FileNotFoundError, json.JSONDecodeError) as exc:
+            # A caller that passes --coverage-contract is asserting the
+            # gate ran; silently dropping the section here would show a
+            # green-looking comment with the second gate's result just
+            # missing -- readers can't tell "gate passed" from "gate
+            # result unknown" (CodeRabbit review). Render it as an
+            # explicit unknown/failed state instead of omitting it.
+            coverage_contract = {
+                "gate_status": "UNKNOWN",
+                "analysis_status": "UNKNOWN",
+                "compatibility_verdict": "NOT_FULLY_EVALUATED",
+                "requested_depth": args.requested_depth,
+                "failures": [f"coverage contract result unreadable: {exc}"],
+                "facts": {},
+            }
 
     if report is None:
         body = (

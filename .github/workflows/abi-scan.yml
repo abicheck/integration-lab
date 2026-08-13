@@ -27,6 +27,7 @@ on:
       - '.github/CODEOWNERS'
       - 'scripts/normalize_baseline.py'
       - 'scripts/render_scan_comment.py'
+      - 'scripts/check_coverage_contract.py'
 
 permissions:
   contents: read
@@ -65,11 +66,17 @@ jobs:
       # entries from later runs (Codex review). A run-id suffix on the save
       # key makes every run's cache saveable; restore-keys still falls back
       # to the most recent cache for this config, then any cache for this OS.
+      # The job-name segment in the save key (not in restore-keys) is a
+      # discriminator: github.run_id is shared by every job in the same
+      # workflow run, so without it this job and the other Bazel-building
+      # job in this workflow would race to save the identical key in the
+      # same run, and whichever finished second would just log "already
+      # exists" and lose its cache entirely (CodeRabbit review).
       - name: Set up Bazel disk cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-${{ github.run_id }}
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-scan-${{ github.run_id }}
           restore-keys: |
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
@@ -299,11 +306,17 @@ jobs:
       # entries from later runs (Codex review). A run-id suffix on the save
       # key makes every run's cache saveable; restore-keys still falls back
       # to the most recent cache for this config, then any cache for this OS.
+      # The job-name segment in the save key (not in restore-keys) is a
+      # discriminator: github.run_id is shared by every job in the same
+      # workflow run, so without it this job and the other Bazel-building
+      # job in this workflow would race to save the identical key in the
+      # same run, and whichever finished second would just log "already
+      # exists" and lose its cache entirely (CodeRabbit review).
       - name: Set up Bazel disk cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-${{ github.run_id }}
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-canary-${{ github.run_id }}
           restore-keys: |
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-

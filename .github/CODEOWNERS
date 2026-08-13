@@ -25,10 +25,17 @@
 # above (with no owner sign-off) before touching the baseline, its
 # producer, or the gating workflow (CodeRabbit review).
 #
+# scripts/check_coverage_contract.py is a second, independent gate the
+# "Enforce gate" step trusts -- a PR that changes it (e.g. loosens
+# min-export-match-ratio, or breaks _has_public_header_provenance back
+# open) could make a degraded scan report the contract as satisfied
+# without review (Codex review). Same boundary as the gate it's part of.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
 .github/workflows/baseline.yml @napetrov
 .github/workflows/abi-scan.yml @napetrov
 scripts/normalize_baseline.py @napetrov
+scripts/check_coverage_contract.py @napetrov
 .github/CODEOWNERS @napetrov

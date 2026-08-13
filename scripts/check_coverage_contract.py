@@ -70,18 +70,22 @@ def _extract_l4(coverage):
 
 
 def _has_public_header_provenance(coverage):
-    # If every crosscheck that depends on public-header provenance reports
-    # the same fixed "no public-header provenance" skip reason, provenance
-    # was never supplied. Presence of the string on *any* provenance-gated
-    # layer is enough to call it missing -- these layers only skip for
-    # that reason when provenance is genuinely absent.
-    provenance_gated = [
-        layer for layer in coverage
-        if layer and layer.startswith("crosscheck:")
-        and coverage[layer].get("status") == "skipped"
+    # Fail closed, not open: require *positive* evidence of provenance,
+    # not just the absence of a specific skip reason. If a degraded scan
+    # emits no crosscheck: layers at all (schema change, renamed layers,
+    # a crosscheck stage that didn't run), there is no evidence either
+    # way -- treating that as "provenance present" would be exactly the
+    # silent-pass-on-missing-evidence bug this whole script exists to
+    # close (CodeRabbit + Codex review).
+    crosschecks = [layer for layer in coverage if layer and layer.startswith("crosscheck:")]
+    if not crosschecks:
+        return False
+    skipped_for_provenance = [
+        layer for layer in crosschecks
+        if coverage[layer].get("status") == "skipped"
         and _NO_PROVENANCE_REASON in coverage[layer].get("detail", "")
     ]
-    return len(provenance_gated) == 0
+    return not skipped_for_provenance
 
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
@@ -146,10 +150,12 @@ def main():
     parser.add_argument("-o", "--output", required=True, help="Path to write the contract result JSON")
     parser.add_argument("--requested-depth", default="source")
     parser.add_argument("--min-compile-units", type=int, default=1)
-    parser.add_argument("--require-bazel-target", action="store_true", default=True)
-    parser.add_argument("--no-require-bazel-target", dest="require_bazel_target", action="store_false")
-    parser.add_argument("--require-public-header-provenance", action="store_true", default=True)
-    parser.add_argument("--no-require-public-header-provenance", dest="require_public_header_provenance", action="store_false")
+    parser.add_argument(
+        "--require-bazel-target", action=argparse.BooleanOptionalAction, default=True,
+    )
+    parser.add_argument(
+        "--require-public-header-provenance", action=argparse.BooleanOptionalAction, default=True,
+    )
     parser.add_argument("--min-export-match-ratio", type=float, default=0.95)
     args = parser.parse_args()
 

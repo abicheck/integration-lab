@@ -119,7 +119,7 @@ TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
 def _matches(path, pattern):
     if len(path) != len(pattern):
         return False
-    return all(p is ANY_INDEX or p == a for p, a in zip(pattern, path))
+    return all(p is ANY_INDEX or p == a for p, a in zip(pattern, path, strict=True))
 
 
 def _should_delete(path):
@@ -129,12 +129,12 @@ def _should_delete(path):
 def strip_volatile_paths(node, path=()):
     if isinstance(node, dict):
         return {
-            key: strip_volatile_paths(value, path + (key,))
+            key: strip_volatile_paths(value, (*path, key))
             for key, value in node.items()
-            if not _should_delete(path + (key,))
+            if not _should_delete((*path, key))
         }
     if isinstance(node, list):
-        return [strip_volatile_paths(item, path + (ANY_INDEX,)) for item in node]
+        return [strip_volatile_paths(item, (*path, ANY_INDEX)) for item in node]
     return node
 
 
