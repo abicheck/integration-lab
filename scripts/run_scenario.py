@@ -50,12 +50,24 @@ def run_bazel_build(*targets):
     subprocess.run(["bazel", "build", *targets], check=True)
 
 
-def run_abicheck_compare(old_lib, new_lib, new_header, output_json):
+def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=None):
     # abicheck's bare CLI (unlike the GitHub Action wrapper) exits
     # non-zero on a gated result by default -- that's exactly what a
     # BREAKING scenario is supposed to produce, so this deliberately does
     # NOT check=True. The verdict field in the written report, not the
     # process exit code, is what this script actually judges.
+    #
+    # old_header is optional and defaults to None (old side stays
+    # DWARF/symbols-only, as every scenario before default_argument_added
+    # relies on -- a mangled-symbol-visible change like a removed/added
+    # function or a changed parameter type needs no header on either side).
+    # A default-argument change is invisible at that depth: the mangled
+    # symbol is identical old vs new (Itanium mangling doesn't encode
+    # default values), so without the OLD side's own header AST to diff
+    # against, abicheck has no old-side default-argument fact to compare
+    # the new one to and reports NO_CHANGE regardless of what actually
+    # changed (confirmed: this is exactly what happened before old_header
+    # was threaded through here -- see the default_argument_added scenario).
     cmd = [
         "abicheck",
         "compare",
@@ -63,6 +75,10 @@ def run_abicheck_compare(old_lib, new_lib, new_header, output_json):
         str(new_lib),
         "--header",
         f"new={new_header}",
+    ]
+    if old_header is not None:
+        cmd += ["--header", f"old={old_header}"]
+    cmd += [
         "--version",
         "old=old",
         "--version",
@@ -94,11 +110,13 @@ def run_one(scenario, results_dir):
     # this run had produced it (Codex review). Remove any pre-existing
     # report first so "no report" always means exactly that.
     output_json.unlink(missing_ok=True)
+    old_header = scenario.get("old_header")
     run_abicheck_compare(
         REPO_ROOT / scenario["old_output"],
         REPO_ROOT / scenario["new_output"],
         REPO_ROOT / scenario["new_header"],
         output_json,
+        old_header=(REPO_ROOT / old_header) if old_header else None,
     )
 
     try:

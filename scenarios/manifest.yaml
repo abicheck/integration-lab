@@ -50,6 +50,7 @@ scenarios:
     new_target: "//fixtures/default_argument_added/v2:impl"
     old_output: bazel-bin/fixtures/default_argument_added/v1/libimpl.so
     new_output: bazel-bin/fixtures/default_argument_added/v2/libimpl.so
+    old_header: fixtures/default_argument_added/v1/lib.h
     new_header: fixtures/default_argument_added/v2/lib.h
     expected_verdict: API_BREAK
 
