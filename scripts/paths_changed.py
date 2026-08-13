@@ -40,6 +40,38 @@ never be missing from either (Codex review).
 import fnmatch
 import sys
 
+#: Trees that are ABI-relevant in the generic sense (real C++ source, real
+#: BUILD files) but deliberately NOT relevant to *this* gate -- they belong
+#: to //:math's own independent validation platform (fixtures/ + scenarios/
+#: + suppressions/, exercised by the separate scenarios.yml workflow, never
+#: built into //:math's own target graph) rather than to the library this
+#: gate actually scans. Without this exclusion, a PR touching ONLY one of
+#: these trees (no other ABI-relevant path) would still mark itself
+#: relevant via the generic *.h/*.cc/*/BUILD.bazel patterns below, trigger
+#: the full required Bazel+depth:source scan, and then fail it: the Bazel
+#: evidence pack is scoped to deps(//:math) (abi-scan.yml's own comment on
+#: why), so scope=changed's replay selection resolves to 0 TUs for a diff
+#: that never touches //:math's own exports -- and check_coverage_contract.py's
+#: empty-scope exemption requires the changed-file list to be free of
+#: build-affecting paths too, which a fixtures/*.cc change trivially isn't
+#: (same *.h/*.cc extension match, no path-prefix awareness there either).
+#: Net effect without this exclusion: 0/N export-match ratio, gate fails,
+#: for a change this repo's OWN validation platform already independently
+#: proved correct (Codex review, fresh evidence -- traced through
+#: check_coverage_contract.py's exact exemption logic; not yet observed in
+#: this PR's own CI only because every commit here also touched a
+#: genuinely //:math-relevant path in the same cumulative diff).
+EXCLUDED_PREFIXES = (
+    "fixtures/",
+    "scenarios/",
+    "suppressions/",
+)
+
+
+def _is_excluded(path):
+    return any(path.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
+
+
 PATTERNS = (
     "BUILD.bazel",
     "MODULE.bazel",
@@ -90,6 +122,7 @@ def is_relevant(changed_files, patterns=PATTERNS):
     return any(
         fnmatch.fnmatch(path, pattern)
         for path in changed_files
+        if not _is_excluded(path)
         for pattern in patterns
     )
 
