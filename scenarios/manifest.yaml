@@ -1,0 +1,49 @@
+# Machine-readable oracle for scripts/run_scenario.py.
+#
+# Each scenario is a self-contained pair of tiny Bazel cc_binary
+# (linkshared = True) targets under fixtures/<name>/{v1,v2}/, built
+# independently of this lab's main //:math library -- so validating
+# abicheck's detection semantics never touches (or risks breaking) the
+# real gate this repo runs on itself in .github/workflows/abi-scan.yml.
+#
+# old_output/new_output follow the same Bazel cc_binary(linkshared=True)
+# naming convention already verified elsewhere in this repo (target name
+# "math" -> bazel-bin/libmath.so): each fixture's target is named "impl",
+# so its output is bazel-bin/<package>/libimpl.so.
+scenarios:
+  - name: add_function
+    description: >
+      v2 adds a new exported function alongside the existing one. Purely
+      additive -- existing callers of the untouched function are
+      unaffected, so this must read as compatible.
+    old_target: "//fixtures/add_function/v1:impl"
+    new_target: "//fixtures/add_function/v2:impl"
+    old_output: fixtures/add_function/v1/libimpl.so
+    new_output: fixtures/add_function/v2/libimpl.so
+    new_header: fixtures/add_function/v2/lib.h
+    expected_verdict: COMPATIBLE
+
+  - name: remove_function
+    description: >
+      v2 removes an exported function present in v1. Any binary already
+      linked against v1's .so and calling the removed symbol fails to
+      resolve it against v2 -- a binary ABI break.
+    old_target: "//fixtures/remove_function/v1:impl"
+    new_target: "//fixtures/remove_function/v2:impl"
+    old_output: fixtures/remove_function/v1/libimpl.so
+    new_output: fixtures/remove_function/v2/libimpl.so
+    new_header: fixtures/remove_function/v2/lib.h
+    expected_verdict: BREAKING
+
+  - name: change_signature
+    description: >
+      v2 changes an exported function's parameter type (int -> long).
+      C++ name mangling encodes parameter types, so this is the old
+      mangled symbol disappearing plus a new one appearing -- breaking
+      for any caller compiled against v1's signature.
+    old_target: "//fixtures/change_signature/v1:impl"
+    new_target: "//fixtures/change_signature/v2:impl"
+    old_output: fixtures/change_signature/v1/libimpl.so
+    new_output: fixtures/change_signature/v2/libimpl.so
+    new_header: fixtures/change_signature/v2/lib.h
+    expected_verdict: BREAKING

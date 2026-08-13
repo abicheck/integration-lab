@@ -295,3 +295,33 @@ been exercised as an actual test PR yet — the architecture above (baseline
 read from base SHA, `abi/**` in `CODEOWNERS`) should already guarantee it
 structurally, but that's a claim, not yet a verified test. These are
 tracked as follow-up work rather than folded into this change.
+
+## Scenario validation (`scenarios.yml`)
+
+`abi-scan.yml`'s gate only ever exercises whatever a given PR's diff to
+`//:math` happens to be -- it never actually proves abicheck detects a
+real break, or correctly leaves a compatible change alone. `scenarios.yml`
+closes that gap: `fixtures/<name>/{v1,v2}/` are small, independent Bazel
+targets (never touching `//:math`), and `scenarios/manifest.yaml` is a
+machine-readable oracle pairing each one with its expected verdict.
+`scripts/run_scenario.py` builds every `v1`/`v2` pair, runs `abicheck
+compare` between them, and fails if the actual verdict doesn't match the
+manifest.
+
+Current scenarios:
+
+| Scenario | Change | Expected verdict |
+|---|---|---|
+| `add_function` | v2 adds a new exported function | `COMPATIBLE` |
+| `remove_function` | v2 removes an exported function | `BREAKING` |
+| `change_signature` | v2 changes a parameter type (mangled-name change) | `BREAKING` |
+
+Run locally: `python3 scripts/run_scenario.py` (needs `bazel` and the
+`abicheck` CLI on `PATH`, and `pyyaml` installed) — or `--only <name>` for
+a single scenario. Results are written to `scenario-results/summary.json`.
+
+**Not yet covered** (explicitly out of scope for this initial slice, not
+silently dropped): a `cc_shared_library` scenario, a generated-header
+scenario, a multi-library/consumer-app scenario, `MODULE.bazel.lock`
+pinning, and a benchmark workflow. These are real follow-up work, not
+abandoned scope.
