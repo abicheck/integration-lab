@@ -53,14 +53,21 @@ jobs:
       # individually, but the explicit gate after them turns "evidence
       # collection didn't fully succeed" into a hard failure of this job
       # before dump/commit ever run, instead of silently degrading.
+      # Scoped to //:math's own transitive deps, not deps(//...) (the whole
+      # workspace) -- same fix as abi-scan.yml's identical step, same
+      # reason: once fixtures/ (independent targets, unrelated to //:math)
+      # landed, deps(//...) would pull every fixture compile unit into the
+      # baseline's own evidence pack too, bloating build_source with
+      # targets/compile-units that have nothing to do with the library this
+      # baseline actually snapshots.
       - name: Capture Bazel cquery/aquery for target-aware L3 evidence
         id: bazel_queries
         run: |
           set -euo pipefail
-          bazel cquery --output=jsonproto 'deps(//...)' \
+          bazel cquery --output=jsonproto 'deps(//:math)' \
             > "$RUNNER_TEMP/bazel-cquery.json"
           bazel aquery --output=jsonproto --include_param_files \
-            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//...))" \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
             > "$RUNNER_TEMP/bazel-aquery.json"
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)

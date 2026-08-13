@@ -121,16 +121,29 @@ jobs:
       # abicheck's normal (targets-less) auto-inference, same as before
       # these three steps existed -- never a regression, never gates on
       # its own (continue-on-error, chained via each step's own outcome).
+      # Scoped to //:math's own transitive deps, not deps(//...) (the whole
+      # workspace) -- verified against a real regression: once fixtures/
+      # (independent cc_binary/cc_library targets, unrelated to //:math)
+      # landed, `deps(//...)` pulled every fixture compile unit into this
+      # evidence pack too. depth: source's scope=changed then intersected
+      # that inflated compile-unit set with the PR's changed-file list,
+      # "selecting" fixture .cc files as TUs to replay -- files that could
+      # never match //:math's exported symbols no matter how good the
+      # *actual* library's source linkage is, permanently capping
+      # export_match_ratio regardless of whether //:math itself was
+      # touched at all. `deps(//:math)` gives the same target-aware L3/L4
+      # evidence for the library actually being scanned, without pulling
+      # in unrelated targets elsewhere in the workspace.
       - name: Capture Bazel cquery/aquery for target-aware L3 evidence
         id: bazel_queries
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
-          bazel cquery --output=jsonproto 'deps(//...)' \
+          bazel cquery --output=jsonproto 'deps(//:math)' \
             > "$RUNNER_TEMP/bazel-cquery.json"
           bazel aquery --output=jsonproto --include_param_files \
-            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//...))" \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
             > "$RUNNER_TEMP/bazel-aquery.json"
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
