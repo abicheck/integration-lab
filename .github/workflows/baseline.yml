@@ -40,18 +40,21 @@ jobs:
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
       # Same evidence pipeline as abi-scan.yml's `scan` job -- see that
-      # workflow's comments for the full rationale. Without this, the
-      # baseline would keep abicheck's degraded auto-inference (0 targets,
-      # no public-header provenance) while the gating scan supplies full
-      # evidence, so a source-only API change (macro/template/inline body)
-      # a full-evidence comparison could catch would go undetected against
-      # a baseline whose old side never recorded that surface at all
-      # (Codex review). Best-effort/fail-closed: falls back to the same
-      # degraded auto-inference on any problem, exactly as before these
-      # steps existed -- never blocks a baseline refresh.
+      # workflow's comments for the full rationale. Deliberately NOT
+      # best-effort here, unlike the scan job: a PR-gate falling back to
+      # degraded evidence just fails that one PR's coverage contract
+      # visibly; this baseline gets *committed to main* and becomes every
+      # future PR's trusted comparison target. A silent fallback here
+      # would mean a transient bazel/pip hiccup permanently downgrades the
+      # baseline (0 targets, no provenance) with no visible signal --
+      # exactly the silent-regression risk the coverage contract exists to
+      # catch, just smuggled in on the side nothing asserts on (Codex
+      # review). So each step below still isn't continue-on-error
+      # individually, but the explicit gate after them turns "evidence
+      # collection didn't fully succeed" into a hard failure of this job
+      # before dump/commit ever run, instead of silently degrading.
       - name: Capture Bazel cquery/aquery for target-aware L3 evidence
         id: bazel_queries
-        continue-on-error: true
         run: |
           set -euo pipefail
           bazel cquery --output=jsonproto 'deps(//...)' \
@@ -62,14 +65,10 @@ jobs:
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
-        if: steps.bazel_queries.outcome == 'success'
-        continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
-        if: steps.abicheck_pip.outcome == 'success'
-        continue-on-error: true
         run: |
           set -euo pipefail
           python3 scripts/build_bazel_evidence_pack.py \

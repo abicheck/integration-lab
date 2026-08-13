@@ -144,6 +144,18 @@ was never fully captured (Codex review). `baseline.yml` now runs the same
 cquery/aquery/evidence-pack pipeline before `dump`, so both sides of every
 comparison have equivalent evidence going forward.
 
+One deliberate difference from the scan job: on `baseline.yml` this
+pipeline is **gating, not best-effort**. The scan job's version falls back
+to degraded auto-inference on any problem, because that only affects one
+PR's own coverage-contract result — visible, not persisted. A silent
+fallback in `baseline.yml` would instead get *committed to main* and
+become every future PR's trusted comparison target, so a transient
+bazel/pip hiccup could permanently downgrade the baseline with no visible
+signal (Codex review). If Bazel-cquery/aquery capture, the pip install, or
+the pack build fails, the whole job fails before `dump`/commit ever run —
+the old (better, or at least previously-accepted) baseline stays in place
+rather than being silently overwritten with a worse one.
+
 **Export-to-source symbol matching is exempted, not enforced, when there's
 nothing to match.** `depth: source` defaults to `scope=changed` replay, so
 a PR that doesn't touch any C++ source (e.g. this repo's own gate-only
