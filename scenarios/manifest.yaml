@@ -42,22 +42,28 @@ scenarios:
       verified directly against abicheck's own source
       (abicheck/checker_policy.py's ChangeKind docstrings,
       abicheck/diff_symbols.py's default-argument detector), this is
-      deliberately, intentionally treated as COMPATIBLE, never flagged:
-      gaining a default is purely additive (an existing caller that already
-      passes the argument is unaffected; only NEW code gets the option to
-      omit it), unlike PARAM_DEFAULT_VALUE_REMOVED/PARAM_DEFAULT_VALUE_CHANGED,
-      which do gate as API_BREAK because they take a capability away from an
-      existing caller. Regression scenario pinning that this stays
-      COMPATIBLE -- an earlier revision of this scenario incorrectly
-      expected API_BREAK here; see this PR's own review discussion for the
-      correction and the abicheck source citations backing it.
+      deliberately, intentionally never flagged at all: gaining a default is
+      purely additive (an existing caller that already passes the argument
+      is unaffected; only NEW code gets the option to omit it), unlike
+      PARAM_DEFAULT_VALUE_REMOVED/PARAM_DEFAULT_VALUE_CHANGED, which do gate
+      as API_BREAK because they take a capability away from an existing
+      caller. Since it produces literally zero `Change` entries (not merely
+      zero *gating* ones), the actual verdict abicheck emits is the more
+      specific NO_CHANGE, not COMPATIBLE (COMPATIBLE is reserved for a diff
+      with real, non-gating changes -- e.g. add_function's added function;
+      NO_CHANGE is for a diff with none at all -- verified against a real
+      report from this exact scenario: "changes": []). Regression scenario
+      pinning both facts; earlier revisions of this scenario incorrectly
+      expected API_BREAK, then COMPATIBLE -- see this PR's own CI history
+      and review discussion for the corrections and the source citations
+      backing them.
     old_target: "//fixtures/default_argument_added/v1:impl"
     new_target: "//fixtures/default_argument_added/v2:impl"
     old_output: bazel-bin/fixtures/default_argument_added/v1/libimpl.so
     new_output: bazel-bin/fixtures/default_argument_added/v2/libimpl.so
     old_header: fixtures/default_argument_added/v1/lib.h
     new_header: fixtures/default_argument_added/v2/lib.h
-    expected_verdict: COMPATIBLE
+    expected_verdict: NO_CHANGE
 
   - name: change_signature
     description: >

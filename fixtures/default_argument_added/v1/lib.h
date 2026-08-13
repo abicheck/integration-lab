@@ -8,7 +8,7 @@ namespace scenario {
 // ChangeKind docstrings): it's purely additive -- an existing caller that
 // already passes both arguments is completely unaffected; only new code
 // gets the option to omit the second one. See scenarios/manifest.yaml for
-// this scenario's full rationale (expected_verdict: COMPATIBLE).
+// this scenario's full rationale (expected_verdict: NO_CHANGE).
 int scaled(int value, int step);
 
 }  // namespace scenario
