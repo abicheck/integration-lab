@@ -98,6 +98,24 @@ _BUILD_AFFECTING_PATTERNS = (
     "include/*",
     "src/*",
     ".abicheck.yml",
+    # Repo-wide backstop, same reasoning and same set as
+    # scripts/paths_changed.py's PATTERNS: Bazel doesn't enforce any
+    # particular directory layout, so a source/header referenced from
+    # outside include/*/src/* (e.g. a future config/ subpackage) must
+    # still disqualify the exemption -- matching by extension repo-wide
+    # closes that regardless of where the file lives (Codex review, fresh
+    # evidence after the abi/* fix above).
+    "*.h",
+    "*.hh",
+    "*.hpp",
+    "*.hxx",
+    "*.inc",
+    "*.c",
+    "*.C",
+    "*.cc",
+    "*.cpp",
+    "*.cxx",
+    "*.c++",
 )
 
 

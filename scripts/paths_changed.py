@@ -29,6 +29,13 @@ treats `*` as matching across `/` -- so `include/*` matches
 needing a literal `**`. Keep this list a superset of
 `.github/CODEOWNERS`'s protected paths, same as the old workflow-level
 filter had to be.
+
+Also keep the C/C++-extension patterns (`*.h`/`*.cc`/etc.) a superset of
+`check_coverage_contract.py`'s `_BUILD_AFFECTING_PATTERNS` -- both lists
+exist to answer "can this file reach the compiler", just for different
+purposes (does the gate need to run at all, vs. can the empty-changed-
+scope ratio exemption apply), and a file that reaches the compiler must
+never be missing from either (Codex review).
 """
 import fnmatch
 import sys
@@ -46,6 +53,28 @@ PATTERNS = (
     "src/*",
     "abi/*",
     ".abicheck.yml",
+    # Repo-wide backstop, not just include/*+src/*: Bazel doesn't enforce
+    # any particular directory layout -- a BUILD.bazel target can list a
+    # source/header from anywhere in the tree (e.g. a future config/
+    # subpackage). A change to such a file would otherwise match no
+    # pattern here at all and get silently judged irrelevant -- worse than
+    # the "Pending forever" trap this script exists to close, since a
+    # relevant change wouldn't even show as pending, it just wouldn't
+    # trigger a scan at all (Codex review, fresh evidence). Matching by
+    # extension repo-wide is the practical fix short of a live `bazel
+    # query` in this step (which would need Bazel set up before the cache
+    # step that currently follows it).
+    "*.h",
+    "*.hh",
+    "*.hpp",
+    "*.hxx",
+    "*.inc",
+    "*.c",
+    "*.C",
+    "*.cc",
+    "*.cpp",
+    "*.cxx",
+    "*.c++",
     ".github/workflows/abi-scan.yml",
     ".github/workflows/baseline.yml",
     ".github/CODEOWNERS",
