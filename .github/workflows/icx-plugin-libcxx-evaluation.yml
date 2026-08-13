@@ -1,0 +1,52 @@
+name: ICX plugin libcxx evaluation
+on:
+  push:
+    branches: [icx-plugin-libcxx-evaluation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: abicheck/abicheck
+          ref: b9c9c33fdd35bbcf61bf43aeee0e5a87bd46d93d
+          path: abicheck
+          persist-credentials: false
+      - name: Install ICX, LLVM SDK, and libcxx
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=/tmp/icx-libcxx
+          rm -rf "$ROOT"; mkdir -p "$ROOT/logs" "$ROOT/results"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake gnupg ninja-build python3-venv wget binutils
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/oneapi.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneapi.list >/dev/null
+          wget -qO "$ROOT/llvm.key" https://apt.llvm.org/llvm-snapshot.gpg.key
+          test "$(gpg --show-keys --with-colons --with-fingerprint "$ROOT/llvm.key" | awk -F: '/^fpr:/{print $10;exit}')" = 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          sudo install -m 0644 "$ROOT/llvm.key" /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo 'deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' | sudo tee /etc/apt/sources.list.d/llvm22.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp-2026.1 clang-22 llvm-22-dev libclang-22-dev libc++-22-dev libc++abi-22-dev
+      - name: Run evaluation
+        shell: bash
+        run: bash .github/scripts/run-icx-plugin-libcxx.sh
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          ROOT=/tmp/icx-libcxx
+          { echo '# ICX libcxx results'; echo '```'; for f in "$ROOT"/results/*; do echo "[$(basename "$f")]"; cat "$f"; done; echo '```'; } | tee "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: icx-plugin-libcxx
+          path: /tmp/icx-libcxx
+          retention-days: 7
