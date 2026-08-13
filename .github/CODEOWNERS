@@ -1,0 +1,71 @@
+# The committed ABI baseline is the trusted "old side" every PR gets
+# compared against (abi-scan.yml reads it from the PR's base SHA via
+# `git show`, not from the PR's own working tree, specifically so a PR
+# can't rewrite its own baseline). Requiring review on it here is the
+# second half of that defense: even a baseline edit that *lands on main*
+# needs a human to sign off, so `baseline.yml`'s bot-authored refresh
+# commits are the only unreviewed path this file can change through.
+#
+# Whoever turns this requirement on: enabling "require a pull request
+# before merging" on `main` also blocks baseline.yml's direct push unless
+# its actor has an explicit bypass -- see the comment on that workflow's
+# "Commit refreshed baseline" step and README.md's CODEOWNERS section
+# (Codex review).
+#
+# That protection covers the baseline's *output* -- but baseline.yml runs
+# with `contents: write` and can commit/push any abi/math.abicheck.json,
+# so a PR could equally bypass review by editing the *producer* instead:
+# change what baseline.yml or normalize_baseline.py generates rather than
+# editing abi/math.abicheck.json directly (Codex review). Same ownership
+# boundary on both, so neither path around the other is unreviewed.
+#
+# And neither of those matters if the *consumer* of the comparison isn't
+# protected either: a PR touching .github/workflows/abi-scan.yml could
+# remove or gut the "Enforce gate" step while keeping the `scan` job name
+# branch protection requires, so the required check reports success
+# without the trusted-baseline comparison ever actually running (Codex
+# review). Same boundary here too.
+#
+# And none of the above holds if this file itself is unprotected: without
+# a self-ownership rule, a PR could just delete or weaken the entries
+# above (with no owner sign-off) before touching the baseline, its
+# producer, or the gating workflow (CodeRabbit review).
+#
+# scripts/check_coverage_contract.py is a second, independent gate the
+# "Enforce gate" step trusts -- a PR that changes it (e.g. loosens
+# min-export-match-ratio, or breaks _has_public_header_provenance back
+# open) could make a degraded scan report the contract as satisfied
+# without review (Codex review). Same boundary as the gate it's part of.
+#
+# scripts/render_scan_comment.py doesn't gate anything itself, but it runs
+# with the same job's `pull-requests: write` token and produces the
+# bot-authored "canonical report" comment everyone reads as the gate's
+# result. An unreviewed same-repo PR could change it to claim a passing
+# verdict or omit a failed coverage-contract section while the actual
+# gate code -- and its real (failing) outcome -- is untouched (Codex
+# review). Same trust boundary: the reader-facing report is as much a
+# part of "what the gate says" as the check that produces exit codes.
+#
+# scripts/paths_changed.py decides whether the scan job's gating steps
+# run at all (abi-scan.yml has no workflow-level path filter anymore --
+# see that file's `on:` block for why). A PR that weakens it to always
+# report "not relevant" would make the required check succeed trivially
+# on every PR, never actually gating anything.
+#
+# scripts/build_bazel_evidence_pack.py feeds --build-info for the scan
+# step: it decides which Bazel targets/compile-units the gate believes
+# exist. A PR that quietly weakens it (e.g. to fabricate targets, or to
+# stop checking that cquery/aquery actually produced anything) could make
+# the coverage contract pass on evidence that was never really collected.
+#
+# This only has teeth once branch protection on `main` requires review
+# from code owners for matching paths.
+abi/** @napetrov
+.github/workflows/baseline.yml @napetrov
+.github/workflows/abi-scan.yml @napetrov
+scripts/normalize_baseline.py @napetrov
+scripts/check_coverage_contract.py @napetrov
+scripts/render_scan_comment.py @napetrov
+scripts/paths_changed.py @napetrov
+scripts/build_bazel_evidence_pack.py @napetrov
+.github/CODEOWNERS @napetrov

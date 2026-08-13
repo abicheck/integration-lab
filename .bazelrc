@@ -1,0 +1,26 @@
+# Pin the environment this lab builds under, so a Bazel build here means
+# the same thing on every runner and every local checkout.
+#
+# Not yet added: a MODULE.bazel.lock (would need a real `bazel` invocation
+# to generate correctly, which isn't available while authoring this file --
+# see README's "Known limitations"). Generate one locally with
+# `bazel mod deps --lockfile_mode=update` and commit it as a follow-up.
+
+# Explicit, fixed C++ standard rather than whatever the default toolchain
+# happens to pick — a silent standard bump can change name mangling/ABI
+# without touching a single line this repo's own diff filters watch.
+build --cxxopt=-std=c++17
+build --host_cxxopt=-std=c++17
+
+# The shared disk cache location is deliberately NOT set here as
+# `--disk_cache=~/.cache/bazel-disk`: .bazelrc is read directly by Bazel,
+# with no shell in between to expand `~`, so Bazel would treat it as a
+# literal relative path under the workspace instead of the runner's home
+# directory -- silently pointing at a different directory than the one
+# actions/cache saves/restores (`~/.cache/bazel-disk`, expanded by the
+# Node-based cache action itself), making the cache a no-op (Codex
+# review). Passed explicitly as `--disk_cache=$HOME/.cache/bazel-disk` on
+# the `bazel build` command line in .github/workflows/*.yml instead, where
+# the shell expands $HOME before Bazel ever sees it.
+
+common --announce_rc=false

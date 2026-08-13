@@ -1,13 +1,22 @@
 name: ABICheck PR scan
 
 on:
-  pull_request:
-    paths:
-      - 'BUILD.bazel'
-      - 'MODULE.bazel'
-      - 'include/**'
-      - 'src/**'
-      - '.github/workflows/abi-scan.yml'
+  # Deliberately no `paths:` filter here (see the earlier fix that tried
+  # exactly that, expanding it to a superset of .github/CODEOWNERS's
+  # paths). A workflow-level path filter can only ever be a fixed list,
+  # and GitHub's own docs are explicit about what happens when a PR
+  # touches something outside it: the workflow never triggers, so a
+  # required "scan" check sits at "Pending" forever and the PR can never
+  # merge -- for *any* unlisted path, not just ones we forgot, e.g. a
+  # README.md-only or .gitignore-only PR (Codex review, fresh evidence
+  # after the superset fix). Instead this always triggers, and the
+  # "Skip if nothing ABI-relevant changed" step below decides -- from
+  # *inside* the job, where a skip still resolves the required check
+  # instead of leaving it pending -- whether the expensive steps run at
+  # all. See scripts/paths_changed.py for the pattern list (now the
+  # single source of truth this used to duplicate) and why it's
+  # CODEOWNERS-protected the same as the rest of the gate chain.
+  pull_request: {}
 
 permissions:
   contents: read
@@ -19,16 +28,150 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # Runs unconditionally (no `if:`) so it always produces a real
+      # conclusion for this required check, whether or not anything
+      # ABI-relevant changed -- see the `on:` block above for why there's
+      # no workflow-level path filter to do this job instead.
+      #
+      # --no-renames: git's default rename detection makes `--name-only`
+      # emit *only* the new path of a renamed file, silently dropping the
+      # old one. Verified empirically: renaming a relevant path (e.g.
+      # include/abicheck_lab/math.h) to an irrelevant one (docs/math.md)
+      # without this flag reports only "docs/math.md" changed -- the
+      # public header's removal is invisible to paths_changed.py, so the
+      # PR is judged irrelevant and the scan that should have caught the
+      # ABI-breaking removal is skipped entirely (Codex review). With
+      # --no-renames, both the old and new paths are listed as separate
+      # entries, and the old path still matches the relevant-paths list.
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+            {
+              echo '### ABICheck source scan'
+              echo
+              echo 'No ABI-relevant paths changed (see `scripts/paths_changed.py`) -- scan skipped, gate satisfied trivially.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # The candidate library is always built from the PR head (the
+      # checkout above). The baseline it gets compared against must come
+      # from the PR's exact base commit, read straight out of git history
+      # rather than the working tree — otherwise a PR could rewrite
+      # abi/math.abicheck.json in the same diff that breaks the ABI and
+      # have the gate "pass" against its own edited baseline.
+      - name: Resolve trusted baseline from PR base SHA
+        if: steps.relevance.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      # actions/cache never re-saves an already-existing key (it can only
+      # restore it) -- so a fixed key means the cache is frozen at whatever
+      # it held on the very first save and never accumulates new disk-cache
+      # entries from later runs (Codex review). A run-id suffix on the save
+      # key makes every run's cache saveable; restore-keys still falls back
+      # to the most recent cache for this config, then any cache for this OS.
+      # The job-name segment in the save key (not in restore-keys) is a
+      # discriminator: github.run_id is shared by every job in the same
+      # workflow run, so without it this job and the other Bazel-building
+      # job in this workflow would race to save the identical key in the
+      # same run, and whichever finished second would just log "already
+      # exists" and lose its cache entirely (CodeRabbit review).
+      - name: Set up Bazel disk cache
+        if: steps.relevance.outputs.relevant == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-scan-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
       - name: Build candidate shared library with Bazel
-        run: bazel build //:math
-      - name: Source-intelligence scan against main baseline
-        id: source_scan
+        if: steps.relevance.outputs.relevant == 'true'
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
+      # abicheck v0.5.0's zero-config `--sources` path only ever auto-runs
+      # `bazel aquery`, never `cquery` -- so BuildEvidence.targets stays 0
+      # no matter what the workspace contains (verified against abicheck's
+      # own source; see scripts/build_bazel_evidence_pack.py's docstring
+      # for the full trace). This captures both ourselves so the next two
+      # steps can hand abicheck combined evidence via --build-info instead.
+      # Best-effort: any failure here just means the gate falls back to
+      # abicheck's normal (targets-less) auto-inference, same as before
+      # these three steps existed -- never a regression, never gates on
+      # its own (continue-on-error, chained via each step's own outcome).
+      - name: Capture Bazel cquery/aquery for target-aware L3 evidence
+        id: bazel_queries
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//...)' \
+            > "$RUNNER_TEMP/bazel-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//...))" \
+            > "$RUNNER_TEMP/bazel-aquery.json"
+
+      - name: Install abicheck (for the Bazel evidence-pack helper script)
+        id: abicheck_pip
+        if: steps.bazel_queries.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      - name: Build combined Bazel evidence pack (targets + compile units)
+        id: bazel_pack
+        if: steps.abicheck_pip.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack"
+          echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
+
+      # Single canonical analysis: this one scan is the gate, the source
+      # of the PR comment (rendered below, since abicheck's built-in
+      # pr-comment is a compare-mode-only no-op as of v0.5.0/main — see
+      # scripts/render_scan_comment.py), and the job summary (abicheck's
+      # native add-job-summary, which does support scan mode).
+      #
+      # build-info: steps.bazel_pack's output is "" when any of the three
+      # steps above didn't run or failed -- abicheck's own run.sh only adds
+      # --build-info when the value is non-empty (verified against
+      # action/run.sh's add_single_flag), so an empty value here is exactly
+      # equivalent to omitting build-info and falling back to auto-inference.
+      #
+      # public-header-dir: not a typed action input in v0.5.0 (added later,
+      # main-only) but the underlying CLI flag exists at this pin too
+      # (verified against cli_scan.py) and extra-args passes it through --
+      # this is what turns the four provenance-gated crosschecks from
+      # "skipped: no public-header provenance" into real evidence.
+      - name: ABICheck source scan (gate + canonical report)
+        id: scan
+        if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -36,29 +179,311 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           sources: .
-          against: abi/math.abicheck.json
-          since: origin/${{ github.base_ref }}
+          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          extra-args: '--public-header-dir include'
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
+          format: json
+          output-file: abicheck-report.json
           fail-on-breaking: true
           fail-on-api-break: true
-      - name: Publish sticky ABI report on this PR
-        id: abi_report
+          add-job-summary: true
+          # scan mode has no built-in PR-comment renderer to disable, but
+          # setting this explicitly documents that we deliberately don't
+          # rely on it (see the render-comment step below).
+          pr-comment: false
+
+      # Publish evidence unconditionally: a red gate is exactly when this
+      # report is most useful for debugging, and this must never be
+      # skipped just because the gate step above failed.
+      - name: Upload ABICheck report artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-report
+          path: abicheck-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Second, independent gate: `depth: source` only asks abicheck to
+      # *attempt* source-level evidence -- v0.5.0 still reports plain
+      # COMPATIBLE at exit 0 when that attempt degrades (0 Bazel targets
+      # resolved, 0/N exported symbols linked to source, no public-header
+      # provenance). This asserts on the same report's own coverage
+      # evidence and fails independently of abicheck's verdict when the
+      # requested depth wasn't actually achieved -- see
+      # scripts/check_coverage_contract.py for the full rationale and
+      # exactly which fields this reads (verified against a real report).
+      - name: Check depth:source coverage contract
+        id: coverage_contract
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_coverage_contract.py abicheck-report.json \
+            -o "$RUNNER_TEMP/coverage-contract.json" \
+            --requested-depth source \
+            --changed-files "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Upload coverage contract result artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-contract-result
+          path: ${{ runner.temp }}/coverage-contract.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Supplementary, explicitly non-gating binary/header-only diff for
+      # humans who want a detailed side-by-side. It is deliberately NOT
+      # posted as a PR comment (pr-comment: false) and NEVER gates
+      # (fail-on-breaking/fail-on-api-break: false) — it must not be
+      # mistaken for the canonical report above, which is why it isn't
+      # given the sticky-comment channel at all, only an artifact.
+      - name: Binary/header-only diagnostic (non-gating, artifact only)
+        id: diagnostic
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
           mode: compare
-          old-library: abi/math.abicheck.json
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           format: json
-          output-file: abicheck-compare.json
+          output-file: abicheck-diagnostic-compare.json
           fail-on-breaking: false
           fail-on-api-break: false
-          pr-comment: true
-          pr-comment-on: always
-          pr-comment-detail: standard
-      - name: Enforce source scan gate
-        if: steps.source_scan.outcome == 'failure'
+          add-job-summary: false
+          pr-comment: false
+
+      - name: Upload diagnostic compare artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-diagnostic-compare
+          path: abicheck-diagnostic-compare.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Render canonical PR comment from the gating scan
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
         run: |
-          echo 'ABICheck source scan found a gated incompatibility.' >&2
+          set -euo pipefail
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python3 scripts/render_scan_comment.py abicheck-report.json \
+            -o "$RUNNER_TEMP/pr-comment.md" \
+            --base-sha "${{ github.event.pull_request.base.sha }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --requested-depth source \
+            --run-url "$RUN_URL" \
+            --coverage-contract "$RUNNER_TEMP/coverage-contract.json" \
+            --artifact-note "A non-gating binary/header-only diagnostic is available in the \`abicheck-diagnostic-compare\` workflow artifact."
+
+      # Best-effort only: on a fork PR (or a similarly restricted
+      # Dependabot PR), GitHub downgrades GITHUB_TOKEN to read-only
+      # regardless of the declared `pull-requests: write` permission, and
+      # this step gets a 403 from create/updateComment. That must never
+      # turn an otherwise-compatible scan red — continue-on-error is the
+      # safety net, and the try/catch below logs why instead of just
+      # failing silently past it (Codex review).
+      - name: Post/update sticky PR comment
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.RUNNER_TEMP + '/pr-comment.md';
+            if (!fs.existsSync(path)) {
+              core.warning('No rendered PR comment found; skipping comment post (see the render step above).');
+              return;
+            }
+            const body = fs.readFileSync(path, 'utf8');
+            const marker = '<!-- abicheck-lab-canonical-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number, per_page: 100,
+              });
+              // Only ever treat OUR bot-authored marker comment as "existing" --
+              // any PR participant could otherwise post a comment containing
+              // this marker text before the workflow runs, and the Actions
+              // token can't update someone else's comment (Codex review).
+              const existing = comments.find(c =>
+                c.body && c.body.includes(marker) &&
+                c.user && c.user.type === 'Bot' && c.user.login === 'github-actions[bot]'
+              );
+              if (existing) {
+                try {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                } catch (updateErr) {
+                  core.warning(`Could not update the existing sticky comment (${updateErr.status ?? 'error'}): ${updateErr.message}. Posting a new comment instead.`);
+                  await github.rest.issues.createComment({ owner, repo, issue_number, body });
+                }
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            } catch (err) {
+              // Most commonly a 403 on a fork/Dependabot PR, where
+              // GITHUB_TOKEN is read-only no matter what this workflow
+              // declares. The gate itself doesn't depend on this step.
+              core.warning(`Could not post/update the PR comment (${err.status ?? 'error'}): ${err.message}. The gate and the abicheck-report artifact are unaffected.`);
+            }
+
+      # Two independent gates, both run with continue-on-error so evidence
+      # still gets published on a red result either way; fail the job
+      # explicitly here instead of letting a later, differently-scoped
+      # step decide. Both must pass: an ABI-compatible result the coverage
+      # contract doesn't trust is still a red PR, and a coverage-complete
+      # result with a real ABI break is still a red PR.
+      - name: Enforce gate
+        if: steps.scan.outcome == 'failure' || steps.coverage_contract.outcome == 'failure'
+        run: |
+          if [ "${{ steps.scan.outcome }}" == "failure" ]; then
+            echo 'ABICheck source scan found a gated incompatibility (see the PR comment, job summary, and abicheck-report artifact for details).' >&2
+          fi
+          if [ "${{ steps.coverage_contract.outcome }}" == "failure" ]; then
+            echo 'depth: source coverage contract not satisfied -- the requested evidence depth was not actually achieved (see the PR comment and coverage-contract-result artifact for details).' >&2
+          fi
           exit 1
+
+  # Non-blocking canary: the same scan, pinned to an exact commit on
+  # abicheck/main instead of the last release, so this PR shows what the
+  # *next* abicheck release will do before it ships. Never gates (the
+  # abicheck step's own continue-on-error, plus no enforce-gate step at
+  # all) and never posts a PR comment — job summary only, so it can't be
+  # confused with the canonical stable-lane report above.
+  #
+  # It also exercises --contract-evaluation (ADR-049), main-only as of
+  # this writing: with --against set, it stamps an orthogonal
+  # coverage/contract verdict (COVERAGE_INCOMPLETE) when the requested
+  # evidence depth wasn't actually achievable — the "depth: source asked,
+  # binary depth delivered, but still reported COMPATIBLE" gap called out
+  # against the stable lane. Update the pinned SHA periodically; do not
+  # float this to @main.
+  canary:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # canary isn't a required check, so it was never at risk of the
+      # "Pending forever" trap the scan job's version of this step exists
+      # to close -- this is purely to avoid burning a Bazel build + scan
+      # on every doc-only PR now that the workflow-level path filter that
+      # used to do this for free is gone (see the `on:` block above).
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve trusted baseline from PR base SHA
+        if: steps.relevance.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      # actions/cache never re-saves an already-existing key (it can only
+      # restore it) -- so a fixed key means the cache is frozen at whatever
+      # it held on the very first save and never accumulates new disk-cache
+      # entries from later runs (Codex review). A run-id suffix on the save
+      # key makes every run's cache saveable; restore-keys still falls back
+      # to the most recent cache for this config, then any cache for this OS.
+      # The job-name segment in the save key (not in restore-keys) is a
+      # discriminator: github.run_id is shared by every job in the same
+      # workflow run, so without it this job and the other Bazel-building
+      # job in this workflow would race to save the identical key in the
+      # same run, and whichever finished second would just log "already
+      # exists" and lose its cache entirely (CodeRabbit review).
+      - name: Set up Bazel disk cache
+        if: steps.relevance.outputs.relevant == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-canary-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate shared library with Bazel
+        if: steps.relevance.outputs.relevant == 'true'
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Deliberately doesn't duplicate the scan job's Bazel cquery/aquery +
+      # pip-install-abicheck + evidence-pack steps here -- this lane is
+      # non-gating, and doubling the pip install / query cost on every PR
+      # for a report nobody's blocked on isn't worth it. It still gets the
+      # public-header-dir fix (below) since that's a single extra-args
+      # word, not a multi-step pipeline.
+      - name: ABICheck source scan (canary — abicheck/main, non-blocking)
+        id: canary_scan
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: abicheck/abicheck@e5fabd40357f36a946b572948866f34f6c9f0575 # main (pin updated manually — see comment above)
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          sources: .
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          budget: 10m
+          format: json
+          output-file: abicheck-canary-report.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+          # --public-header-dir: same fix as the scan job above -- not a
+          # typed input at either pin, forwarded via extra-args.
+          extra-args: '--contract-evaluation --public-header-dir include'
+
+      - name: Upload canary report artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-canary-report
+          path: abicheck-canary-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Note canary status
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+            {
+              echo "### Canary lane (non-blocking)"
+              echo
+              echo "No ABI-relevant paths changed -- skipped."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### Canary lane (non-blocking)"
+            echo
+            echo "Ran against \`abicheck/main@e5fabd40357f36a946b572948866f34f6c9f0575\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
+          } >> "$GITHUB_STEP_SUMMARY"
