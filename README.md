@@ -133,13 +133,21 @@ the workflow level**, not just gated red and documented:
   (targets-less) auto-inference on any problem, so this can only improve
   evidence, never regress it.
 
-The one gap this doesn't (and structurally can't) close is
-**export-to-source symbol matching** on a PR that doesn't actually touch
-any C++ source: `depth: source` defaults to `scope=changed` replay, so a
-workflow-only PR genuinely has zero compile units in scope to match
-against — 0/6 isn't a broken pipeline there, it's an accurate "nothing to
-check" for that diff. A PR that changes `src/`/`include/` should see real
-matching now that compile units are correctly linked to their Bazel
+**Export-to-source symbol matching is exempted, not enforced, when there's
+nothing to match.** `depth: source` defaults to `scope=changed` replay, so
+a PR that doesn't touch any C++ source (e.g. this repo's own gate-only
+maintenance PRs — `scripts/paths_changed.py` correctly still calls those
+"relevant", they need review) genuinely has zero compile units in scope:
+`check_coverage_contract.py` reads `L4_source_abi`'s own "P/S TUs parsed"
+count and only enforces the `>= 0.95` ratio when the *selected* count is
+positive — a confirmed-empty scope isn't a failed link, there's nothing to
+link (verified against a real report from exactly this scenario: "scope=
+changed, 0/0 TUs parsed, 0/6 symbols matched"). If that count can't be
+parsed at all (a reformatted detail string, an unexpected layer shape),
+the exemption does **not** apply — fails closed to the ordinary ratio
+check, same as everywhere else in this script. A PR that actually changes
+`src/`/`include/` gets real symbols in scope and the ratio is enforced
+normally, now with compile units correctly linked to their resolved Bazel
 targets.
 
 This was verified as far as static analysis of the pinned commit allows —

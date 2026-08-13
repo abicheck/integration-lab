@@ -39,6 +39,7 @@ import sys
 
 L3_BUILD_RE = re.compile(r"(\d+)\s+compile\s+units?,\s+(\d+)\s+targets?")
 L4_SYMBOLS_RE = re.compile(r"(\d+)/(\d+)\s+symbols\s+matched")
+L4_TUS_RE = re.compile(r"(\d+)/(\d+)\s+TUs\s+parsed")
 
 # crosscheck layers that require public-header provenance to run at all --
 # verified against the real report: with no --public-header/--public-header-dir
@@ -77,6 +78,31 @@ def _extract_l4(coverage):
     if not m:
         return None, None, f"could not parse L4_source_abi detail: {entry.get('detail')!r}"
     return int(m.group(1)), int(m.group(2)), None
+
+
+def _extract_l4_selected_tus(coverage):
+    """Return the "selected" count from L4_source_abi's "P/S TUs parsed", or None.
+
+    `depth: source` defaults to `scope=changed` replay: only compile units
+    whose source actually changed vs. the base are in scope at all. A PR
+    that touches only the gate's own YAML/scripts (still correctly judged
+    "relevant" by scripts/paths_changed.py -- it needs review, even though
+    it isn't C++) has *zero* compile units in scope, so `symbols_matched`
+    is inescapably 0/N -- not because linking failed, but because there was
+    nothing to link (verified against a real report from this exact
+    scenario: "scope=changed, 0/0 TUs parsed, 0/6 symbols matched"). None
+    on any parse failure -- the caller must not treat "unknown" the same as
+    "confirmed zero": exempting the ratio check needs positive evidence
+    that the scope was genuinely empty, not just an absent/reformatted
+    detail string (Codex review).
+    """
+    entry = coverage.get("L4_source_abi")
+    if entry is None:
+        return None
+    m = L4_TUS_RE.search(entry.get("detail", ""))
+    if not m:
+        return None
+    return int(m.group(2))
 
 
 def _has_public_header_provenance(coverage):
@@ -134,13 +160,27 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
     if l4_err:
         failures.append(l4_err)
     else:
-        ratio = (matched / total) if total else 0.0
-        facts["export_match_ratio"] = round(ratio, 4)
-        if ratio < min_export_match_ratio:
-            failures.append(
-                f"export-to-source link ratio {matched}/{total} ({ratio:.0%}) "
-                f"< required minimum {min_export_match_ratio:.0%}"
+        selected_tus = _extract_l4_selected_tus(coverage)
+        facts["selected_tus"] = selected_tus
+        if selected_tus == 0:
+            # Confirmed empty scope=changed replay (see
+            # _extract_l4_selected_tus) -- 0/N isn't a failed link, there
+            # was nothing in scope to link. Not a gate failure; recorded as
+            # a fact, not folded into export_match_ratio, so a reader can't
+            # mistake "exempt" for "100% matched".
+            facts["export_match_ratio"] = None
+            facts["export_match_ratio_exempt_reason"] = (
+                "0 compile units in scope=changed replay -- this diff "
+                "doesn't touch any C++ source, so there's nothing to link"
             )
+        else:
+            ratio = (matched / total) if total else 0.0
+            facts["export_match_ratio"] = round(ratio, 4)
+            if ratio < min_export_match_ratio:
+                failures.append(
+                    f"export-to-source link ratio {matched}/{total} ({ratio:.0%}) "
+                    f"< required minimum {min_export_match_ratio:.0%}"
+                )
 
     has_provenance = _has_public_header_provenance(coverage)
     facts["public_header_provenance"] = has_provenance
