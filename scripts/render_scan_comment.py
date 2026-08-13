@@ -116,10 +116,33 @@ def _render_findings(diff):
         shown, rest = findings[:_MAX_RENDERED_FINDINGS], findings[_MAX_RENDERED_FINDINGS:]
         for entry in shown:
             lines.append(_finding_line(entry))
-        if rest or diff.get("findings_truncated"):
+        # Two independent truncation points, reported separately (Codex
+        # review): `rest` is only what THIS renderer additionally cut, on
+        # top of whatever abicheck's own `scan --against` summary already
+        # capped `diff.findings` to upstream (`findings_truncated` +
+        # `findings_truncated_kinds`, a kind -> cut-count map -- see
+        # `cli_scan_baseline._baseline_finding_dicts`'s docstring). If the
+        # upstream cap and this renderer's cap happen to coincide (e.g.
+        # both discard nothing further because the report already has
+        # exactly `_MAX_RENDERED_FINDINGS` entries), `rest` is empty but
+        # `findings_truncated` can still be true -- collapsing the two
+        # into one count would silently understate (or, before this fix,
+        # completely hide as "+0 more") what abicheck itself already
+        # discarded before this script ever saw the report.
+        if rest:
             lines.append(
-                f"- _(+{len(rest)} more finding(s) not shown here -- see the full "
-                "abicheck-report artifact.)_"
+                f"- _(+{len(rest)} more finding(s) not shown here (this comment's "
+                "own display cap) -- see the full abicheck-report artifact.)_"
+            )
+        if diff.get("findings_truncated"):
+            cut_kinds = diff.get("findings_truncated_kinds") or {}
+            cut_total = sum(cut_kinds.values()) if isinstance(cut_kinds, dict) else None
+            detail = f" ({cut_total} finding(s) by kind: {cut_kinds})" if cut_kinds else ""
+            lines.append(
+                "- _(abicheck's own report already truncated `diff.findings` "
+                f"before this comment was rendered{detail} -- the full, "
+                "untruncated set is not available in this report; re-run with "
+                "a higher `--max-findings` for the complete list.)_"
             )
         lines.append("")
     elif counts and any(counts.get(b) for b in ("breaking", "api_break", "risk")):

@@ -61,13 +61,13 @@ def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=N
     # DWARF/symbols-only, as every scenario before default_argument_added
     # relies on -- a mangled-symbol-visible change like a removed/added
     # function or a changed parameter type needs no header on either side).
-    # A default-argument change is invisible at that depth: the mangled
-    # symbol is identical old vs new (Itanium mangling doesn't encode
-    # default values), so without the OLD side's own header AST to diff
-    # against, abicheck has no old-side default-argument fact to compare
-    # the new one to and reports NO_CHANGE regardless of what actually
-    # changed (confirmed: this is exactly what happened before old_header
-    # was threaded through here -- see the default_argument_added scenario).
+    # A default-argument fact needs both sides' header ASTs to even be
+    # comparable at all (without the OLD side's own header, abicheck has no
+    # old-side default-argument fact to compare the new one to) -- passed
+    # here so the comparison is real rather than trivially vacuous, even
+    # though the actual, verified abicheck behavior for *gaining* a default
+    # is COMPATIBLE either way (see scenarios/manifest.yaml's
+    # default_argument_added entry for the full citation).
     cmd = [
         "abicheck",
         "compare",

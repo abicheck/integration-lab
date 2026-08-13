@@ -38,21 +38,26 @@ scenarios:
   - name: default_argument_added
     description: >
       v2 gives an existing parameter a default value. The mangled symbol is
-      unchanged (default arguments aren't part of Itanium mangling), so
-      this is invisible at binary/DWARF depth -- but a caller compiled
-      against v2's header can now omit the argument, while one still
-      compiled against v1's header cannot. This must read as a source-level
-      API break, not COMPATIBLE: it is a header-visible contract change
-      that a binary-only diff structurally cannot see. Regression scenario
-      for the depth-of-evidence gap AGENTS.md documents as fixed ("addition
-      of default argument now detected as API_BREAK").
+      unchanged (default arguments aren't part of Itanium mangling) -- and,
+      verified directly against abicheck's own source
+      (abicheck/checker_policy.py's ChangeKind docstrings,
+      abicheck/diff_symbols.py's default-argument detector), this is
+      deliberately, intentionally treated as COMPATIBLE, never flagged:
+      gaining a default is purely additive (an existing caller that already
+      passes the argument is unaffected; only NEW code gets the option to
+      omit it), unlike PARAM_DEFAULT_VALUE_REMOVED/PARAM_DEFAULT_VALUE_CHANGED,
+      which do gate as API_BREAK because they take a capability away from an
+      existing caller. Regression scenario pinning that this stays
+      COMPATIBLE -- an earlier revision of this scenario incorrectly
+      expected API_BREAK here; see this PR's own review discussion for the
+      correction and the abicheck source citations backing it.
     old_target: "//fixtures/default_argument_added/v1:impl"
     new_target: "//fixtures/default_argument_added/v2:impl"
     old_output: bazel-bin/fixtures/default_argument_added/v1/libimpl.so
     new_output: bazel-bin/fixtures/default_argument_added/v2/libimpl.so
     old_header: fixtures/default_argument_added/v1/lib.h
     new_header: fixtures/default_argument_added/v2/lib.h
-    expected_verdict: API_BREAK
+    expected_verdict: COMPATIBLE
 
   - name: change_signature
     description: >
