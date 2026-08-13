@@ -81,21 +81,26 @@ def _extract_l4(coverage):
 
 def _has_public_header_provenance(coverage):
     # Fail closed, not open: require *positive* evidence of provenance --
-    # at least one provenance-gated crosscheck actually completed (status
-    # other than "skipped") -- not just the absence of one specific skip
-    # phrase. An earlier revision only rejected a skip whose detail matched
-    # "no public-header provenance" exactly, so a layer skipped for any
-    # other reason (upstream stage unavailable, ...) still counted as
-    # "provenance present" with zero completed checks (Codex review). And
-    # if none of the provenance-gated layers appear at all (schema change,
-    # renamed layers, a crosscheck stage that didn't run), there is no
-    # evidence either way -- treating that as "provenance present" would be
-    # the same silent-pass-on-missing-evidence bug (CodeRabbit + Codex
+    # at least one provenance-gated crosscheck actually completed -- not
+    # just the absence of one specific skip phrase, and not just "anything
+    # other than skipped". An earlier revision checked `status != "skipped"`,
+    # which is a denylist: it would also accept a hypothetical "failed"/
+    # "error"/"partial" status (or simply a missing status key) as positive
+    # evidence, since none of those equal "skipped" either (Codex review).
+    # Verified against abicheck's own schema (buildsource/crosscheck_base.py,
+    # `_CheckOutput.status: str # "present" | "skipped"` -- every call site
+    # in crosscheck.py/crosscheck_coherence.py only ever constructs one of
+    # those two) that "present" is the complete, exact success value, so
+    # this now allowlists it explicitly instead of denylisting "skipped".
+    # And if none of the provenance-gated layers appear at all (schema
+    # change, renamed layers, a crosscheck stage that didn't run), there is
+    # no evidence either way -- treating that as "provenance present" would
+    # be the same silent-pass-on-missing-evidence bug (CodeRabbit + Codex
     # review, first round).
     crosschecks = [layer for layer in coverage if layer in _PROVENANCE_GATED_LAYERS]
     if not crosschecks:
         return False
-    return any(coverage[layer].get("status") != "skipped" for layer in crosschecks)
+    return any(coverage[layer].get("status") == "present" for layer in crosschecks)
 
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,

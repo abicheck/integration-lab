@@ -39,12 +39,23 @@ jobs:
       # conclusion for this required check, whether or not anything
       # ABI-relevant changed -- see the `on:` block above for why there's
       # no workflow-level path filter to do this job instead.
+      #
+      # --no-renames: git's default rename detection makes `--name-only`
+      # emit *only* the new path of a renamed file, silently dropping the
+      # old one. Verified empirically: renaming a relevant path (e.g.
+      # include/abicheck_lab/math.h) to an irrelevant one (docs/math.md)
+      # without this flag reports only "docs/math.md" changed -- the
+      # public header's removal is invisible to paths_changed.py, so the
+      # PR is judged irrelevant and the scan that should have caught the
+      # ABI-breaking removal is skipped entirely (Codex review). With
+      # --no-renames, both the old and new paths are listed as separate
+      # entries, and the old path still matches the relevant-paths list.
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         shell: bash
         run: |
           set -euo pipefail
-          git diff --name-only \
+          git diff --no-renames --name-only \
             "${{ github.event.pull_request.base.sha }}" \
             "${{ github.event.pull_request.head.sha }}" \
             > "$RUNNER_TEMP/changed-files.txt"
@@ -319,7 +330,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --name-only \
+          git diff --no-renames --name-only \
             "${{ github.event.pull_request.base.sha }}" \
             "${{ github.event.pull_request.head.sha }}" \
             > "$RUNNER_TEMP/changed-files.txt"
