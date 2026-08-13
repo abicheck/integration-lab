@@ -184,29 +184,38 @@ def _extract_l4(coverage):
     return int(m.group(1)), int(m.group(2)), None
 
 
-def _extract_l4_selected_tus(coverage):
-    """Return the "selected" count from L4_source_abi's "P/S TUs parsed", or None.
+def _extract_l4_tus(coverage):
+    """Return (parsed, selected) from L4_source_abi's "P/S TUs parsed", or (None, None).
 
     `depth: source` defaults to `scope=changed` replay: only compile units
-    whose source actually changed vs. the base are in scope at all. A PR
-    that touches only the gate's own YAML/scripts (still correctly judged
-    "relevant" by scripts/paths_changed.py -- it needs review, even though
-    it isn't C++) has *zero* compile units in scope, so `symbols_matched`
-    is inescapably 0/N -- not because linking failed, but because there was
-    nothing to link (verified against a real report from this exact
-    scenario: "scope=changed, 0/0 TUs parsed, 0/6 symbols matched"). None
-    on any parse failure -- the caller must not treat "unknown" the same as
-    "confirmed zero": exempting the ratio check needs positive evidence
-    that the scope was genuinely empty, not just an absent/reformatted
-    detail string (Codex review).
+    whose source actually changed vs. the base are in scope (selected) at
+    all. A PR that touches only the gate's own YAML/scripts (still
+    correctly judged "relevant" by scripts/paths_changed.py -- it needs
+    review, even though it isn't C++) has *zero* compile units selected,
+    so `symbols_matched` is inescapably 0/N -- not because linking failed,
+    but because there was nothing to link (verified against a real report
+    from this exact scenario: "scope=changed, 0/0 TUs parsed, 0/6 symbols
+    matched"). (None, None) on any parse failure -- the caller must not
+    treat "unknown" the same as "confirmed zero": exempting the ratio
+    check needs positive evidence that the scope was genuinely empty, not
+    just an absent/reformatted detail string (Codex review).
+
+    `parsed` can be *less than* `selected` -- a TU was selected (its
+    source changed) but the replay failed to actually parse it (e.g. a
+    clang crash, an unsupported construct). That's a real coverage gap
+    distinct from the exemption above: any source-only API change inside
+    that specific unparsed TU is invisible to this scan, even if every
+    *other* selected TU parsed cleanly and the overall symbol-match ratio
+    looks fine (Codex review, fresh evidence -- a prior revision only
+    ever read `selected`, never checking `parsed` against it).
     """
     entry = coverage.get("L4_source_abi")
     if entry is None:
-        return None
+        return None, None
     m = L4_TUS_RE.search(entry.get("detail", ""))
     if not m:
-        return None
-    return int(m.group(2))
+        return None, None
+    return int(m.group(1)), int(m.group(2))
 
 
 def _has_public_header_provenance(coverage):
@@ -271,10 +280,28 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
     if l4_err:
         failures.append(l4_err)
     else:
-        selected_tus = _extract_l4_selected_tus(coverage)
+        parsed_tus, selected_tus = _extract_l4_tus(coverage)
+        facts["parsed_tus"] = parsed_tus
         facts["selected_tus"] = selected_tus
+        # A selected TU that never actually parsed is a real coverage gap
+        # regardless of the exemption below or the ratio check that
+        # follows: any source-only API change inside that specific TU is
+        # invisible to this scan, even when the overall symbol-match ratio
+        # happens to look fine because the *other* selected TUs parsed
+        # cleanly (Codex review -- an earlier revision only ever read
+        # `selected`, never checking `parsed` against it).
+        if (
+            parsed_tus is not None
+            and selected_tus is not None
+            and parsed_tus < selected_tus
+        ):
+            failures.append(
+                f"only {parsed_tus}/{selected_tus} selected translation unit(s) "
+                "actually parsed -- a source-only change in an unparsed TU "
+                "would be invisible to this scan"
+            )
         # Positive evidence required on *both* axes before exempting:
-        # a confirmed-empty scope (see _extract_l4_selected_tus) AND a
+        # a confirmed-empty scope (see _extract_l4_tus) AND a
         # known, exhaustive changed-file list that contains nothing able to
         # reach the compiler. Either one missing/unknown falls through to
         # the ordinary ratio check below -- exemption is an allowlist, not
