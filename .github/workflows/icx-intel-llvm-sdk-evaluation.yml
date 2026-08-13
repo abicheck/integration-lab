@@ -1,0 +1,149 @@
+name: ICX Intel LLVM SDK evaluation
+on:
+  push:
+    branches: [icx-intel-llvm-sdk-evaluation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ROOT: /tmp/icx-intel-llvm-sdk
+      ICX: /opt/intel/oneapi/compiler/2026.1/bin/icx
+      ICPX: /opt/intel/oneapi/compiler/2026.1/bin/icpx
+      INTEL_LLVM_URL: https://github.com/intel/llvm/releases/download/v7.0.0/sycl_linux.tar.gz
+      INTEL_LLVM_SHA256: e8fbf36b832db64a4e15ceb4f94241604ce53c76aefbb29122f23303948ab223
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: abicheck/abicheck
+          ref: b9c9c33fdd35bbcf61bf43aeee0e5a87bd46d93d
+          path: abicheck
+          persist-credentials: false
+      - name: Install commercial ICX 2026.1.1 and tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "$ROOT"; mkdir -p "$ROOT/logs" "$ROOT/results" "$ROOT/sdk"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils ca-certificates cmake curl file gnupg ninja-build python3-venv wget
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/oneapi.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneapi.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp-2026.1
+          "$ICPX" --version | tee "$ROOT/logs/commercial-version.log"
+      - name: Download and inspect Intel LLVM v7.0.0 binary release
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 4 "$INTEL_LLVM_URL" -o "$ROOT/sycl_linux.tar.gz"
+          echo "$INTEL_LLVM_SHA256  $ROOT/sycl_linux.tar.gz" | sha256sum -c -
+          tar -tzf "$ROOT/sycl_linux.tar.gz" > "$ROOT/logs/archive-list.txt"
+          tar -xzf "$ROOT/sycl_linux.tar.gz" -C "$ROOT/sdk"
+          {
+            echo '=== top-level archive entries ==='
+            sed -n '1,160p' "$ROOT/logs/archive-list.txt"
+            echo '=== compiler binaries ==='
+            find "$ROOT/sdk" -type f -perm -111 \( -name clang -o -name clang++ -o -name icpx -o -name dpcpp \) -print | sort
+            echo '=== plugin SDK files ==='
+            find "$ROOT/sdk" -type f \( -name LLVMConfig.cmake -o -name ClangConfig.cmake -o -name FrontendPluginRegistry.h -o -name 'libclang-cpp*.so*' \) -print | sort
+            echo '=== all CMake configs ==='
+            find "$ROOT/sdk" -type f -name '*Config.cmake' -print | sort
+          } | tee "$ROOT/logs/sdk-inspection.log"
+      - name: Build plugin from Intel LLVM v7.0.0 SDK
+        shell: bash
+        run: |
+          set +e
+          SDK_CLANG=$(find "$ROOT/sdk" -type f -perm -111 -name clang | sort | head -n1)
+          SDK_CLANGXX=$(find "$ROOT/sdk" -type f -perm -111 -name clang++ | sort | head -n1)
+          LLVM_CONFIG=$(find "$ROOT/sdk" -type f -name LLVMConfig.cmake | sort | head -n1)
+          CLANG_CONFIG=$(find "$ROOT/sdk" -type f -name ClangConfig.cmake | sort | head -n1)
+          printf 'SDK_CLANG=%s\nSDK_CLANGXX=%s\nLLVM_CONFIG=%s\nCLANG_CONFIG=%s\n' "$SDK_CLANG" "$SDK_CLANGXX" "$LLVM_CONFIG" "$CLANG_CONFIG" | tee "$ROOT/logs/sdk-paths.log"
+          if [[ -z "$SDK_CLANG" || -z "$SDK_CLANGXX" || -z "$LLVM_CONFIG" || -z "$CLANG_CONFIG" ]]; then
+            printf 'configure=127\nbuild=127\nreason=release archive lacks compiler or LLVM/Clang development CMake packages\n' > "$ROOT/results/build.status"
+            exit 0
+          fi
+          SDK_BIN=$(dirname "$SDK_CLANGXX")
+          SDK_PREFIX=$(dirname "$SDK_BIN")
+          export PATH="$SDK_BIN:$PATH"
+          export LD_LIBRARY_PATH="$SDK_PREFIX/lib:$SDK_PREFIX/lib/x86_64-unknown-linux-gnu:${LD_LIBRARY_PATH:-}"
+          "$SDK_CLANGXX" --version | tee "$ROOT/logs/sdk-version.log"
+          cmake -S "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin" -B "$ROOT/build" -G Ninja \
+            -DCMAKE_C_COMPILER="$SDK_CLANG" -DCMAKE_CXX_COMPILER="$SDK_CLANGXX" \
+            -DLLVM_DIR="$(dirname "$LLVM_CONFIG")" -DClang_DIR="$(dirname "$CLANG_CONFIG")" \
+            -DCMAKE_BUILD_TYPE=Release > "$ROOT/logs/build.log" 2>&1
+          configure_rc=$?; build_rc=125
+          if [[ $configure_rc = 0 ]]; then
+            cmake --build "$ROOT/build" -v >> "$ROOT/logs/build.log" 2>&1
+            build_rc=$?
+          fi
+          printf 'configure=%s\nbuild=%s\n' "$configure_rc" "$build_rc" > "$ROOT/results/build.status"
+          cat "$ROOT/logs/build.log"
+          plugin="$ROOT/build/libabicheck-facts.so"
+          if [[ -f "$plugin" ]]; then
+            file "$plugin"
+            sha256sum "$plugin"
+            ldd "$plugin" || true
+            nm -D --undefined-only "$plugin" | c++filt | grep -E 'PluginASTAction|std::__1|std::__cxx11' | head -100 || true
+          fi
+          exit 0
+      - name: Load matrix and conformance
+        shell: bash
+        run: |
+          set +e
+          SDK_CLANGXX=$(find "$ROOT/sdk" -type f -perm -111 -name clang++ | sort | head -n1)
+          SDK_PREFIX=$(dirname "$(dirname "$SDK_CLANGXX")")
+          export PATH="$(dirname "$SDK_CLANGXX"):/opt/intel/oneapi/compiler/2026.1/bin:$PATH"
+          export LD_LIBRARY_PATH="$SDK_PREFIX/lib:$SDK_PREFIX/lib/x86_64-unknown-linux-gnu:/opt/intel/oneapi/compiler/2026.1/lib:${LD_LIBRARY_PATH:-}"
+          plugin="$ROOT/build/libabicheck-facts.so"
+          mkdir -p "$ROOT/fixture/include"
+          cat > "$ROOT/fixture/include/api.hpp" <<'EOF'
+          #pragma once
+          namespace sample { struct Widget { int value; }; inline int get(Widget w) { return w.value; } }
+          EOF
+          cat > "$ROOT/fixture/use.cpp" <<'EOF'
+          #include "api.hpp"
+          int use_widget(sample::Widget w) { return sample::get(w); }
+          EOF
+          smoke() {
+            label=$1; compiler=$2; out="$ROOT/smoke-$label"
+            rm -rf "$out"
+            "$compiler" -std=c++17 -I"$ROOT/fixture/include" -fplugin="$plugin" \
+              -Xclang -plugin-arg-abicheck-facts -Xclang "out=$out" \
+              -Xclang -plugin-arg-abicheck-facts -Xclang "public-roots=$ROOT/fixture/include" \
+              -c "$ROOT/fixture/use.cpp" -o "$ROOT/$label.o" > "$ROOT/logs/smoke-$label.log" 2>&1
+            rc=$?; echo "rc=$rc" > "$ROOT/results/smoke-$label.status"
+            echo "=== smoke $label rc=$rc ==="; cat "$ROOT/logs/smoke-$label.log"; find "$out" -type f -maxdepth 3 -print 2>/dev/null || true
+          }
+          if [[ -x "$SDK_CLANGXX" && -f "$plugin" ]]; then smoke intel-llvm-v7 "$SDK_CLANGXX"; else echo 'rc=127' > "$ROOT/results/smoke-intel-llvm-v7.status"; fi
+          if [[ -x "$ICPX" && -f "$plugin" ]]; then smoke commercial-icpx "$ICPX"; else echo 'rc=127' > "$ROOT/results/smoke-commercial-icpx.status"; fi
+
+          python3 -m venv "$ROOT/venv"; source "$ROOT/venv/bin/activate"; pip install -q -e "$GITHUB_WORKSPACE/abicheck"
+          conformance() {
+            label=$1; compiler=$2; smoke_file="$ROOT/results/smoke-$label.status"; rc=125
+            smoke_rc=$(sed -n 's/^rc=//p' "$smoke_file" 2>/dev/null)
+            if [[ "$smoke_rc" = 0 ]]; then
+              python "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin/tests/conformance.py" \
+                --plugin "$plugin" --clangxx "$compiler" --work "$ROOT/conf-$label" --keep > "$ROOT/logs/conf-$label.log" 2>&1
+              rc=$?
+            else echo "skipped smoke=$smoke_rc" > "$ROOT/logs/conf-$label.log"; fi
+            echo "rc=$rc" > "$ROOT/results/conf-$label.status"
+            echo "=== conformance $label rc=$rc ==="; cat "$ROOT/logs/conf-$label.log"
+          }
+          conformance intel-llvm-v7 "$SDK_CLANGXX"
+          conformance commercial-icpx "$ICPX"
+          exit 0
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          { echo '# Intel LLVM v7 plugin SDK results'; echo '```'; for f in "$ROOT"/results/*; do echo "[$(basename "$f")]"; cat "$f"; done; echo '```'; } | tee "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: icx-intel-llvm-sdk-evaluation
+          path: /tmp/icx-intel-llvm-sdk
+          retention-days: 7
