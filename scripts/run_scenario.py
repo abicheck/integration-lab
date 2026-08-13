@@ -84,6 +84,16 @@ def run_one(scenario, results_dir):
     run_bazel_build(scenario["old_target"], scenario["new_target"])
 
     output_json = results_dir / f"{name}.json"
+    # run_abicheck_compare() deliberately doesn't check the subprocess
+    # return code -- a BREAKING scenario is *supposed* to exit non-zero.
+    # But that also means a run that fails before writing anything (a
+    # crash, a bad flag) would otherwise leave whatever report an earlier
+    # invocation left at this same path (a local re-run reusing
+    # --results-dir, or a retried CI step) sitting there looking fresh,
+    # and the read below would happily report its stale verdict as if
+    # this run had produced it (Codex review). Remove any pre-existing
+    # report first so "no report" always means exactly that.
+    output_json.unlink(missing_ok=True)
     run_abicheck_compare(
         REPO_ROOT / scenario["old_output"],
         REPO_ROOT / scenario["new_output"],
