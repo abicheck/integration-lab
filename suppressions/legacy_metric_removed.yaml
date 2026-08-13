@@ -1,0 +1,19 @@
+--- # scenarios/manifest.yaml's suppression_partial scenario oracle.
+#
+# Scoped to exactly the ONE accepted finding (legacy_metric's removal) --
+# an exact-symbol selector, so it cannot also match required_api's
+# unrelated, unaccepted parameter-type break. This is the review's
+# suppression scenario #2 ("known finding plus a new break"): the accepted
+# removal must stop gating, but the new break on required_api must still
+# gate the PR -- an overly broad suppression rule (a namespace/pattern
+# selector matching both) would defeat the whole point of scoping
+# suppressions to specific, audited findings.
+version: 1
+suppressions:
+  - symbol: _ZN8scenario13legacy_metricEi
+    change_kind: func_removed
+    label: accepted-legacy-metric-removal
+    reason: >
+      Demo suppression for the suppression scenario matrix's "known finding
+      plus new break" case -- this rule must not also silence
+      required_api's own, unrelated signature change.

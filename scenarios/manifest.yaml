@@ -57,6 +57,59 @@ scenarios:
       castxml: BREAKING
       clang: BREAKING
 
+  - name: remove_function_suppressed
+    description: >
+      Same fixture pair as remove_function (v2 removes an exported
+      function), but with suppressions/remove_function_accepted.yaml
+      applied -- an exact-symbol rule matching exactly the one removed
+      export (scenario::removed_function(int), func_removed), not a broad
+      namespace/pattern selector, so no allow_public_break is needed
+      (AGENTS.md's own suppression guidance: a narrow, exact-symbol rule is
+      already an explicit, audited decision).
+      This is the review's suppression scenario #1 ("only a known finding
+      is present"): the same real ABI break that reads BREAKING unsuppressed
+      must read NO_CHANGE once suppressed -- and, critically, the report's
+      own suppression audit trail (suppression.suppressed_count) must show
+      exactly 1, proving the finding was suppressed rather than never
+      detected in the first place. Verified locally against a real
+      clang-compiled fixture pair: unsuppressed BREAKING,
+      suppressed NO_CHANGE with suppressed_count: 1.
+    old_target: "//fixtures/remove_function/v1:impl"
+    new_target: "//fixtures/remove_function/v2:impl"
+    old_output: bazel-bin/fixtures/remove_function/v1/libimpl.so
+    new_output: bazel-bin/fixtures/remove_function/v2/libimpl.so
+    new_header: fixtures/remove_function/v2/lib.h
+    suppress: suppressions/remove_function_accepted.yaml
+    expected_suppressed_count: 1
+    expected:
+      castxml: NO_CHANGE
+      clang: NO_CHANGE
+
+  - name: suppression_partial
+    description: >
+      v2 both removes legacy_metric AND changes required_api's parameter
+      type (int -> long) -- two independent breaking findings.
+      suppressions/legacy_metric_removed.yaml suppresses only the first
+      (an exact-symbol rule, scoped to legacy_metric alone). This is the
+      review's suppression scenario #2 ("known finding plus a new break",
+      called out as the central case: old accepted noise must stop
+      gating, but ANY new incompatible change must still be caught). The
+      gate must stay BREAKING overall (required_api's change is real and
+      unsuppressed) while suppression.suppressed_count still shows exactly
+      1 -- proving the suppression rule is correctly scoped, not
+      accidentally silencing more than it should. Verified locally
+      against a real clang-compiled fixture pair.
+    old_target: "//fixtures/suppression_partial/v1:impl"
+    new_target: "//fixtures/suppression_partial/v2:impl"
+    old_output: bazel-bin/fixtures/suppression_partial/v1/libimpl.so
+    new_output: bazel-bin/fixtures/suppression_partial/v2/libimpl.so
+    new_header: fixtures/suppression_partial/v2/lib.h
+    suppress: suppressions/legacy_metric_removed.yaml
+    expected_suppressed_count: 1
+    expected:
+      castxml: BREAKING
+      clang: BREAKING
+
   - name: default_argument_added
     description: >
       v2 gives an existing parameter a default value. The mangled symbol is

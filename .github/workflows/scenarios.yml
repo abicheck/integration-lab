@@ -11,6 +11,7 @@ on:
     paths:
       - 'fixtures/**'
       - 'scenarios/**'
+      - 'suppressions/**'
       - 'scripts/run_scenario.py'
       - '.github/workflows/scenarios.yml'
       # Shared Bazel configuration that every fixture's build actually

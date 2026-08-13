@@ -50,7 +50,9 @@ def run_bazel_build(*targets):
     subprocess.run(["bazel", "build", *targets], check=True)
 
 
-def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=None, ast_frontend=None):
+def run_abicheck_compare(
+    old_lib, new_lib, new_header, output_json, old_header=None, ast_frontend=None, suppress=None
+):
     # abicheck's bare CLI (unlike the GitHub Action wrapper) exits
     # non-zero on a gated result by default -- that's exactly what a
     # BREAKING scenario is supposed to produce, so this deliberately does
@@ -86,6 +88,17 @@ def run_abicheck_compare(old_lib, new_lib, new_header, output_json, old_header=N
     # checked against each frontend's own oracle verdict.
     if ast_frontend is not None:
         cmd += ["--ast-frontend", ast_frontend]
+    # suppress is optional: a scenario declaring `suppress:` (repo-relative
+    # path to a YAML rule file) proves a scenario's own gating finding
+    # stops gating once suppressed, while staying visible in the report's
+    # own suppression audit trail (report["suppression"]["suppressed_count"]/
+    # ["suppressed_changes"]) rather than the underlying change simply
+    # never being found. Verified locally against a real remove_function
+    # pair: unsuppressed verdict BREAKING, suppressed verdict NO_CHANGE
+    # with suppressed_count: 1 -- see scenarios/manifest.yaml's
+    # remove_function_suppressed entry.
+    if suppress is not None:
+        cmd += ["--suppress", str(suppress)]
     cmd += [
         "--version",
         "old=old",
@@ -137,6 +150,7 @@ def run_one_profile(scenario, profile, expected, results_dir):
     # report first so "no report" always means exactly that.
     output_json.unlink(missing_ok=True)
     old_header = scenario.get("old_header")
+    suppress = scenario.get("suppress")
     run_abicheck_compare(
         REPO_ROOT / scenario["old_output"],
         REPO_ROOT / scenario["new_output"],
@@ -144,26 +158,42 @@ def run_one_profile(scenario, profile, expected, results_dir):
         output_json,
         old_header=(REPO_ROOT / old_header) if old_header else None,
         ast_frontend=profile,
+        suppress=(REPO_ROOT / suppress) if suppress else None,
     )
 
+    expected_suppressed_count = scenario.get("expected_suppressed_count")
     try:
         with open(output_json, "r", encoding="utf-8") as fh:
             report = json.load(fh)
         actual = report.get("verdict")
+        actual_suppressed_count = (report.get("suppression") or {}).get("suppressed_count")
         read_error = None
     except (OSError, json.JSONDecodeError) as exc:
         # abicheck failed to produce a readable report at all -- fail
         # closed (no verdict is never treated as a match), not silently.
         actual = None
+        actual_suppressed_count = None
         read_error = str(exc)
 
+    verdict_passed = actual == expected
+    # Only checked when a scenario opts in (expected_suppressed_count set) --
+    # this is what turns the suppression scenario's assertion from "the
+    # verdict happens to read NO_CHANGE" into "verdict is NO_CHANGE *because*
+    # exactly one finding was suppressed", the distinction the review's own
+    # suppression-scenario design calls out (a suppressed finding must stay
+    # visible in the audit trail, not just silently vanish).
+    suppressed_count_passed = (
+        expected_suppressed_count is None or actual_suppressed_count == expected_suppressed_count
+    )
     return {
         "name": name,
         "profile": profile,
         "description": scenario.get("description", "").strip(),
         "expected_verdict": expected,
         "actual_verdict": actual,
-        "passed": actual == expected,
+        "expected_suppressed_count": expected_suppressed_count,
+        "actual_suppressed_count": actual_suppressed_count,
+        "passed": verdict_passed and suppressed_count_passed,
         "read_error": read_error,
     }
 
@@ -227,9 +257,15 @@ def main():
             results.append(result)
             status = "PASS" if result["passed"] else "FAIL"
             profile_label = f" [{result['profile']}]" if result["profile"] else ""
+            suppressed_label = (
+                f" suppressed_count(expected={result['expected_suppressed_count']}, "
+                f"actual={result['actual_suppressed_count']})"
+                if result["expected_suppressed_count"] is not None
+                else ""
+            )
             print(
                 f"{status}{profile_label}: expected={result['expected_verdict']} "
-                f"actual={result['actual_verdict']}"
+                f"actual={result['actual_verdict']}{suppressed_label}"
                 + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
             )
 
