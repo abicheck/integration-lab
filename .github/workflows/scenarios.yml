@@ -13,6 +13,16 @@ on:
       - 'scenarios/**'
       - 'scripts/run_scenario.py'
       - '.github/workflows/scenarios.yml'
+      # Shared Bazel configuration that every fixture's build actually
+      # goes through -- a rules_cc bump, a changed -std/link flag, or a
+      # MODULE.bazel dependency change can alter or break every scenario's
+      # output without any file under fixtures/ or scenarios/ itself
+      # changing, so this workflow needs to run then too (Codex review).
+      - 'MODULE.bazel'
+      - 'MODULE.bazel.lock'
+      - '.bazelrc'
+      - '.bazelversion'
+      - 'BUILD.bazel'
   workflow_dispatch:
 
 permissions:
