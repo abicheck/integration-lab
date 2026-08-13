@@ -1,0 +1,384 @@
+name: ICX Clang plugin evaluation
+
+on:
+  push:
+    branches:
+      - icx-plugin-evaluation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      EVAL_ROOT: ${{ runner.temp }}/icx-plugin-evaluation
+    steps:
+      - name: Check out current abicheck main
+        uses: actions/checkout@v4
+        with:
+          repository: abicheck/abicheck
+          ref: b9c9c33fdd35bbcf61bf43aeee0e5a87bd46d93d
+          path: abicheck
+
+      - name: Install base build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$EVAL_ROOT/logs" "$EVAL_ROOT/results"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates cmake curl file git gnupg ninja-build \
+            python3 python3-pip python3-venv readelf wget
+
+      - name: Install Intel oneAPI DPC++/C++ Compiler 2026.1
+        id: install_icx
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/install-icx.log") 2>&1
+          set -eux
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          apt-cache policy intel-oneapi-compiler-dpcpp-cpp-2026.1 || true
+          sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp-2026.1
+
+          ICPX="$(find /opt/intel/oneapi/compiler -name icpx -perm -111 2>/dev/null | sort -V | tail -n1)"
+          ICX="$(find /opt/intel/oneapi/compiler -name icx -perm -111 2>/dev/null | sort -V | tail -n1)"
+          test -n "$ICPX" -a -x "$ICPX"
+          test -n "$ICX" -a -x "$ICX"
+          echo "ICPX=$ICPX" >> "$GITHUB_ENV"
+          echo "ICX=$ICX" >> "$GITHUB_ENV"
+          echo "icx_install=ok" > "$EVAL_ROOT/results/install-icx.status"
+
+      - name: Inspect ICX package and compiler identity
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/inspect-icx.log") 2>&1
+          if [[ -z "${ICPX:-}" || ! -x "${ICPX:-/nonexistent}" ]]; then
+            echo "ICX was not installed"
+            echo "inspect_icx=not-run" > "$EVAL_ROOT/results/inspect-icx.status"
+            exit 0
+          fi
+          source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+          set -x
+          "$ICPX" --version
+          "$ICX" --version
+          "$ICPX" -print-resource-dir
+          "$ICPX" -dumpmachine || true
+          printf '\nPredefined compiler-version macros:\n'
+          "$ICPX" -dM -E -x c++ /dev/null \
+            | grep -E '(__INTEL_LLVM_COMPILER|__clang_(major|minor|patchlevel)__|__VERSION__)' \
+            | sort || true
+          printf '\nDriver expansion:\n'
+          "$ICPX" -### -std=c++17 -c /dev/null -x c++ 2>&1 || true
+          printf '\nCompiler executable identity:\n'
+          file "$ICPX" || true
+          readlink -f "$ICPX" || true
+          sha256sum "$ICPX" || true
+          readelf -n "$(readlink -f "$ICPX")" | sed -n '1,120p' || true
+          printf '\nLLVM/Clang development payload search under /opt/intel/oneapi:\n'
+          find /opt/intel/oneapi -type f \
+            \( -name LLVMConfig.cmake -o -name ClangConfig.cmake \
+               -o -name FrontendPluginRegistry.h -o -name 'libclang-cpp*.so*' \
+               -o -name 'libclangBasic*.a' \) \
+            -print | sort || true
+          printf '\nCMake package directories shipped by compiler:\n'
+          find /opt/intel/oneapi/compiler -type f -name '*Config.cmake' -print | sort | head -300 || true
+          echo "inspect_icx=ok" > "$EVAL_ROOT/results/inspect-icx.status"
+
+      - name: Attempt direct plugin build from the commercial ICX installation
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/build-direct-intel.log") 2>&1
+          if [[ -z "${ICPX:-}" || ! -x "${ICPX:-/nonexistent}" ]]; then
+            echo "build_direct_intel=not-run" > "$EVAL_ROOT/results/build-direct-intel.status"
+            exit 0
+          fi
+          source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+          set +e
+          cmake -S "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin" \
+            -B "$EVAL_ROOT/build-direct-intel" -G Ninja \
+            -DCMAKE_C_COMPILER="$ICX" \
+            -DCMAKE_CXX_COMPILER="$ICPX" \
+            -DCMAKE_PREFIX_PATH="/opt/intel/oneapi/compiler/latest;/opt/intel/oneapi" \
+            -DCMAKE_BUILD_TYPE=Release
+          configure_rc=$?
+          if [[ $configure_rc -eq 0 ]]; then
+            cmake --build "$EVAL_ROOT/build-direct-intel" -v
+            build_rc=$?
+          else
+            build_rc=125
+          fi
+          set -e
+          echo "configure_rc=$configure_rc" | tee "$EVAL_ROOT/results/build-direct-intel.status"
+          echo "build_rc=$build_rc" | tee -a "$EVAL_ROOT/results/build-direct-intel.status"
+          exit 0
+
+      - name: Install upstream LLVM and Clang 22 development packages
+        id: install_llvm22
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/install-llvm22.log") 2>&1
+          set -eux
+          wget -q https://apt.llvm.org/llvm.sh -O "$EVAL_ROOT/llvm.sh"
+          chmod +x "$EVAL_ROOT/llvm.sh"
+          sudo "$EVAL_ROOT/llvm.sh" 22
+          sudo apt-get install -y --no-install-recommends \
+            clang-22 llvm-22-dev libclang-22-dev
+          test -f /usr/lib/llvm-22/lib/cmake/llvm/LLVMConfig.cmake
+          test -f /usr/lib/llvm-22/lib/cmake/clang/ClangConfig.cmake
+          echo "LLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm" >> "$GITHUB_ENV"
+          echo "Clang_DIR=/usr/lib/llvm-22/lib/cmake/clang" >> "$GITHUB_ENV"
+          echo "install_llvm22=ok" > "$EVAL_ROOT/results/install-llvm22.status"
+
+      - name: Build control plugin against upstream Clang 22 with clang++-22
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/build-clang22.log") 2>&1
+          if [[ ! -f /usr/lib/llvm-22/lib/cmake/llvm/LLVMConfig.cmake ]]; then
+            echo "build_clang22=not-run" > "$EVAL_ROOT/results/build-clang22.status"
+            exit 0
+          fi
+          set +e
+          cmake -S "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin" \
+            -B "$EVAL_ROOT/build-clang22" -G Ninja \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm \
+            -DClang_DIR=/usr/lib/llvm-22/lib/cmake/clang \
+            -DCMAKE_BUILD_TYPE=Release
+          configure_rc=$?
+          if [[ $configure_rc -eq 0 ]]; then
+            cmake --build "$EVAL_ROOT/build-clang22" -v
+            build_rc=$?
+          else
+            build_rc=125
+          fi
+          set -e
+          echo "configure_rc=$configure_rc" | tee "$EVAL_ROOT/results/build-clang22.status"
+          echo "build_rc=$build_rc" | tee -a "$EVAL_ROOT/results/build-clang22.status"
+          if [[ -f "$EVAL_ROOT/build-clang22/libabicheck-facts.so" ]]; then
+            file "$EVAL_ROOT/build-clang22/libabicheck-facts.so"
+            sha256sum "$EVAL_ROOT/build-clang22/libabicheck-facts.so"
+            ldd "$EVAL_ROOT/build-clang22/libabicheck-facts.so" || true
+          fi
+          exit 0
+
+      - name: Build plugin with ICX but against upstream Clang 22 headers/config
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/build-icpx-upstream22.log") 2>&1
+          if [[ -z "${ICPX:-}" || ! -x "${ICPX:-/nonexistent}" || ! -f /usr/lib/llvm-22/lib/cmake/llvm/LLVMConfig.cmake ]]; then
+            echo "build_icpx_upstream22=not-run" > "$EVAL_ROOT/results/build-icpx-upstream22.status"
+            exit 0
+          fi
+          source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+          set +e
+          cmake -S "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin" \
+            -B "$EVAL_ROOT/build-icpx-upstream22" -G Ninja \
+            -DCMAKE_C_COMPILER="$ICX" \
+            -DCMAKE_CXX_COMPILER="$ICPX" \
+            -DLLVM_DIR=/usr/lib/llvm-22/lib/cmake/llvm \
+            -DClang_DIR=/usr/lib/llvm-22/lib/cmake/clang \
+            -DCMAKE_BUILD_TYPE=Release
+          configure_rc=$?
+          if [[ $configure_rc -eq 0 ]]; then
+            cmake --build "$EVAL_ROOT/build-icpx-upstream22" -v
+            build_rc=$?
+          else
+            build_rc=125
+          fi
+          set -e
+          echo "configure_rc=$configure_rc" | tee "$EVAL_ROOT/results/build-icpx-upstream22.status"
+          echo "build_rc=$build_rc" | tee -a "$EVAL_ROOT/results/build-icpx-upstream22.status"
+          if [[ -f "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so" ]]; then
+            file "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so"
+            sha256sum "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so"
+            ldd "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so" || true
+          fi
+          exit 0
+
+      - name: Run plugin load and fact-emission smoke matrix
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/smoke-matrix.log") 2>&1
+          mkdir -p "$EVAL_ROOT/fixture/include"
+          cat > "$EVAL_ROOT/fixture/include/api.hpp" <<'EOF'
+          #pragma once
+          namespace sample {
+          struct Widget { int value; };
+          inline int get(Widget w) { return w.value; }
+          }
+          EOF
+          cat > "$EVAL_ROOT/fixture/use.cpp" <<'EOF'
+          #include "api.hpp"
+          int use_widget(sample::Widget w) { return sample::get(w); }
+          EOF
+
+          run_case() {
+            local label="$1" compiler="$2" plugin="$3"
+            local out="$EVAL_ROOT/smoke/$label/facts"
+            local obj="$EVAL_ROOT/smoke/$label/use.o"
+            local log="$EVAL_ROOT/logs/smoke-$label.log"
+            mkdir -p "$(dirname "$obj")"
+            rm -rf "$out"
+            if [[ ! -x "$compiler" ]]; then
+              echo "$label: compiler unavailable: $compiler" | tee "$log"
+              echo "rc=126" > "$EVAL_ROOT/results/smoke-$label.status"
+              return
+            fi
+            if [[ ! -f "$plugin" ]]; then
+              echo "$label: plugin unavailable: $plugin" | tee "$log"
+              echo "rc=127" > "$EVAL_ROOT/results/smoke-$label.status"
+              return
+            fi
+            set +e
+            "$compiler" -v -std=c++17 \
+              -I"$EVAL_ROOT/fixture/include" \
+              -fplugin="$plugin" \
+              -Xclang -plugin-arg-abicheck-facts -Xclang "out=$out" \
+              -Xclang -plugin-arg-abicheck-facts -Xclang "public-roots=$EVAL_ROOT/fixture/include" \
+              -Xclang -plugin-arg-abicheck-facts -Xclang library=icx-smoke \
+              -c "$EVAL_ROOT/fixture/use.cpp" -o "$obj" \
+              >"$log" 2>&1
+            local rc=$?
+            set -e
+            echo "rc=$rc" > "$EVAL_ROOT/results/smoke-$label.status"
+            echo "--- $label (rc=$rc) ---"
+            cat "$log"
+            find "$out" -maxdepth 4 -type f -print -exec sed -n '1,3p' {} \; 2>/dev/null || true
+          }
+
+          source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+          run_case clang22-with-clang22-plugin \
+            "$(command -v clang++-22 || echo /nonexistent)" \
+            "$EVAL_ROOT/build-clang22/libabicheck-facts.so"
+          run_case icpx-with-clang22-plugin \
+            "${ICPX:-/nonexistent}" \
+            "$EVAL_ROOT/build-clang22/libabicheck-facts.so"
+          run_case icpx-with-icpx-built-upstream22-plugin \
+            "${ICPX:-/nonexistent}" \
+            "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so"
+          run_case clang22-with-icpx-built-upstream22-plugin \
+            "$(command -v clang++-22 || echo /nonexistent)" \
+            "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so"
+          if [[ -f "$EVAL_ROOT/build-direct-intel/libabicheck-facts.so" ]]; then
+            run_case icpx-with-direct-intel-plugin \
+              "${ICPX:-/nonexistent}" \
+              "$EVAL_ROOT/build-direct-intel/libabicheck-facts.so"
+          fi
+
+      - name: Run abicheck differential conformance where smoke loading succeeded
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          exec > >(tee "$EVAL_ROOT/logs/conformance.log") 2>&1
+          python3 -m venv "$EVAL_ROOT/venv"
+          source "$EVAL_ROOT/venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install -e "$GITHUB_WORKSPACE/abicheck"
+
+          run_conf() {
+            local label="$1" compiler="$2" plugin="$3" smoke_status="$4"
+            local smoke_rc=999
+            if [[ -f "$smoke_status" ]]; then
+              smoke_rc="$(sed -n 's/^rc=//p' "$smoke_status" | tail -n1)"
+            fi
+            if [[ "$smoke_rc" != "0" ]]; then
+              echo "$label: skipped because smoke rc=$smoke_rc"
+              echo "rc=125" > "$EVAL_ROOT/results/conformance-$label.status"
+              return
+            fi
+            set +e
+            python "$GITHUB_WORKSPACE/abicheck/contrib/abicheck-clang-plugin/tests/conformance.py" \
+              --plugin "$plugin" --clangxx "$compiler" \
+              --work "$EVAL_ROOT/conformance/$label" --keep \
+              > "$EVAL_ROOT/logs/conformance-$label.log" 2>&1
+            local rc=$?
+            set -e
+            echo "rc=$rc" > "$EVAL_ROOT/results/conformance-$label.status"
+            echo "--- conformance $label (rc=$rc) ---"
+            cat "$EVAL_ROOT/logs/conformance-$label.log"
+          }
+
+          source /opt/intel/oneapi/setvars.sh --force >/dev/null 2>&1 || true
+          run_conf clang22 \
+            "$(command -v clang++-22 || echo /nonexistent)" \
+            "$EVAL_ROOT/build-clang22/libabicheck-facts.so" \
+            "$EVAL_ROOT/results/smoke-clang22-with-clang22-plugin.status"
+          run_conf icpx-clang22-plugin \
+            "${ICPX:-/nonexistent}" \
+            "$EVAL_ROOT/build-clang22/libabicheck-facts.so" \
+            "$EVAL_ROOT/results/smoke-icpx-with-clang22-plugin.status"
+          run_conf icpx-icpx-built-plugin \
+            "${ICPX:-/nonexistent}" \
+            "$EVAL_ROOT/build-icpx-upstream22/libabicheck-facts.so" \
+            "$EVAL_ROOT/results/smoke-icpx-with-icpx-built-upstream22-plugin.status"
+
+      - name: Publish evaluation summary
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          {
+            echo "# ICX / abicheck Clang plugin evaluation"
+            echo
+            echo "- abicheck commit: \`b9c9c33fdd35bbcf61bf43aeee0e5a87bd46d93d\`"
+            echo "- runner: \`ubuntu-24.04\`"
+            echo
+            echo "## Status files"
+            echo '```text'
+            for f in "$EVAL_ROOT"/results/*.status; do
+              [[ -e "$f" ]] || continue
+              echo "[$(basename "$f")]"
+              cat "$f"
+            done
+            echo '```'
+            echo
+            echo "See the uploaded logs and built plugin modules for diagnostics."
+          } | tee "$EVAL_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs, facts, status, and built modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icx-clang-plugin-evaluation
+          path: |
+            ${{ runner.temp }}/icx-plugin-evaluation/logs
+            ${{ runner.temp }}/icx-plugin-evaluation/results
+            ${{ runner.temp }}/icx-plugin-evaluation/summary.md
+            ${{ runner.temp }}/icx-plugin-evaluation/smoke
+            ${{ runner.temp }}/icx-plugin-evaluation/conformance
+            ${{ runner.temp }}/icx-plugin-evaluation/build-clang22/libabicheck-facts.so
+            ${{ runner.temp }}/icx-plugin-evaluation/build-icpx-upstream22/libabicheck-facts.so
+            ${{ runner.temp }}/icx-plugin-evaluation/build-direct-intel/libabicheck-facts.so
+          if-no-files-found: warn
+          retention-days: 7
