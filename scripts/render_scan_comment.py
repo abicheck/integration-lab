@@ -17,8 +17,14 @@ varies by layer and isn't asserted on here), and `advisories` (the
 human-readable evidence-gap notices, e.g. "Macros, default args,
 inline/template/constexpr bodies -- off"). It intentionally does NOT
 attempt to re-derive a pass/fail verdict from nested report internals --
-that authority stays with abicheck's own `verdict`/`exit_code`, so this
-renderer can't silently disagree with the gate it's describing.
+that authority stays with abicheck's own `verdict`/`exit_code`.
+
+The one addition to that principle: `--coverage-contract`, the result of
+`scripts/check_coverage_contract.py` (a second, independent, lab-side gate
+-- see that script's docstring for why it exists). Its result is shown as
+its own clearly-labeled section, never merged into or silently overriding
+abicheck's own verdict line above it -- both facts stay visible and
+attributed to the analysis that produced them.
 """
 import argparse
 import json
@@ -38,7 +44,44 @@ _VERDICT_LINES = {
 }
 
 
-def render(report, *, base_sha, head_sha, requested_depth, run_url, artifact_note):
+def _render_coverage_contract(contract):
+    if contract is None:
+        return []
+    lines = ["---", ""]
+    if contract.get("gate_status") == "PASS":
+        lines.append(
+            f"✅ **Coverage contract: satisfied** — `depth: {contract.get('requested_depth')}` "
+            "evidence met the minimum requirements (Bazel target resolved, "
+            "export-to-source linkage, public-header provenance)."
+        )
+    else:
+        lines.append(
+            f"🛑 **Coverage contract: NOT satisfied** — `analysis_status: "
+            f"{contract.get('analysis_status')}`, `compatibility_verdict: "
+            f"{contract.get('compatibility_verdict')}`. This gates independently of "
+            "the abicheck verdict above: even a COMPATIBLE result isn't trusted "
+            "when the requested depth wasn't actually achieved."
+        )
+        lines.append("")
+        for failure in contract.get("failures", []):
+            lines.append(f"- {failure}")
+    facts = contract.get("facts", {})
+    if facts:
+        lines.append("")
+        lines.append("<details>")
+        lines.append("<summary>Coverage facts</summary>")
+        lines.append("")
+        lines.append("| Fact | Value |")
+        lines.append("|------|-------|")
+        for key, value in facts.items():
+            lines.append(f"| `{key}` | `{value}` |")
+        lines.append("")
+        lines.append("</details>")
+    lines.append("")
+    return lines
+
+
+def render(report, *, base_sha, head_sha, requested_depth, run_url, artifact_note, coverage_contract=None):
     verdict = report.get("verdict", "UNKNOWN")
     exit_code = report.get("exit_code")
     level = report.get("level", {}) or {}
@@ -78,6 +121,8 @@ def render(report, *, base_sha, head_sha, requested_depth, run_url, artifact_not
         lines.append("</details>")
         lines.append("")
 
+    lines.extend(_render_coverage_contract(coverage_contract))
+
     if run_url:
         lines.append(f"[Full report / artifacts]({run_url})")
     if artifact_note:
@@ -101,6 +146,10 @@ def main():
     parser.add_argument("--requested-depth", default="source")
     parser.add_argument("--run-url", default="")
     parser.add_argument("--artifact-note", default="")
+    parser.add_argument(
+        "--coverage-contract", default="",
+        help="Path to scripts/check_coverage_contract.py's output JSON (optional)",
+    )
     args = parser.parse_args()
 
     try:
@@ -111,6 +160,14 @@ def main():
         load_error = str(exc)
     else:
         load_error = None
+
+    coverage_contract = None
+    if args.coverage_contract:
+        try:
+            with open(args.coverage_contract, "r", encoding="utf-8") as fh:
+                coverage_contract = json.load(fh)
+        except (FileNotFoundError, json.JSONDecodeError):
+            coverage_contract = None
 
     if report is None:
         body = (
@@ -128,6 +185,7 @@ def main():
             requested_depth=args.requested_depth,
             run_url=args.run_url,
             artifact_note=args.artifact_note,
+            coverage_contract=coverage_contract,
         )
 
     with open(args.output, "w", encoding="utf-8") as fh:

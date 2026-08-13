@@ -74,23 +74,45 @@ non-gating (`fail-on-breaking`/`fail-on-api-break: false`) and its JSON is
 published **only** as the `abicheck-diagnostic-compare` artifact — not as a
 second PR comment — so it can't be mistaken for the canonical report again.
 
-### Coverage gap this surfaces (not yet fixed)
+### Coverage contract: `depth: source` is enforced, not just requested
 
-Even with the architecture above, the underlying evidence gap the review
-identified is real and still open: a `depth: source` request over this
-lab's Bazel target frequently can't actually achieve source-level evidence
-(0/6 exported symbols linked to source, 0 Bazel targets resolved), and
-abicheck v0.5.0 still reports `COMPATIBLE` rather than an incomplete-coverage
-verdict when that happens — because the coverage/contract axis
-(`--contract-evaluation`, ADR-049) that would produce `COVERAGE_INCOMPLETE`
-doesn't exist in v0.5.0 at all. The `canary` job runs the same scan against
-`abicheck/main` with `extra-args: '--contract-evaluation'` specifically to
-surface this: it's a preview of the fix, not a fix in this repo, and it
-never blocks the PR (no PR comment, job-summary only, `fail-on-*: false`).
-The Bazel-integration work the underlying 0/6-symbols gap actually needs
-(mapping `bazel-bin/libmath.so` back to `//:math`, real compile actions via
-`aquery`/`CcInfo`, public-header provenance) lives in the `abicheck` tool,
-not this repo.
+A `depth: source` request over this lab's Bazel target frequently can't
+actually achieve source-level evidence: verified against a real completed
+scan on this repo, `abicheck` resolved 0 Bazel targets, matched 0/6
+exported symbols back to source, and had no public-header provenance —
+yet still reported plain `COMPATIBLE` at exit code 0. abicheck v0.5.0 has
+no first-class way to gate on that (the coverage/contract axis,
+`--contract-evaluation`/ADR-049, that would produce `COVERAGE_INCOMPLETE`
+doesn't exist until `abicheck/main`).
+
+`scripts/check_coverage_contract.py` is the lab-side stand-in: a second,
+independent gate that reads the same `abicheck-report.json` the scan
+produced and asserts on its own coverage evidence — Bazel target
+resolved, `compile_units >= 1`, export-to-source match ratio
+`>= 0.95`, public-header provenance present. Either gate failing fails the
+PR (`Enforce gate` checks both `steps.scan.outcome` and
+`steps.coverage_contract.outcome`); when the contract isn't met, the PR
+comment shows `analysis_status: INCOMPLETE`, `compatibility_verdict:
+NOT_FULLY_EVALUATED`, and exactly which requirement failed — as its own
+clearly-labeled section, never merged into abicheck's own verdict line
+above it.
+
+Practical consequence, stated plainly: **this correctly turns the gate red
+for `depth: source` PRs in this lab today**, because the underlying
+Bazel-integration gap (mapping `bazel-bin/libmath.so` back to `//:math`,
+real compile actions via `aquery`/`CcInfo`, public-header provenance) is a
+real defect in `abicheck` itself, not something this repo can fix. That's
+the intended, honest behavior — the alternative (staying green) is exactly
+the bug this whole item exists to close. The `canary` job's
+`--contract-evaluation` run against `abicheck/main` remains useful
+alongside this: it shows whether the upstream fix, once it ships, agrees
+with this lab-side check's verdict.
+
+Every field `check_coverage_contract.py` reads was verified against a real
+downloaded scan report, not guessed — see its module docstring for the
+exact evidence and why the `L3_build`/`L4_source_abi` free-text `detail`
+parsing is documented as fragile (fails closed, not silently trusting, if
+the format ever stops matching).
 
 ## Baseline determinism
 

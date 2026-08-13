@@ -117,6 +117,35 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # Second, independent gate: `depth: source` only asks abicheck to
+      # *attempt* source-level evidence -- v0.5.0 still reports plain
+      # COMPATIBLE at exit 0 when that attempt degrades (0 Bazel targets
+      # resolved, 0/N exported symbols linked to source, no public-header
+      # provenance). This asserts on the same report's own coverage
+      # evidence and fails independently of abicheck's verdict when the
+      # requested depth wasn't actually achieved -- see
+      # scripts/check_coverage_contract.py for the full rationale and
+      # exactly which fields this reads (verified against a real report).
+      - name: Check depth:source coverage contract
+        id: coverage_contract
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_coverage_contract.py abicheck-report.json \
+            -o "$RUNNER_TEMP/coverage-contract.json" \
+            --requested-depth source
+
+      - name: Upload coverage contract result artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-contract-result
+          path: ${{ runner.temp }}/coverage-contract.json
+          if-no-files-found: warn
+          retention-days: 30
+
       # Supplementary, explicitly non-gating binary/header-only diff for
       # humans who want a detailed side-by-side. It is deliberately NOT
       # posted as a PR comment (pr-comment: false) and NEVER gates
@@ -162,6 +191,7 @@ jobs:
             --head-sha "${{ github.event.pull_request.head.sha }}" \
             --requested-depth source \
             --run-url "$RUN_URL" \
+            --coverage-contract "$RUNNER_TEMP/coverage-contract.json" \
             --artifact-note "A non-gating binary/header-only diagnostic is available in the \`abicheck-diagnostic-compare\` workflow artifact."
 
       # Best-effort only: on a fork PR (or a similarly restricted
@@ -216,14 +246,21 @@ jobs:
               core.warning(`Could not post/update the PR comment (${err.status ?? 'error'}): ${err.message}. The gate and the abicheck-report artifact are unaffected.`);
             }
 
-      # The scan step above is the single source of truth for the gate.
-      # We ran it with continue-on-error so evidence still gets published
-      # on a red result; fail the job explicitly here instead of letting
-      # a later, differently-scoped step decide.
+      # Two independent gates, both run with continue-on-error so evidence
+      # still gets published on a red result either way; fail the job
+      # explicitly here instead of letting a later, differently-scoped
+      # step decide. Both must pass: an ABI-compatible result the coverage
+      # contract doesn't trust is still a red PR, and a coverage-complete
+      # result with a real ABI break is still a red PR.
       - name: Enforce gate
-        if: steps.scan.outcome == 'failure'
+        if: steps.scan.outcome == 'failure' || steps.coverage_contract.outcome == 'failure'
         run: |
-          echo 'ABICheck source scan found a gated incompatibility (see the PR comment, job summary, and abicheck-report artifact for details).' >&2
+          if [ "${{ steps.scan.outcome }}" == "failure" ]; then
+            echo 'ABICheck source scan found a gated incompatibility (see the PR comment, job summary, and abicheck-report artifact for details).' >&2
+          fi
+          if [ "${{ steps.coverage_contract.outcome }}" == "failure" ]; then
+            echo 'depth: source coverage contract not satisfied -- the requested evidence depth was not actually achieved (see the PR comment and coverage-contract-result artifact for details).' >&2
+          fi
           exit 1
 
   # Non-blocking canary: the same scan, pinned to an exact commit on
