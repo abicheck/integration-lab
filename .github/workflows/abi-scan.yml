@@ -567,10 +567,22 @@ jobs:
       # action converges on one pack dir. public-roots= scopes the public
       # surface to this repo's own include/ tree, mirroring
       # --public-header-dir include used elsewhere in this workflow.
+      #
+      # Codex review: with CC unset, Bazel's autoconfigured Unix cc toolchain
+      # falls back to the runner's default gcc, and --copt just forwards
+      # these flags to WHICHEVER compiler that autoconfig picked -- gcc
+      # rejects -Xclang outright, so without this the whole plugin leg
+      # silently never actually built with the plugin at all. CC (and CXX,
+      # for the C++ compile this target actually needs) select Clang before
+      # Bazel's toolchain autoconfiguration runs for this job's one-and-only
+      # `bazel build` invocation.
       - name: Build //:math with the plugin injected (source-fact collection)
         id: plugin_build
         if: steps.build_plugin.outcome == 'success'
         continue-on-error: true
+        env:
+          CC: clang-18
+          CXX: clang++-18
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/abicheck_inputs"
@@ -589,6 +601,17 @@ jobs:
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
 
+      # Codex review: the bare CLI's own documented behavior (same as
+      # scripts/run_scenario.py's run_abicheck_compare) is to exit nonzero
+      # on a gated BREAKING/API_BREAK verdict -- that's a successfully
+      # PRODUCED report, not a tool failure. Under `set -e` that nonzero
+      # exit would abort the step and (via continue-on-error) mark this
+      # step's own `outcome` as `failure`, which the status-summary step
+      # below reads as "abicheck compare step failed" -- exactly backwards
+      # for the one case (a real detected incompatibility) this profile
+      # exists to surface. `|| true` keeps the step's outcome tied to
+      # whether a readable report file was actually written, not to
+      # abicheck's gate-encoding exit code.
       - name: Compare candidate (plugin-collected facts) against committed baseline
         id: l4_clang_plugin_compare
         if: steps.install_abicheck.outcome == 'success'
@@ -602,7 +625,8 @@ jobs:
             --build-info "${{ steps.plugin_build.outputs.inputs_dir }}" \
             --format json \
             -o abicheck-l4-clang-plugin.json \
-            --policy strict_abi
+            --policy strict_abi || true
+          test -s abicheck-l4-clang-plugin.json
 
       - name: Upload l4-clang-plugin artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
