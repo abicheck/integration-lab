@@ -78,6 +78,15 @@ scenarios:
     new_target: "//fixtures/remove_function/v2:impl"
     old_output: bazel-bin/fixtures/remove_function/v1/libimpl.so
     new_output: bazel-bin/fixtures/remove_function/v2/libimpl.so
+    # old_header (unlike plain remove_function, which needs neither side's
+    # header -- the removal is mangled-symbol-visible alone): empirically
+    # required for --suppress's exact-symbol matching to actually apply
+    # (verified locally against the exact pinned abicheck commit CI uses --
+    # omitting it left suppressed_count: 0 despite an exact mangled-symbol
+    # match, apparently because the old side's public-surface/reachability
+    # classification -- which suppression matching consults -- stays
+    # unresolved without any header-derived facts for that side at all).
+    old_header: fixtures/remove_function/v1/lib.h
     new_header: fixtures/remove_function/v2/lib.h
     suppress: suppressions/remove_function_accepted.yaml
     expected_suppressed_count: 1
@@ -103,6 +112,10 @@ scenarios:
     new_target: "//fixtures/suppression_partial/v2:impl"
     old_output: bazel-bin/fixtures/suppression_partial/v1/libimpl.so
     new_output: bazel-bin/fixtures/suppression_partial/v2/libimpl.so
+    # old_header: same reason as remove_function_suppressed above --
+    # --suppress's exact-symbol matching needs old-side header-derived
+    # facts to actually apply.
+    old_header: fixtures/suppression_partial/v1/lib.h
     new_header: fixtures/suppression_partial/v2/lib.h
     suppress: suppressions/legacy_metric_removed.yaml
     expected_suppressed_count: 1
