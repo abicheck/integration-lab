@@ -89,12 +89,25 @@ DELETE_PATHS = frozenset({
     ("source_mtime_epoch",),
     ("source_size",),
     ("build_id",),
-    # baseline.yml passes `new-version: main-${{ github.sha }}`, so both of
-    # these change on every push to main regardless of whether the ABI
-    # did -- defeating the "commit only when the ABI actually changed"
+    # `git_commit` changes on every push to main regardless of whether the
+    # ABI did -- defeating the "commit only when the ABI actually changed"
     # goal this script exists for. Git history on abi/math.abicheck.json
-    # already records which commit each refresh corresponds to.
-    ("version",),
+    # already records which commit each refresh corresponds to. Safe to
+    # delete outright: abicheck's own loader reads it via `d.get("git_commit")`
+    # (verified against abicheck/serialization.py's `snapshot_from_dict`),
+    # so an absent key loads as None, same as a legacy snapshot predating
+    # the field.
+    #
+    # `version` does NOT belong in this set, unlike an earlier revision of
+    # this script (Codex review, real regression: the first baseline
+    # refresh with `version` stripped produced a committed
+    # abi/math.abicheck.json that every subsequent PR's scan/compare failed
+    # to even load -- "Failed to load JSON snapshot ...: 'version'" --
+    # because `snapshot_from_dict` reads it as `d["version"]`, a required
+    # key with no default, not `.get()` like `git_commit`/`git_tag`. See
+    # VERSION_NORMALIZE_PATH below for how this script now keeps the same
+    # "don't commit a diff for a value abicheck computes fresh every run"
+    # goal without deleting a key the loader can't do without.
     ("git_commit",),
     # Content digest computed over the raw (pre-normalization) payload --
     # still varies run-to-run even after everything else here is
@@ -146,6 +159,23 @@ TIMING_REWRITE_PATHS = frozenset({
 })
 
 TIMING_RE = re.compile(r"\d+(?:\.\d+)?s\b")
+
+# `version` is a required field of abicheck's own AbiSnapshot loader
+# (`snapshot_from_dict`: `version=d["version"]`, no default -- unlike
+# `git_commit`/`git_tag`, which use `.get()`). baseline.yml passes
+# `new-version: main-${{ github.sha }}`, so the raw dump's `version` value
+# changes on every push regardless of whether the ABI did. This script
+# still wants "no commit unless the ABI actually changed", but can't get
+# there by deleting the key the way DELETE_PATHS does for everything else
+# -- that produces a baseline abicheck itself can no longer load at all
+# (verified against a real broken commit: every later PR's scan/compare
+# failed immediately with "Failed to load JSON snapshot ...: 'version'").
+# Rewritten to a fixed placeholder instead: present (satisfies the
+# loader), constant (no diff noise across refreshes). Git history on
+# abi/math.abicheck.json already records which commit each refresh
+# reflects, same reasoning DELETE_PATHS uses for git_commit/created_at.
+VERSION_NORMALIZE_PATH = ("version",)
+VERSION_PLACEHOLDER = "main"
 
 
 def _matches(path, pattern):
@@ -222,10 +252,25 @@ def normalize_timing_prose(node, path=()):
     return node
 
 
+def normalize_version(report):
+    # Only touches the document-root `version` key -- matching
+    # VERSION_NORMALIZE_PATH's exact path, not any key named "version"
+    # anywhere in the tree (same name-keyed-map hazard the rest of this
+    # script is written to avoid; see the module docstring). If the key is
+    # missing entirely (unexpected -- abicheck's own dump always sets it),
+    # leave it missing rather than inventing one: that's a louder, more
+    # honest failure downstream (the loader's own "required key" error)
+    # than silently fabricating a value.
+    if VERSION_NORMALIZE_PATH[0] in report:
+        report = {**report, "version": VERSION_PLACEHOLDER}
+    return report
+
+
 def normalize(report, repo_root_marker):
     report = strip_volatile_paths(report)
     report = normalize_paths(report, repo_root_marker)
     report = normalize_timing_prose(report)
+    report = normalize_version(report)
     return report
 
 
