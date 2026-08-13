@@ -18,8 +18,8 @@ scenarios:
       unaffected, so this must read as compatible.
     old_target: "//fixtures/add_function/v1:impl"
     new_target: "//fixtures/add_function/v2:impl"
-    old_output: fixtures/add_function/v1/libimpl.so
-    new_output: fixtures/add_function/v2/libimpl.so
+    old_output: bazel-bin/fixtures/add_function/v1/libimpl.so
+    new_output: bazel-bin/fixtures/add_function/v2/libimpl.so
     new_header: fixtures/add_function/v2/lib.h
     expected_verdict: COMPATIBLE
 
@@ -30,8 +30,8 @@ scenarios:
       resolve it against v2 -- a binary ABI break.
     old_target: "//fixtures/remove_function/v1:impl"
     new_target: "//fixtures/remove_function/v2:impl"
-    old_output: fixtures/remove_function/v1/libimpl.so
-    new_output: fixtures/remove_function/v2/libimpl.so
+    old_output: bazel-bin/fixtures/remove_function/v1/libimpl.so
+    new_output: bazel-bin/fixtures/remove_function/v2/libimpl.so
     new_header: fixtures/remove_function/v2/lib.h
     expected_verdict: BREAKING
 
@@ -43,7 +43,7 @@ scenarios:
       for any caller compiled against v1's signature.
     old_target: "//fixtures/change_signature/v1:impl"
     new_target: "//fixtures/change_signature/v2:impl"
-    old_output: fixtures/change_signature/v1/libimpl.so
-    new_output: fixtures/change_signature/v2/libimpl.so
+    old_output: bazel-bin/fixtures/change_signature/v1/libimpl.so
+    new_output: bazel-bin/fixtures/change_signature/v2/libimpl.so
     new_header: fixtures/change_signature/v2/lib.h
     expected_verdict: BREAKING
