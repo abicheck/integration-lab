@@ -98,9 +98,14 @@ def _render_findings(diff):
 
     lines = ["---", "", "### Findings", ""]
 
+    # Codex review: `not_evaluated` (ADR-049 contract-excluded findings,
+    # `cli_scan_baseline`'s summary) is a real bucket `_BUCKET_LABELS`
+    # already has a label for -- omitting it here silently hid it from the
+    # aggregate table, and if those entries also fell past the 15-item
+    # display cap below, the comment gave no sign they existed at all.
     counts = {
         bucket: diff.get(bucket)
-        for bucket in ("breaking", "api_break", "risk", "compatible")
+        for bucket in ("breaking", "api_break", "risk", "compatible", "not_evaluated")
         if diff.get(bucket) is not None
     }
     if counts:
