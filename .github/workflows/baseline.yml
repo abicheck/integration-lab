@@ -91,6 +91,32 @@ jobs:
           new-version: main-${{ github.sha }}
           output-file: ${{ runner.temp }}/math.raw.abicheck.json
           fail-on-breaking: true
+
+      # Successful cquery/aquery/pack-build (validated above) only proves
+      # the *input* evidence abicheck was handed was good -- the dump
+      # itself can still degrade downstream (source extraction failing,
+      # 0/N symbols matched) while `mode: dump` exits 0 regardless, same
+      # underlying abicheck v0.5.0 behavior scripts/check_coverage_contract.py
+      # exists to catch on the scan side (Codex review). Reused here
+      # against the raw dump output before it's normalized/committed --
+      # same script, same fail-closed defaults, just without
+      # --require-public-header-provenance (dump mode never runs
+      # crosschecks at all -- there's no "other side" to cross-check
+      # against -- so the four provenance-gated crosscheck: layers this
+      # script looks for are structurally absent from every dump, verified
+      # against the real committed baseline; requiring them here would
+      # fail every single refresh). No --changed-files either: dump always
+      # processes the whole tree (no scope=changed), so the empty-scope
+      # exemption doesn't apply and shouldn't be reachable.
+      - name: Validate baseline coverage before committing
+        run: |
+          set -euo pipefail
+          python3 scripts/check_coverage_contract.py \
+            "$RUNNER_TEMP/math.raw.abicheck.json" \
+            -o "$RUNNER_TEMP/baseline-coverage-contract.json" \
+            --requested-depth source \
+            --no-require-public-header-provenance
+
       - name: Normalize baseline (strip volatile provenance/timing metadata)
         run: |
           python3 scripts/normalize_baseline.py \

@@ -225,7 +225,8 @@ jobs:
           set -euo pipefail
           python3 scripts/check_coverage_contract.py abicheck-report.json \
             -o "$RUNNER_TEMP/coverage-contract.json" \
-            --requested-depth source
+            --requested-depth source \
+            --changed-files "$RUNNER_TEMP/changed-files.txt"
 
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'

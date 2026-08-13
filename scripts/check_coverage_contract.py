@@ -17,20 +17,43 @@ lab-side stand-in the review explicitly calls for: read the same
 `abicheck-report.json` the gate already produced, and independently assert
 on its coverage evidence.
 
+Also used against `baseline.yml`'s raw `dump` output before it's committed
+(with `--no-require-public-header-provenance`, since `dump` mode never
+runs crosschecks at all) -- a good Bazel evidence *input* doesn't
+guarantee the dump itself achieved good coverage, so the same validation
+applies on both sides of every comparison, not just the PR side.
+
 ## Evidence source
 
-Every field this script reads was verified against a real scan report
-downloaded from a completed CI run of this repo's own `scan` job (not
-guessed): `coverage` is a list of `{layer, status, confidence?, detail,
-elapsed_s?}` objects. `L3_build`/`L4_source_abi` don't carry structured
-counts for target/symbol matching -- only free-text `detail` strings, e.g.
-`"bazel, 1 compile units, 0 targets"` and `"scope=changed, 0/0 TUs parsed,
-0/6 symbols matched, ..."`. This script regex-extracts those counts. That's
-inherently fragile against a detail-string format change upstream --
-documented here, not hidden: if the pattern stops matching, this script
-fails closed (treats the requirement as unmet) rather than silently
-passing, since a coverage gate that can't read its own evidence must not
-default to trusting it.
+Every field this script reads was verified against real reports downloaded
+from completed CI runs of this repo's own `scan` job and against the real
+committed baseline (not guessed). Two shapes, both handled (see
+`_coverage_by_layer`): a `scan`-mode report has `coverage` as a top-level
+list; a `dump`-mode snapshot has the same shape nested at
+`build_source.manifest.coverage`, and no top-level `coverage` or `level`
+key at all. Either way, each entry is a `{layer, status, confidence?,
+detail, elapsed_s?}` object. `L3_build`/`L4_source_abi` don't carry
+structured counts for target/symbol matching -- only free-text `detail`
+strings, e.g. `"bazel, 1 compile units, 0 targets"` and `"scope=changed,
+0/0 TUs parsed, 0/6 symbols matched, ..."`. This script regex-extracts
+those counts. That's inherently fragile against a detail-string format
+change upstream -- documented here, not hidden: if the pattern stops
+matching, this script fails closed (treats the requirement as unmet)
+rather than silently passing, since a coverage gate that can't read its
+own evidence must not default to trusting it.
+
+## The empty-changed-scope exemption
+
+`depth: source` on the `scan` side defaults to `scope=changed` replay: a
+PR touching only this gate's own workflow/scripts has zero compile units
+in scope, so `export_match_ratio` is inescapably 0/N with nothing actually
+broken. That's exempted -- but only when `--changed-files` is supplied
+*and* none of those paths can reach the compiler (`_is_build_affecting`);
+a BUILD.bazel/`.bzl`/`.bazelrc`-only PR could change compiled semantics
+(a new `-D` define flipping `#ifdef`-guarded declarations) without
+touching a single `.cc`/`.h` file, so an empty changed-scope there does
+NOT mean "nothing to check". Omitting `--changed-files` entirely (as the
+baseline validation above does) always enforces the ratio check normally.
 """
 import argparse
 import json
@@ -40,6 +63,43 @@ import sys
 L3_BUILD_RE = re.compile(r"(\d+)\s+compile\s+units?,\s+(\d+)\s+targets?")
 L4_SYMBOLS_RE = re.compile(r"(\d+)/(\d+)\s+symbols\s+matched")
 L4_TUS_RE = re.compile(r"(\d+)/(\d+)\s+TUs\s+parsed")
+
+# Deliberately duplicated from scripts/paths_changed.py's own pattern list
+# (kept as a small, independently-readable constant here rather than an
+# import-path hack across two standalone, individually-invokable scripts):
+# these are the paths that can actually reach the compiler -- a Bazel rule,
+# a compile flag, an include root, the source itself. Everything else
+# scripts/paths_changed.py calls "relevant" (workflows, this repo's own
+# gate scripts, CODEOWNERS, docs) participates in "does the gate need to
+# run" but can never change what gets compiled. The changed-source-scope
+# exemption below must NEVER apply when a file in this set changed: e.g. a
+# new `-D` define added to BUILD.bazel could flip `#ifdef`-guarded
+# declarations without touching a single .cc/.h file, so `scope=changed`
+# selecting 0 TUs there does not mean "nothing to check" the way it does
+# for a workflow-only diff (Codex review).
+_BUILD_AFFECTING_PATTERNS = (
+    "BUILD.bazel",
+    "MODULE.bazel",
+    "MODULE.bazel.lock",
+    "*/BUILD",
+    "*/BUILD.bazel",
+    "*.bzl",
+    ".bazelrc",
+    ".bazelversion",
+    "include/*",
+    "src/*",
+    "abi/*",
+    ".abicheck.yml",
+)
+
+
+def _is_build_affecting(changed_files):
+    import fnmatch
+    return any(
+        fnmatch.fnmatch(path, pattern)
+        for path in changed_files
+        for pattern in _BUILD_AFFECTING_PATTERNS
+    )
 
 # crosscheck layers that require public-header provenance to run at all --
 # verified against the real report: with no --public-header/--public-header-dir
@@ -57,7 +117,25 @@ _PROVENANCE_GATED_LAYERS = frozenset({
 
 
 def _coverage_by_layer(report):
-    return {c.get("layer"): c for c in report.get("coverage", []) if isinstance(c, dict)}
+    # Two real, verified shapes: a `scan`-mode report has `coverage` as a
+    # top-level list (`ScanOutcome.to_dict()`); a `dump`-mode snapshot (the
+    # format baseline.yml commits) has no top-level `coverage` at all --
+    # the same layer/status/detail-shaped list lives at
+    # `build_source.manifest.coverage` instead (verified against the real
+    # committed abi/math.abicheck.json: identical `{layer, status,
+    # confidence, detail, elapsed_s}` entries for L3_build/L4_source_abi/
+    # L5_source_graph). Falls back to the nested path only when the
+    # top-level key is absent/empty, so a scan report's own (possibly
+    # legitimately empty) top-level list is never masked by a coincidental
+    # nested one.
+    coverage = report.get("coverage")
+    if not coverage:
+        coverage = (
+            report.get("build_source", {})
+            .get("manifest", {})
+            .get("coverage", [])
+        )
+    return {c.get("layer"): c for c in coverage if isinstance(c, dict)}
 
 
 def _extract_l3(coverage):
@@ -130,15 +208,22 @@ def _has_public_header_provenance(coverage):
 
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
-             require_public_header_provenance, min_export_match_ratio):
+             require_public_header_provenance, min_export_match_ratio,
+             changed_files=None):
     coverage = _coverage_by_layer(report)
-    level = report.get("level", {}) or {}
-    effective_depth = level.get("depth")
+    # `level.depth` only exists on a `scan`-mode report. `dump`-mode
+    # snapshots (baseline.yml) have no `level` key at all -- absent, not
+    # "different depth achieved" -- so this check only fires when the key
+    # is actually present, avoiding a spurious depth-mismatch failure on
+    # every baseline validation (Codex review: this script needs to also
+    # validate the baseline's own dump output, which has no such field).
+    level = report.get("level")
+    effective_depth = (level or {}).get("depth")
 
     failures = []
     facts = {"requested_depth": requested_depth, "effective_depth": effective_depth}
 
-    if effective_depth != requested_depth:
+    if level is not None and effective_depth != requested_depth:
         failures.append(
             f"requested depth '{requested_depth}' but effective depth was '{effective_depth}'"
         )
@@ -162,16 +247,31 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
     else:
         selected_tus = _extract_l4_selected_tus(coverage)
         facts["selected_tus"] = selected_tus
-        if selected_tus == 0:
-            # Confirmed empty scope=changed replay (see
-            # _extract_l4_selected_tus) -- 0/N isn't a failed link, there
+        # Positive evidence required on *both* axes before exempting:
+        # a confirmed-empty scope (see _extract_l4_selected_tus) AND a
+        # known, exhaustive changed-file list that contains nothing able to
+        # reach the compiler. Either one missing/unknown falls through to
+        # the ordinary ratio check below -- exemption is an allowlist, not
+        # a default (Codex review: an earlier revision exempted on
+        # selected_tus==0 alone, which a BUILD.bazel/.bzl/.bazelrc-only PR
+        # could also trigger while genuinely changing compiled semantics).
+        exemptible = (
+            selected_tus == 0
+            and changed_files is not None
+            and not _is_build_affecting(changed_files)
+        )
+        if exemptible:
+            # Confirmed empty scope=changed replay over a confirmed
+            # non-build-affecting diff -- 0/N isn't a failed link, there
             # was nothing in scope to link. Not a gate failure; recorded as
             # a fact, not folded into export_match_ratio, so a reader can't
             # mistake "exempt" for "100% matched".
             facts["export_match_ratio"] = None
             facts["export_match_ratio_exempt_reason"] = (
-                "0 compile units in scope=changed replay -- this diff "
-                "doesn't touch any C++ source, so there's nothing to link"
+                "0 compile units in scope=changed replay, and no changed "
+                "file can reach the compiler -- this diff doesn't touch "
+                "any C++ source or build configuration, so there's "
+                "nothing to link"
             )
         else:
             ratio = (matched / total) if total else 0.0
@@ -212,7 +312,26 @@ def main():
         "--require-public-header-provenance", action=argparse.BooleanOptionalAction, default=True,
     )
     parser.add_argument("--min-export-match-ratio", type=float, default=0.95)
+    parser.add_argument(
+        "--changed-files", default="",
+        help="Path to a newline-separated list of changed files (e.g. from "
+        "`git diff --name-only`), required for the empty-changed-scope "
+        "export-match-ratio exemption to ever apply. Omit to always "
+        "enforce the ratio check (the pre-exemption behavior).",
+    )
     args = parser.parse_args()
+
+    changed_files = None
+    if args.changed_files:
+        try:
+            with open(args.changed_files, "r", encoding="utf-8") as fh:
+                changed_files = [line.strip() for line in fh if line.strip()]
+        except OSError:
+            # Unreadable list is "unknown", not "empty" -- an empty list
+            # would incorrectly satisfy _is_build_affecting's "none of
+            # these match" check and wrongly permit the exemption. None
+            # correctly falls through to the ordinary ratio check instead.
+            changed_files = None
 
     try:
         with open(args.report, "r", encoding="utf-8") as fh:
@@ -237,6 +356,7 @@ def main():
         require_bazel_target=args.require_bazel_target,
         require_public_header_provenance=args.require_public_header_provenance,
         min_export_match_ratio=args.min_export_match_ratio,
+        changed_files=changed_files,
     )
 
     with open(args.output, "w", encoding="utf-8") as fh:

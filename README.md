@@ -157,21 +157,46 @@ the old (better, or at least previously-accepted) baseline stays in place
 rather than being silently overwritten with a worse one.
 
 **Export-to-source symbol matching is exempted, not enforced, when there's
-nothing to match.** `depth: source` defaults to `scope=changed` replay, so
-a PR that doesn't touch any C++ source (e.g. this repo's own gate-only
-maintenance PRs — `scripts/paths_changed.py` correctly still calls those
-"relevant", they need review) genuinely has zero compile units in scope:
-`check_coverage_contract.py` reads `L4_source_abi`'s own "P/S TUs parsed"
-count and only enforces the `>= 0.95` ratio when the *selected* count is
-positive — a confirmed-empty scope isn't a failed link, there's nothing to
-link (verified against a real report from exactly this scenario: "scope=
-changed, 0/0 TUs parsed, 0/6 symbols matched"). If that count can't be
-parsed at all (a reformatted detail string, an unexpected layer shape),
-the exemption does **not** apply — fails closed to the ordinary ratio
-check, same as everywhere else in this script. A PR that actually changes
-`src/`/`include/` gets real symbols in scope and the ratio is enforced
-normally, now with compile units correctly linked to their resolved Bazel
-targets.
+nothing to match — and only when the diff genuinely couldn't have changed
+compiled semantics.** `depth: source` defaults to `scope=changed` replay,
+so a PR that doesn't touch any C++ source genuinely has zero compile units
+in scope: `check_coverage_contract.py` reads `L4_source_abi`'s own "P/S
+TUs parsed" count and considers exempting the `>= 0.95` ratio requirement
+when the *selected* count is confirmed zero (verified against a real
+report from exactly this scenario: "scope=changed, 0/0 TUs parsed, 0/6
+symbols matched"). But an empty changed-source scope alone isn't enough:
+a PR that changes `BUILD.bazel`, a `.bzl` file, or `.bazelrc` could alter
+compiled semantics (a new `-D` define flipping `#ifdef`-guarded
+declarations) without touching a single `.cc`/`.h` file, so the exemption
+also requires the full changed-file list (passed via `--changed-files`)
+and confirms none of those paths can reach the compiler at all — this
+repo's own gate-only maintenance files (workflows, `scripts/*.py`,
+`README.md`, `CODEOWNERS`) qualify; `BUILD.bazel`/`*.bzl`/`.bazelrc`/
+`include/`/`src/`/`abi/` never do (Codex review). Either signal missing or
+ambiguous falls through to the ordinary ratio check — exemption is a
+positive-evidence allowlist on *both* axes, not a default. A PR that
+actually changes `src/`/`include/` gets real symbols in scope and the
+ratio is enforced normally, now with compile units correctly linked to
+their resolved Bazel targets.
+
+**The baseline's own dump coverage is validated before it's committed,
+not just its input evidence.** A good Bazel cquery/aquery capture only
+proves abicheck was *handed* good evidence — the `dump` itself can still
+degrade downstream while exiting 0 regardless, the same abicheck v0.5.0
+behavior the whole coverage contract exists to catch on the scan side
+(Codex review). `check_coverage_contract.py` is reused against the raw
+`dump` output before `normalize_baseline.py`/commit run, with
+`--no-require-public-header-provenance` (dump mode never runs crosschecks
+at all -- there's no "other side" to cross-check against, so the four
+provenance-gated `crosscheck:` layers this script looks for are
+structurally absent from every dump) and no `--changed-files` (dump
+always processes the whole tree, so the empty-scope exemption doesn't
+apply and shouldn't be reachable). This required generalizing
+`_coverage_by_layer` to read either shape: a `scan` report's top-level
+`coverage` list, or a `dump` snapshot's nested
+`build_source.manifest.coverage` (no top-level `coverage`/`level` key at
+all) — verified against the real committed baseline, which has the
+identical `{layer, status, detail}` shape just one level deeper.
 
 This was verified as far as static analysis of the pinned commit allows —
 the actual effect (does `bazel_targets` really read > 0, does the
