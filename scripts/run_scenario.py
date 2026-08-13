@@ -162,17 +162,42 @@ def run_one_profile(scenario, profile, expected, results_dir):
     )
 
     expected_suppressed_count = scenario.get("expected_suppressed_count")
+    # Codex review: checking suppressed_count alone (e.g. == 1) doesn't
+    # prove WHICH finding was suppressed -- suppression_partial's own
+    # regression is exactly the case this misses: if the suppression rule
+    # accidentally matched required_api's change instead of legacy_metric's
+    # (leaving legacy_metric's removal unsuppressed), the verdict would
+    # still read BREAKING and suppressed_count would still read 1 -- a
+    # false pass on the scenario this repo's review calls "the central
+    # case". expected_suppressed_symbols (a list of mangled symbols, when
+    # given) checks the actual identity of every suppressed_changes entry,
+    # not just how many there were.
+    expected_suppressed_symbols = scenario.get("expected_suppressed_symbols")
+    # Companion to expected_suppressed_symbols: which symbol(s) are still
+    # gating (report["changes"], the non-suppressed findings) -- pins that
+    # the ONE real, unaccepted break is still present and unsuppressed,
+    # closing the same false-pass gap from the other direction.
+    expected_gating_symbols = scenario.get("expected_gating_symbols")
     try:
         with open(output_json, "r", encoding="utf-8") as fh:
             report = json.load(fh)
         actual = report.get("verdict")
-        actual_suppressed_count = (report.get("suppression") or {}).get("suppressed_count")
+        suppression_block = report.get("suppression") or {}
+        actual_suppressed_count = suppression_block.get("suppressed_count")
+        actual_suppressed_symbols = sorted(
+            c.get("symbol") for c in (suppression_block.get("suppressed_changes") or [])
+        )
+        actual_gating_symbols = sorted(
+            c.get("symbol") for c in (report.get("changes") or [])
+        )
         read_error = None
     except (OSError, json.JSONDecodeError) as exc:
         # abicheck failed to produce a readable report at all -- fail
         # closed (no verdict is never treated as a match), not silently.
         actual = None
         actual_suppressed_count = None
+        actual_suppressed_symbols = None
+        actual_gating_symbols = None
         read_error = str(exc)
 
     verdict_passed = actual == expected
@@ -185,6 +210,14 @@ def run_one_profile(scenario, profile, expected, results_dir):
     suppressed_count_passed = (
         expected_suppressed_count is None or actual_suppressed_count == expected_suppressed_count
     )
+    suppressed_symbols_passed = (
+        expected_suppressed_symbols is None
+        or actual_suppressed_symbols == sorted(expected_suppressed_symbols)
+    )
+    gating_symbols_passed = (
+        expected_gating_symbols is None
+        or actual_gating_symbols == sorted(expected_gating_symbols)
+    )
     return {
         "name": name,
         "profile": profile,
@@ -193,7 +226,16 @@ def run_one_profile(scenario, profile, expected, results_dir):
         "actual_verdict": actual,
         "expected_suppressed_count": expected_suppressed_count,
         "actual_suppressed_count": actual_suppressed_count,
-        "passed": verdict_passed and suppressed_count_passed,
+        "expected_suppressed_symbols": expected_suppressed_symbols,
+        "actual_suppressed_symbols": actual_suppressed_symbols,
+        "expected_gating_symbols": expected_gating_symbols,
+        "actual_gating_symbols": actual_gating_symbols,
+        "passed": (
+            verdict_passed
+            and suppressed_count_passed
+            and suppressed_symbols_passed
+            and gating_symbols_passed
+        ),
         "read_error": read_error,
     }
 
@@ -263,9 +305,15 @@ def main():
                 if result["expected_suppressed_count"] is not None
                 else ""
             )
+            suppressed_symbols_label = (
+                f" suppressed_symbols(expected={result['expected_suppressed_symbols']}, "
+                f"actual={result['actual_suppressed_symbols']})"
+                if result["expected_suppressed_symbols"] is not None
+                else ""
+            )
             print(
                 f"{status}{profile_label}: expected={result['expected_verdict']} "
-                f"actual={result['actual_verdict']}{suppressed_label}"
+                f"actual={result['actual_verdict']}{suppressed_label}{suppressed_symbols_label}"
                 + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
             )
 

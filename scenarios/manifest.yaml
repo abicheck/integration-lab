@@ -90,6 +90,13 @@ scenarios:
     new_header: fixtures/remove_function/v2/lib.h
     suppress: suppressions/remove_function_accepted.yaml
     expected_suppressed_count: 1
+    # Codex review: count alone doesn't prove WHICH finding was
+    # suppressed -- pin the actual symbol identity too.
+    expected_suppressed_symbols:
+      - _ZN8scenario16removed_functionEi
+    # Nothing should remain gating -- the ONE finding was the accepted
+    # removal itself, now fully suppressed.
+    expected_gating_symbols: []
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
@@ -119,6 +126,20 @@ scenarios:
     new_header: fixtures/suppression_partial/v2/lib.h
     suppress: suppressions/legacy_metric_removed.yaml
     expected_suppressed_count: 1
+    # Codex review: without pinning identity, this scenario passes just as
+    # easily if the suppression rule accidentally matched required_api's
+    # change instead of legacy_metric's (leaving legacy_metric unsuppressed)
+    # -- same verdict, same count, wrong reason. Pin both: which symbol was
+    # suppressed, and which symbol is still the (only) gating finding.
+    expected_suppressed_symbols:
+      - _ZN8scenario13legacy_metricEi
+    # required_api's own signature change surfaces as an old-symbol
+    # removal + new-symbol addition pair (verified locally): the mangled
+    # name itself changes (int -> long), so this is func_removed(old) +
+    # func_added(new), not a single "changed" kind.
+    expected_gating_symbols:
+      - _ZN8scenario12required_apiEi
+      - _ZN8scenario12required_apiEl
     expected:
       castxml: BREAKING
       clang: BREAKING

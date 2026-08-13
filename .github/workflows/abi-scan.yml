@@ -500,16 +500,23 @@ jobs:
             "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
             > "$RUNNER_TEMP/math.base.abicheck.json"
 
-      - name: Set up Bazel disk cache
-        if: steps.relevance.outputs.relevant == 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-plugin-${{ github.run_id }}
-          restore-keys: |
-            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
-            bazel-disk-${{ runner.os }}-
-
+      # Deliberately NO disk-cache step for this job, unlike scan/canary
+      # above (Codex review). This job's whole point is a SIDE EFFECT of
+      # compiling (the plugin's source_facts/*.jsonl output) that Bazel
+      # itself has no idea exists -- it's not a declared action output.
+      # Bazel's own remote/disk caching contract (bazel.build/remote/caching)
+      # is "a cache hit downloads the action's declared outputs instead of
+      # executing the action" -- so a disk-cache hit on this exact compile
+      # action (identical copts/toolchain, which every run of this job
+      # after the first one restoring a shared/prior cache entry would be)
+      # skips invoking clang (and therefore the plugin) entirely, leaving
+      # the freshly emptied abicheck_inputs/ directory empty while the
+      # build itself still reports success -- silently degrading this
+      # profile to an ordinary binary/header comparison with no visible
+      # sign anything was wrong. Never consulting a disk cache for this one
+      # build is the fix; the verify step below is the second layer (fail
+      # closed even if some other caching path -- a future flag, a runner
+      # image default -- reintroduces the same risk).
       # Ubuntu 24.04's default `clang`/`clang++` is LLVM 18 (confirmed by
       # this workflow's own install-deps.sh log output elsewhere in this
       # repo) -- the matching dev packages per contrib/abicheck-clang-plugin's
@@ -587,7 +594,7 @@ jobs:
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/abicheck_inputs"
           mkdir -p "$RUNNER_TEMP/abicheck_inputs"
-          bazel build //:math --disk_cache="$HOME/.cache/bazel-disk" \
+          bazel build //:math \
             --copt="-fplugin=${{ steps.build_plugin.outputs.plugin_so }}" \
             --copt=-Xclang --copt=-plugin-arg-abicheck-facts --copt=-Xclang \
             --copt="out=$RUNNER_TEMP/abicheck_inputs" \
@@ -595,9 +602,36 @@ jobs:
             --copt="public-roots=$(pwd)/include"
           echo "inputs_dir=$RUNNER_TEMP/abicheck_inputs" >> "$GITHUB_OUTPUT"
 
+      # Codex review, second layer: even with no disk cache consulted
+      # above, verify the plugin's side-effect output actually landed
+      # rather than trusting a clean `bazel build` exit alone -- a clean
+      # exit only proves the ACTION succeeded, not that the plugin (a
+      # side effect Bazel has no declared-output visibility into) ran and
+      # wrote anything. Fails this step (continue-on-error keeps the job
+      # non-blocking; the status-summary step reports it distinctly from
+      # "build failed") rather than silently handing an empty/missing
+      # facts directory to the compare step below, which would otherwise
+      # degrade to an ordinary binary/header comparison while reporting
+      # success.
+      - name: Verify source facts were actually collected
+        id: verify_facts
+        if: steps.plugin_build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          facts_dir="${{ steps.plugin_build.outputs.inputs_dir }}/source_facts"
+          count=$(find "$facts_dir" -name '*.jsonl' -size +0c 2>/dev/null | wc -l)
+          echo "Found $count non-empty source_facts/*.jsonl file(s) in $facts_dir"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::No source facts were collected -- the plugin build" \
+                 "reported success but wrote nothing (see the job comment on" \
+                 "this step for why this is checked explicitly)." >&2
+            exit 1
+          fi
+
       - name: Install abicheck (for dump/compare)
         id: install_abicheck
-        if: steps.plugin_build.outcome == 'success'
+        if: steps.verify_facts.outcome == 'success'
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
 
@@ -658,6 +692,8 @@ jobs:
               echo '⏭️ Skipped: plugin failed to build against this runner'"'"'s LLVM/Clang -- likely a version mismatch (this profile is ABI-locked to the loading Clang'"'"'s exact LLVM major per abicheck'"'"'s own docs).'
             elif [ "${{ steps.plugin_build.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: Bazel build with the plugin injected via --copt failed.'
+            elif [ "${{ steps.verify_facts.outcome }}" != "success" ]; then
+              echo '⚠️ Bazel build succeeded but no source facts were actually collected -- likely a cached compile action serving stale outputs without re-running the plugin (Codex review; see the verify step'"'"'s own comment for why this is checked).'
             elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: could not install abicheck to consume the collected facts.'
             elif [ "${{ steps.l4_clang_plugin_compare.outcome }}" != "success" ]; then
