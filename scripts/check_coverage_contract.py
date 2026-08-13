@@ -77,6 +77,15 @@ L4_TUS_RE = re.compile(r"(\d+)/(\d+)\s+TUs\s+parsed")
 # declarations without touching a single .cc/.h file, so `scope=changed`
 # selecting 0 TUs there does not mean "nothing to check" the way it does
 # for a workflow-only diff (Codex review).
+#
+# Deliberately NOT the same set as paths_changed.py's relevance list:
+# abi/** is relevant there (a baseline edit needs the gate to run, and
+# CODEOWNERS review) but isn't compiler-affecting -- it's the trusted JSON
+# snapshot the *comparison* reads, never an input to the Bazel build graph.
+# Including it here would deny the exemption to a PR that only corrects
+# abi/math.abicheck.json, forcing a reviewed baseline-only fix to fail its
+# own export-match-ratio check for no reason connected to compilation
+# (Codex review, fresh evidence).
 _BUILD_AFFECTING_PATTERNS = (
     "BUILD.bazel",
     "MODULE.bazel",
@@ -88,7 +97,6 @@ _BUILD_AFFECTING_PATTERNS = (
     ".bazelversion",
     "include/*",
     "src/*",
-    "abi/*",
     ".abicheck.yml",
 )
 
