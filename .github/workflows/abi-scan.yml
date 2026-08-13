@@ -640,6 +640,13 @@ jobs:
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
 
+      # Codex review: --ast-frontend clang added -- without it, the header
+      # side of this compare silently used abicheck's CastXML default,
+      # so an "l4-clang-plugin" artifact was actually combining Clang-
+      # collected source facts with a CastXML header parse, unable to
+      # expose any Clang-header-specific divergence the l2-clang/
+      # l4-clang-replay cells above are specifically there to catch.
+      #
       # Codex review: the bare CLI's own documented behavior (same as
       # scripts/run_scenario.py's run_abicheck_compare) is to exit nonzero
       # on a gated BREAKING/API_BREAK verdict -- that's a successfully
@@ -661,6 +668,7 @@ jobs:
             "$RUNNER_TEMP/math.base.abicheck.json" \
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
+            --ast-frontend clang \
             --build-info "${{ steps.plugin_build.outputs.inputs_dir }}" \
             --format json \
             -o abicheck-l4-clang-plugin.json \
