@@ -46,6 +46,12 @@
 # review). Same trust boundary: the reader-facing report is as much a
 # part of "what the gate says" as the check that produces exit codes.
 #
+# scripts/paths_changed.py decides whether the scan job's gating steps
+# run at all (abi-scan.yml has no workflow-level path filter anymore --
+# see that file's `on:` block for why). A PR that weakens it to always
+# report "not relevant" would make the required check succeed trivially
+# on every PR, never actually gating anything.
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
@@ -54,4 +60,5 @@ abi/** @napetrov
 scripts/normalize_baseline.py @napetrov
 scripts/check_coverage_contract.py @napetrov
 scripts/render_scan_comment.py @napetrov
+scripts/paths_changed.py @napetrov
 .github/CODEOWNERS @napetrov

@@ -1,33 +1,22 @@
 name: ABICheck PR scan
 
 on:
-  pull_request:
-    paths:
-      - 'BUILD.bazel'
-      - 'MODULE.bazel'
-      - 'MODULE.bazel.lock'
-      - '**/BUILD'
-      - '**/BUILD.bazel'
-      - '**/*.bzl'
-      - '.bazelrc'
-      - '.bazelversion'
-      - 'include/**'
-      - 'src/**'
-      - 'abi/**'
-      - '.abicheck.yml'
-      - '.github/workflows/abi-scan.yml'
-      # Every CODEOWNERS-protected path needs to be in this filter too: if
-      # a required "scan" check is configured in branch protection, a PR
-      # touching only a path outside this filter never triggers the
-      # workflow at all, so the required check sits at "Pending" forever
-      # and the PR can never merge -- even though it needed owner review
-      # and passed it (Codex review). Keep this list a superset of
-      # .github/CODEOWNERS's paths.
-      - '.github/workflows/baseline.yml'
-      - '.github/CODEOWNERS'
-      - 'scripts/normalize_baseline.py'
-      - 'scripts/render_scan_comment.py'
-      - 'scripts/check_coverage_contract.py'
+  # Deliberately no `paths:` filter here (see the earlier fix that tried
+  # exactly that, expanding it to a superset of .github/CODEOWNERS's
+  # paths). A workflow-level path filter can only ever be a fixed list,
+  # and GitHub's own docs are explicit about what happens when a PR
+  # touches something outside it: the workflow never triggers, so a
+  # required "scan" check sits at "Pending" forever and the PR can never
+  # merge -- for *any* unlisted path, not just ones we forgot, e.g. a
+  # README.md-only or .gitignore-only PR (Codex review, fresh evidence
+  # after the superset fix). Instead this always triggers, and the
+  # "Skip if nothing ABI-relevant changed" step below decides -- from
+  # *inside* the job, where a skip still resolves the required check
+  # instead of leaving it pending -- whether the expensive steps run at
+  # all. See scripts/paths_changed.py for the pattern list (now the
+  # single source of truth this used to duplicate) and why it's
+  # CODEOWNERS-protected the same as the rest of the gate chain.
+  pull_request: {}
 
 permissions:
   contents: read
@@ -46,6 +35,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Runs unconditionally (no `if:`) so it always produces a real
+      # conclusion for this required check, whether or not anything
+      # ABI-relevant changed -- see the `on:` block above for why there's
+      # no workflow-level path filter to do this job instead.
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+            {
+              echo '### ABICheck source scan'
+              echo
+              echo 'No ABI-relevant paths changed (see `scripts/paths_changed.py`) -- scan skipped, gate satisfied trivially.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # The candidate library is always built from the PR head (the
       # checkout above). The baseline it gets compared against must come
       # from the PR's exact base commit, read straight out of git history
@@ -53,6 +66,7 @@ jobs:
       # abi/math.abicheck.json in the same diff that breaks the ABI and
       # have the gate "pass" against its own edited baseline.
       - name: Resolve trusted baseline from PR base SHA
+        if: steps.relevance.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -73,6 +87,7 @@ jobs:
       # same run, and whichever finished second would just log "already
       # exists" and lose its cache entirely (CodeRabbit review).
       - name: Set up Bazel disk cache
+        if: steps.relevance.outputs.relevant == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
@@ -82,6 +97,7 @@ jobs:
             bazel-disk-${{ runner.os }}-
 
       - name: Build candidate shared library with Bazel
+        if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
       # Single canonical analysis: this one scan is the gate, the source
@@ -91,6 +107,7 @@ jobs:
       # native add-job-summary, which does support scan mode).
       - name: ABICheck source scan (gate + canonical report)
         id: scan
+        if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -116,7 +133,7 @@ jobs:
       # report is most useful for debugging, and this must never be
       # skipped just because the gate step above failed.
       - name: Upload ABICheck report artifact
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: abicheck-report
@@ -135,7 +152,7 @@ jobs:
       # exactly which fields this reads (verified against a real report).
       - name: Check depth:source coverage contract
         id: coverage_contract
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         shell: bash
         run: |
@@ -145,7 +162,7 @@ jobs:
             --requested-depth source
 
       - name: Upload coverage contract result artifact
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-contract-result
@@ -161,7 +178,7 @@ jobs:
       # given the sticky-comment channel at all, only an artifact.
       - name: Binary/header-only diagnostic (non-gating, artifact only)
         id: diagnostic
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -177,7 +194,7 @@ jobs:
           pr-comment: false
 
       - name: Upload diagnostic compare artifact
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: abicheck-diagnostic-compare
@@ -186,7 +203,7 @@ jobs:
           retention-days: 30
 
       - name: Render canonical PR comment from the gating scan
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         shell: bash
         run: |
@@ -209,7 +226,7 @@ jobs:
       # safety net, and the try/catch below logs why instead of just
       # failing silently past it (Codex review).
       - name: Post/update sticky PR comment
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -292,7 +309,28 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # canary isn't a required check, so it was never at risk of the
+      # "Pending forever" trap the scan job's version of this step exists
+      # to close -- this is purely to avoid burning a Bazel build + scan
+      # on every doc-only PR now that the workflow-level path filter that
+      # used to do this for free is gone (see the `on:` block above).
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve trusted baseline from PR base SHA
+        if: steps.relevance.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -313,6 +351,7 @@ jobs:
       # same run, and whichever finished second would just log "already
       # exists" and lose its cache entirely (CodeRabbit review).
       - name: Set up Bazel disk cache
+        if: steps.relevance.outputs.relevant == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
@@ -322,10 +361,12 @@ jobs:
             bazel-disk-${{ runner.os }}-
 
       - name: Build candidate shared library with Bazel
+        if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
       - name: ABICheck source scan (canary — abicheck/main, non-blocking)
         id: canary_scan
+        if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: abicheck/abicheck@e5fabd40357f36a946b572948866f34f6c9f0575 # main (pin updated manually — see comment above)
         with:
@@ -346,7 +387,7 @@ jobs:
           extra-args: '--contract-evaluation'
 
       - name: Upload canary report artifact
-        if: always()
+        if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: abicheck-canary-report
@@ -358,6 +399,14 @@ jobs:
         if: always()
         shell: bash
         run: |
+          if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+            {
+              echo "### Canary lane (non-blocking)"
+              echo
+              echo "No ABI-relevant paths changed -- skipped."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           {
             echo "### Canary lane (non-blocking)"
             echo
