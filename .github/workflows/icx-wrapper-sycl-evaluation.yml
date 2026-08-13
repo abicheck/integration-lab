@@ -1,0 +1,130 @@
+name: ICX wrapper SYCL evaluation
+on:
+  push:
+    branches: [icx-wrapper-sycl-evaluation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ROOT: /tmp/icx-wrapper-sycl
+      ICX: /opt/intel/oneapi/compiler/2026.1/bin/icx
+      ICPX: /opt/intel/oneapi/compiler/2026.1/bin/icpx
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: abicheck/abicheck
+          ref: b9c9c33fdd35bbcf61bf43aeee0e5a87bd46d93d
+          path: abicheck
+          persist-credentials: false
+      - name: Install ICX 2026.1.1 and abicheck
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf "$ROOT"; mkdir -p "$ROOT/logs" "$ROOT/results"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnupg python3-venv wget
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/oneapi.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneapi.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp-2026.1
+          python3 -m venv "$ROOT/venv"
+          source "$ROOT/venv/bin/activate"
+          pip install -q -e "$GITHUB_WORKSPACE/abicheck"
+          "$ICPX" --version | tee "$ROOT/logs/version.log"
+      - name: Compile and collect source facts through abicheck-cc
+        shell: bash
+        run: |
+          set +e
+          export PATH="/opt/intel/oneapi/compiler/2026.1/bin:$ROOT/venv/bin:$PATH"
+          export LD_LIBRARY_PATH="/opt/intel/oneapi/compiler/2026.1/lib:${LD_LIBRARY_PATH:-}"
+          mkdir -p "$ROOT/project/include" "$ROOT/project/src"
+          cat >"$ROOT/project/include/api.hpp" <<'EOF'
+          #pragma once
+          namespace sample {
+          struct Widget { int value; };
+          inline int get(Widget w) { return w.value; }
+          int transform(Widget w);
+          }
+          EOF
+          cat >"$ROOT/project/src/use.cpp" <<'EOF'
+          #include "api.hpp"
+          #include <sycl/sycl.hpp>
+          namespace sample {
+          int transform(Widget w) {
+            int result = 0;
+            sycl::queue q;
+            {
+              sycl::buffer<int, 1> out(&result, sycl::range<1>(1));
+              q.submit([&](sycl::handler& h) {
+                auto a = out.get_access<sycl::access::mode::write>(h);
+                h.single_task([=] { a[0] = get(w) + 1; });
+              });
+            }
+            return result;
+          }
+          }
+          EOF
+
+          export ABICHECK_INPUTS_DIR="$ROOT/facts"
+          export ABICHECK_CC_EXTRACTOR=clang
+          export ABICHECK_CC_HEADERS="$ROOT/project/include"
+          export ABICHECK_CC_LIBRARY=icx-sycl-wrapper
+          export ABICHECK_CC_VERSION=2026.1.1
+          cd "$ROOT/project"
+          abicheck-cc "$ICPX" -fsycl -std=c++17 -Iinclude -c src/use.cpp -o use.o \
+            >"$ROOT/logs/wrapper.log" 2>&1
+          compile_rc=$?
+
+          python - "$ROOT/facts" >"$ROOT/logs/validate.log" 2>&1 <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          files = sorted((root / "source_facts").glob("*.jsonl"))
+          assert files, f"no source facts under {root}"
+          records = []
+          for path in files:
+              for line in path.read_text().splitlines():
+                  if line.strip():
+                      records.append(json.loads(line))
+          assert records, "empty source fact files"
+          first = records[0]
+          names = sorted({
+              item.get("qualified_name") or item.get("name") or ""
+              for family in ("functions", "types", "reachable_declarations", "reachable_types")
+              for item in first.get(family, [])
+              if isinstance(item, dict)
+          })
+          print(f"files={len(files)} records={len(records)}")
+          print(json.dumps({
+              "extractor": first.get("extractor"),
+              "compiler_version": first.get("compiler_version"),
+              "fact_set": first.get("fact_set"),
+              "function_count": len(first.get("functions", [])),
+              "type_count": len(first.get("types", [])),
+              "sample_names": [n for n in names if "sample" in n][:20],
+              "diagnostics": first.get("diagnostics", []),
+          }, indent=2, sort_keys=True))
+          manifest = json.loads((root / "manifest.json").read_text())
+          print("manifest:")
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+          validate_rc=$?
+          printf 'compile_rc=%s\nvalidate_rc=%s\n' "$compile_rc" "$validate_rc" >"$ROOT/results/wrapper-sycl.status"
+          cat "$ROOT/logs/wrapper.log"
+          cat "$ROOT/logs/validate.log"
+          exit 0
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          { echo '# ICX wrapper SYCL evaluation'; echo '```'; cat "$ROOT/results/wrapper-sycl.status"; echo '```'; } | tee "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: icx-wrapper-sycl-evaluation
+          path: /tmp/icx-wrapper-sycl
+          retention-days: 7
