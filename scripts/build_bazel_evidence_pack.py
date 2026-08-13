@@ -46,22 +46,33 @@ evidence, but the pre-existing status quo, never a half-written pack
 mistaken for a good one) kicks in instead.
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
 
-def build_pack(cquery_path, aquery_path, workspace, output_dir):
-    """Return None on success, or an error string on failure. Never raises."""
+def build_pack(cquery_path, aquery_path, workspace, output_dir, root_targets=()):
+    """Return ``(None, summary_dict)`` on success, or ``(error_str, None)``.
+
+    *root_targets* are the Bazel labels the caller actually asked to scan
+    (e.g. ``//:math``) -- ``cquery deps(<label>)`` resolves *every*
+    transitive dependency into ``ev.targets`` too, so a bare target count
+    conflates "the library under test" with its whole dependency closure
+    (e.g. `bazel_targets=32` for a workspace scanning one two-file library
+    -- a real report from this pipeline). *summary_dict* separates the two
+    so a caller can render "1 requested, 1 resolved, 31 transitive" instead
+    of a single, misleading number.
+    """
     try:
         from abicheck.buildsource.adapters.bazel import BazelAdapter
         from abicheck.buildsource.pack import BuildSourcePack
     except ImportError as exc:
-        return f"abicheck not importable: {exc}"
+        return f"abicheck not importable: {exc}", None
 
     if not cquery_path.is_file() or cquery_path.stat().st_size == 0:
-        return f"{cquery_path} missing or empty (bazel cquery likely failed)"
+        return f"{cquery_path} missing or empty (bazel cquery likely failed)", None
     if not aquery_path.is_file() or aquery_path.stat().st_size == 0:
-        return f"{aquery_path} missing or empty (bazel aquery likely failed)"
+        return f"{aquery_path} missing or empty (bazel aquery likely failed)", None
 
     adapter = BazelAdapter(
         workspace=workspace,
@@ -75,19 +86,43 @@ def build_pack(cquery_path, aquery_path, workspace, output_dir):
     ev = adapter.collect()
 
     if not ev.targets:
-        return "cquery produced zero targets -- not writing a pack (would regress vs. auto-inference)"
+        return "cquery produced zero targets -- not writing a pack (would regress vs. auto-inference)", None
     if not ev.compile_units:
-        return "aquery produced zero compile units -- not writing a pack (would regress vs. auto-inference)"
+        return "aquery produced zero compile units -- not writing a pack (would regress vs. auto-inference)", None
 
     pack = BuildSourcePack.empty(output_dir)
     pack.build_evidence = ev
     pack.write()
+
+    # `Target.id` is `"target://<label>"` (BazelAdapter's own convention --
+    # see abicheck/buildsource/build_evidence.py:Target); a requested root
+    # label like `//:math` therefore resolves as `target://` + that label.
+    requested_ids = {f"target://{label}" for label in root_targets}
+    resolved_root_ids = {t.id for t in ev.targets if t.id in requested_ids}
+    summary = {
+        "root_targets_requested": sorted(root_targets),
+        "root_targets_resolved": sorted(t.split("target://", 1)[-1] for t in resolved_root_ids),
+        "resolved_target_count": len(ev.targets),
+        "transitive_target_count": len(ev.targets) - len(resolved_root_ids),
+        "compile_unit_count": len(ev.compile_units),
+        "link_unit_count": len(ev.link_units),
+    }
+    if root_targets and len(resolved_root_ids) < len(requested_ids):
+        # CodeRabbit: the two ternary branches computed the same thing --
+        # when resolved_root_ids is empty, every label trivially satisfies
+        # "not in {}", so the comprehension alone already covers both cases.
+        summary["root_targets_unresolved"] = sorted(
+            label for label in root_targets if f"target://{label}" not in resolved_root_ids
+        )
+
     print(
-        f"build_bazel_evidence_pack: wrote {len(ev.targets)} target(s), "
+        f"build_bazel_evidence_pack: wrote {len(ev.targets)} target(s) "
+        f"({len(resolved_root_ids)} requested root, "
+        f"{summary['transitive_target_count']} transitive), "
         f"{len(ev.compile_units)} compile unit(s), {len(ev.link_units)} "
         f"link unit(s) to {output_dir}"
     )
-    return None
+    return None, summary
 
 
 def main():
@@ -100,12 +135,27 @@ def main():
                          help="Bazel workspace root (anchors relative source/output paths)")
     parser.add_argument("--output", required=True, type=Path,
                          help="Directory to write the BuildSourcePack to")
+    parser.add_argument(
+        "--root-target", action="append", default=[], dest="root_targets",
+        help="Bazel label actually requested for scanning (e.g. //:math); "
+             "repeatable. Used only to separate 'requested root target(s)' "
+             "from the transitive closure cquery also resolves -- never "
+             "changes which targets get collected.",
+    )
+    parser.add_argument(
+        "--summary-output", type=Path, default=None,
+        help="Optional path to write the root/transitive target-count summary as JSON",
+    )
     args = parser.parse_args()
 
-    error = build_pack(args.cquery, args.aquery, args.workspace, args.output)
+    error, summary = build_pack(
+        args.cquery, args.aquery, args.workspace, args.output, root_targets=args.root_targets
+    )
     if error:
         print(f"build_bazel_evidence_pack: {error}", file=sys.stderr)
         return 1
+    if args.summary_output is not None:
+        args.summary_output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return 0
 
 

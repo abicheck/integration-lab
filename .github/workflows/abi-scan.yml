@@ -162,7 +162,9 @@ jobs:
             --cquery "$RUNNER_TEMP/bazel-cquery.json" \
             --aquery "$RUNNER_TEMP/bazel-aquery.json" \
             --workspace "$(pwd)" \
-            --output "$RUNNER_TEMP/bazel-evidence-pack"
+            --output "$RUNNER_TEMP/bazel-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
       # Single canonical analysis: this one scan is the gate, the source
@@ -250,14 +252,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      # Supplementary, explicitly non-gating binary/header-only diff for
-      # humans who want a detailed side-by-side. It is deliberately NOT
-      # posted as a PR comment (pr-comment: false) and NEVER gates
-      # (fail-on-breaking/fail-on-api-break: false) — it must not be
-      # mistaken for the canonical report above, which is why it isn't
-      # given the sticky-comment channel at all, only an artifact.
-      - name: Binary/header-only diagnostic (non-gating, artifact only)
-        id: diagnostic
+      # Three supplementary, explicitly non-gating profile diagnostics --
+      # each pins one axis of the L2/L4 header-frontend x evidence-depth
+      # matrix this repo's own architecture review asked for (l2-castxml,
+      # l2-clang, l4-clang-replay). None is posted as a PR comment
+      # (pr-comment: false) and none ever gates (fail-on-breaking/
+      # fail-on-api-break: false) — the ONE canonical sticky comment stays
+      # the required-gate scan's alone, so these can't be mistaken for it
+      # or multiply comment sprawl. `add-job-summary: true` on each still
+      # surfaces them for a human reading the run, just not as a comment.
+      #
+      # l2-castxml: binary + header-only depth, CastXML frontend (abicheck's
+      # own documented L2 default -- AGENTS.md: "dumper_castxml.py ...
+      # default L2 header backend"). This is what the single prior
+      # "diagnostic" step already ran implicitly; now explicit and named.
+      - name: L2 diagnostic · CastXML frontend (non-gating, artifact only)
+        id: l2_castxml
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
@@ -266,19 +276,96 @@ jobs:
           old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
+          ast-frontend: castxml
           format: json
-          output-file: abicheck-diagnostic-compare.json
+          output-file: abicheck-l2-castxml.json
           fail-on-breaking: false
           fail-on-api-break: false
-          add-job-summary: false
+          add-job-summary: true
           pr-comment: false
 
-      - name: Upload diagnostic compare artifact
+      - name: Upload l2-castxml artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: abicheck-diagnostic-compare
-          path: abicheck-diagnostic-compare.json
+          name: abicheck-l2-castxml
+          path: abicheck-l2-castxml.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # l2-clang: same binary + header-only depth, direct-Clang frontend
+      # instead. Compares the SAME committed (CastXML-produced) baseline
+      # against a Clang-reparsed candidate -- deliberately: this is exactly
+      # the producer-conformance signal the review asked for (do the two
+      # header backends agree on this library's public surface?), not a
+      # same-backend release check. A NOT_COMPARABLE/mismatched result here
+      # is itself informative, not a bug in this step.
+      - name: L2 diagnostic · Clang frontend (non-gating, artifact only)
+        id: l2_clang
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          format: json
+          output-file: abicheck-l2-clang.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload l2-clang artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-l2-clang
+          path: abicheck-l2-clang.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # l4-clang-replay: same shape as the required-gate scan above
+      # (depth: source, --sources . replay producer, same committed
+      # baseline and Bazel evidence pack) but with the Clang header
+      # frontend forced explicitly and never gating. The required gate
+      # above leaves --ast-frontend on abicheck's own default (CastXML);
+      # this profile is the l4-clang-replay leg of the same matrix,
+      # exercised as its own non-blocking check-target-shaped leg since
+      # abicheck's run-plan inputs don't yet support per-cell frontend
+      # overrides in one matrix (see this repo's own architecture notes).
+      - name: L4 diagnostic · Clang replay (non-gating, artifact only)
+        id: l4_clang_replay
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          sources: .
+          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          ast-frontend: clang
+          extra-args: '--public-header-dir include'
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          budget: 10m
+          format: json
+          output-file: abicheck-l4-clang-replay.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload l4-clang-replay artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-l4-clang-replay
+          path: abicheck-l4-clang-replay.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -296,7 +383,8 @@ jobs:
             --requested-depth source \
             --run-url "$RUN_URL" \
             --coverage-contract "$RUNNER_TEMP/coverage-contract.json" \
-            --artifact-note "A non-gating binary/header-only diagnostic is available in the \`abicheck-diagnostic-compare\` workflow artifact."
+            --bazel-evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json" \
+            --artifact-note "Three non-gating profile diagnostics (L2 · CastXML, L2 · Clang, L4 · Clang replay) are available as \`abicheck-l2-castxml\`/\`abicheck-l2-clang\`/\`abicheck-l4-clang-replay\` workflow artifacts and in this run's job summary."
 
       # Best-effort only: on a fork PR (or a similarly restricted
       # Dependabot PR), GitHub downgrades GITHUB_TOKEN to read-only
@@ -367,6 +455,267 @@ jobs:
           fi
           exit 1
 
+  # l4-clang-plugin: the fourth leg of the L2/L4 profile matrix -- the
+  # zero-extra-parse Clang plugin producer (ADR-038 Plugin injection,
+  # `contrib/abicheck-clang-plugin` in abicheck/abicheck), instead of the
+  # portable replay producer the required gate and l4-clang-replay above
+  # use. Deliberately a fully separate, best-effort, never-blocking job:
+  # abicheck's own docs are explicit that this producer is "optional
+  # optimization... never a required gate in the main abicheck CI" and
+  # ABI-locked to the loading Clang's exact LLVM major -- so a
+  # dev-package/version mismatch on the runner is an *expected*, not
+  # exceptional, outcome here, not a bug in this workflow. Every step is
+  # continue-on-error and the final summary step (always()) reports
+  # whichever stage first failed instead of ever failing the job --
+  # matching the review's own "skip gracefully" design for this profile.
+  l4_clang_plugin:
+    runs-on: ubuntu-24.04
+    # CodeRabbit: every step here is continue-on-error, so a hung apt-get/
+    # cmake/bazel step (network stall, an infinite compile) would never
+    # fail the job on its own -- it would just hold a runner until the
+    # default 6-hour limit, on every ABI-relevant PR.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve trusted baseline from PR base SHA
+        if: steps.relevance.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      # Deliberately NO disk-cache step for this job, unlike scan/canary
+      # above (Codex review). This job's whole point is a SIDE EFFECT of
+      # compiling (the plugin's source_facts/*.jsonl output) that Bazel
+      # itself has no idea exists -- it's not a declared action output.
+      # Bazel's own remote/disk caching contract (bazel.build/remote/caching)
+      # is "a cache hit downloads the action's declared outputs instead of
+      # executing the action" -- so a disk-cache hit on this exact compile
+      # action (identical copts/toolchain, which every run of this job
+      # after the first one restoring a shared/prior cache entry would be)
+      # skips invoking clang (and therefore the plugin) entirely, leaving
+      # the freshly emptied abicheck_inputs/ directory empty while the
+      # build itself still reports success -- silently degrading this
+      # profile to an ordinary binary/header comparison with no visible
+      # sign anything was wrong. Never consulting a disk cache for this one
+      # build is the fix; the verify step below is the second layer (fail
+      # closed even if some other caching path -- a future flag, a runner
+      # image default -- reintroduces the same risk).
+      # Ubuntu 24.04's default `clang`/`clang++` is LLVM 18 (confirmed by
+      # this workflow's own install-deps.sh log output elsewhere in this
+      # repo) -- the matching dev packages per contrib/abicheck-clang-plugin's
+      # own README build recipe. continue-on-error: an apt mirror hiccup or
+      # a runner image LLVM-version bump both degrade to "plugin unavailable
+      # this run", never a failure.
+      - name: Install Clang/LLVM dev packages for the plugin build
+        id: install_plugin_deps
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 llvm-18-dev libclang-18-dev cmake
+
+      # Sparse-checkout just the plugin source at the same pinned abicheck
+      # commit the rest of this workflow uses (d28c0bf...), so the plugin's
+      # reference recipe (clang.py's source-fact shape) matches the
+      # abicheck version actually ingesting its output later.
+      # Codex review: `git clone --depth 1` shallow-clones the remote's
+      # *current HEAD* only -- the pinned commit this workflow targets
+      # (d28c0bf..., the v0.5.0 tag) is an OLDER commit than abicheck/main's
+      # current HEAD, so that historical commit object was never fetched at
+      # all and `git checkout d28c0bf...` failed with "reference is not a
+      # tree" on every run (silently, since this whole job is best-effort).
+      # Fixed by fetching that pinned ref directly (`git fetch --depth 1
+      # origin <ref>`) instead of shallow-cloning HEAD and hoping an
+      # arbitrary older commit is still reachable from it.
+      - name: Fetch abicheck-clang-plugin source
+        id: fetch_plugin_source
+        if: steps.install_plugin_deps.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/abicheck-src"
+          cd "$RUNNER_TEMP/abicheck-src"
+          git remote add origin https://github.com/abicheck/abicheck.git
+          git fetch --depth 1 origin d28c0bf28796b3c6daca9584ad6dd44b54f044f7
+          git sparse-checkout set --no-cone contrib/abicheck-clang-plugin
+          git checkout FETCH_HEAD
+
+      - name: Build the Clang plugin
+        id: build_plugin
+        if: steps.fetch_plugin_source.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/abicheck-src/contrib/abicheck-clang-plugin"
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$(llvm-config-18 --cmakedir)/.."
+          cmake --build build
+          echo "plugin_so=$RUNNER_TEMP/abicheck-src/contrib/abicheck-clang-plugin/build/libabicheck-facts.so" >> "$GITHUB_OUTPUT"
+
+      # ADR-038's own recipe: each -Xclang token as a separate Bazel
+      # --copt, an absolute out= so the //:math target's single compile
+      # action converges on one pack dir. public-roots= scopes the public
+      # surface to this repo's own include/ tree, mirroring
+      # --public-header-dir include used elsewhere in this workflow.
+      #
+      # Codex review: with CC unset, Bazel's autoconfigured Unix cc toolchain
+      # falls back to the runner's default gcc, and --copt just forwards
+      # these flags to WHICHEVER compiler that autoconfig picked -- gcc
+      # rejects -Xclang outright, so without this the whole plugin leg
+      # silently never actually built with the plugin at all. CC (and CXX,
+      # for the C++ compile this target actually needs) select Clang before
+      # Bazel's toolchain autoconfiguration runs for this job's one-and-only
+      # `bazel build` invocation.
+      - name: Build //:math with the plugin injected (source-fact collection)
+        id: plugin_build
+        if: steps.build_plugin.outcome == 'success'
+        continue-on-error: true
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/abicheck_inputs"
+          mkdir -p "$RUNNER_TEMP/abicheck_inputs"
+          bazel build //:math \
+            --copt="-fplugin=${{ steps.build_plugin.outputs.plugin_so }}" \
+            --copt=-Xclang --copt=-plugin-arg-abicheck-facts --copt=-Xclang \
+            --copt="out=$RUNNER_TEMP/abicheck_inputs" \
+            --copt=-Xclang --copt=-plugin-arg-abicheck-facts --copt=-Xclang \
+            --copt="public-roots=$(pwd)/include"
+          echo "inputs_dir=$RUNNER_TEMP/abicheck_inputs" >> "$GITHUB_OUTPUT"
+
+      # Codex review, second layer: even with no disk cache consulted
+      # above, verify the plugin's side-effect output actually landed
+      # rather than trusting a clean `bazel build` exit alone -- a clean
+      # exit only proves the ACTION succeeded, not that the plugin (a
+      # side effect Bazel has no declared-output visibility into) ran and
+      # wrote anything. Fails this step (continue-on-error keeps the job
+      # non-blocking; the status-summary step reports it distinctly from
+      # "build failed") rather than silently handing an empty/missing
+      # facts directory to the compare step below, which would otherwise
+      # degrade to an ordinary binary/header comparison while reporting
+      # success.
+      - name: Verify source facts were actually collected
+        id: verify_facts
+        if: steps.plugin_build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          facts_dir="${{ steps.plugin_build.outputs.inputs_dir }}/source_facts"
+          count=$(find "$facts_dir" -name '*.jsonl' -size +0c 2>/dev/null | wc -l)
+          echo "Found $count non-empty source_facts/*.jsonl file(s) in $facts_dir"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::No source facts were collected -- the plugin build" \
+                 "reported success but wrote nothing (see the job comment on" \
+                 "this step for why this is checked explicitly)." >&2
+            exit 1
+          fi
+
+      - name: Install abicheck (for dump/compare)
+        id: install_abicheck
+        if: steps.verify_facts.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      # Codex review: --ast-frontend clang added -- without it, the header
+      # side of this compare silently used abicheck's CastXML default,
+      # so an "l4-clang-plugin" artifact was actually combining Clang-
+      # collected source facts with a CastXML header parse, unable to
+      # expose any Clang-header-specific divergence the l2-clang/
+      # l4-clang-replay cells above are specifically there to catch.
+      #
+      # Codex review: the bare CLI's own documented behavior (same as
+      # scripts/run_scenario.py's run_abicheck_compare) is to exit nonzero
+      # on a gated BREAKING/API_BREAK verdict -- that's a successfully
+      # PRODUCED report, not a tool failure. Under `set -e` that nonzero
+      # exit would abort the step and (via continue-on-error) mark this
+      # step's own `outcome` as `failure`, which the status-summary step
+      # below reads as "abicheck compare step failed" -- exactly backwards
+      # for the one case (a real detected incompatibility) this profile
+      # exists to surface. `|| true` keeps the step's outcome tied to
+      # whether a readable report file was actually written, not to
+      # abicheck's gate-encoding exit code.
+      - name: Compare candidate (plugin-collected facts) against committed baseline
+        id: l4_clang_plugin_compare
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          abicheck compare \
+            "$RUNNER_TEMP/math.base.abicheck.json" \
+            bazel-bin/libmath.so \
+            --header new=include/abicheck_lab/math.h \
+            --ast-frontend clang \
+            --build-info "${{ steps.plugin_build.outputs.inputs_dir }}" \
+            --format json \
+            -o abicheck-l4-clang-plugin.json \
+            --policy strict_abi || true
+          test -s abicheck-l4-clang-plugin.json
+
+      - name: Upload l4-clang-plugin artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-l4-clang-plugin
+          path: abicheck-l4-clang-plugin.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Never fails the job (no `if:` gating on outcome, unconditional
+      # exit 0) -- reports whichever stage first didn't succeed, since
+      # each upstream step's continue-on-error means a failure two stages
+      # back otherwise reads identically to "everything skipped cleanly".
+      - name: Report l4-clang-plugin profile status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### L4 · Clang plugin profile (best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.install_plugin_deps.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install matching clang-18/llvm-18-dev/libclang-18-dev packages on this runner.'
+            elif [ "${{ steps.fetch_plugin_source.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not fetch contrib/abicheck-clang-plugin source from abicheck/abicheck.'
+            elif [ "${{ steps.build_plugin.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: plugin failed to build against this runner'"'"'s LLVM/Clang -- likely a version mismatch (this profile is ABI-locked to the loading Clang'"'"'s exact LLVM major per abicheck'"'"'s own docs).'
+            elif [ "${{ steps.plugin_build.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: Bazel build with the plugin injected via --copt failed.'
+            elif [ "${{ steps.verify_facts.outcome }}" != "success" ]; then
+              echo '⚠️ Bazel build succeeded but no source facts were actually collected -- likely a cached compile action serving stale outputs without re-running the plugin (Codex review; see the verify step'"'"'s own comment for why this is checked).'
+            elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install abicheck to consume the collected facts.'
+            elif [ "${{ steps.l4_clang_plugin_compare.outcome }}" != "success" ]; then
+              echo '⚠️ Plugin build and fact collection succeeded, but the abicheck compare step failed -- see the job log above.'
+            else
+              echo '✅ Ran successfully -- see the `abicheck-l4-clang-plugin` artifact for the report.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Non-blocking canary: the same scan, pinned to an exact commit on
   # abicheck/main instead of the last release, so this PR shows what the
   # *next* abicheck release will do before it ships. Never gates (the
@@ -381,6 +730,29 @@ jobs:
   # binary depth delivered, but still reported COMPATIBLE" gap called out
   # against the stable lane. Update the pinned SHA periodically; do not
   # float this to @main.
+  #
+  # Native scan-mode PR comment (checked against abicheck/main@400f634e,
+  # this pin's own commit, via action/run.sh's `_maybe_post_pr_comment`):
+  # `case "$MODE" in compare | scan) ;;` now covers `scan` too, so setting
+  # `pr-comment: true` here would work. Deliberately still `pr-comment:
+  # false`, not yet flipped: abicheck's own sticky-comment renderer uses a
+  # single FIXED marker (`<!-- abicheck-sticky-report -->`, action/run.sh)
+  # with no per-workflow/per-job label, so turning this on today would post
+  # a second, unlabeled sticky comment on every PR with no way to tell it
+  # apart from the canonical stable-lane comment above at a glance — the
+  # exact "two stale comments" failure mode this repo's own architecture
+  # review calls out avoiding. The intended migration is the other
+  # direction: once the *stable* lane itself pins to a released abicheck
+  # with native scan-comment support, retire scripts/render_scan_comment.py
+  # entirely and let the stable gate's own `scan` step post natively —
+  # consolidating to one comment, not adding a second one now. Flip this
+  # canary pr-comment on ahead of that migration only if you also add a
+  # canary-specific marker/prefix (not available in abicheck's action as of
+  # this pin) so the two can't be confused.
+  #
+  # Pinned SHA refresh policy: point this at a real abicheck/main commit
+  # (not a placeholder) each time it's updated, and verify against that
+  # exact commit's action/run.sh before changing the pr-comment note above.
   canary:
     runs-on: ubuntu-24.04
     steps:
@@ -454,7 +826,7 @@ jobs:
         id: canary_scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@e5fabd40357f36a946b572948866f34f6c9f0575 # main (pin updated manually — see comment above)
+        uses: abicheck/abicheck@400f634e7e81e4448bcaa88ce05143c11185801d # main (pin updated manually — see comment above)
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -498,5 +870,5 @@ jobs:
           {
             echo "### Canary lane (non-blocking)"
             echo
-            echo "Ran against \`abicheck/main@e5fabd40357f36a946b572948866f34f6c9f0575\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
+            echo "Ran against \`abicheck/main@400f634e7e81e4448bcaa88ce05143c11185801d\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
           } >> "$GITHUB_STEP_SUMMARY"

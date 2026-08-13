@@ -25,6 +25,18 @@ The one addition to that principle: `--coverage-contract`, the result of
 its own clearly-labeled section, never merged into or silently overriding
 abicheck's own verdict line above it -- both facts stay visible and
 attributed to the analysis that produced them.
+
+Findings: `scan --against`'s `diff` block (`cli_scan_baseline._run_baseline_compare`'s
+`summary`) carries the actual per-symbol findings behind the verdict --
+`diff.findings` (breaking/api_break/risk/not_evaluated, each a dict with
+`kind`/`symbol`/`description`/`source_location`), plus the always-on
+`diff.additions`/`diff.quality` (compatible-but-itemized surface changes)
+and `diff.suppressed`/`diff.suppressed_count`. Before this, the comment
+only ever showed the aggregate verdict (e.g. `COMPATIBLE_WITH_RISK`) with
+no way to tell *what* was found -- a coverage-complete PR could read as
+"something is risky" with zero indication of what, where, or why. This
+renders the same findings the full JSON report already carries, not a
+new analysis.
 """
 import argparse
 import json
@@ -42,6 +54,200 @@ _VERDICT_LINES = {
     "BUDGET_OVERFLOW": "⏱️ **BUDGET_OVERFLOW** — the scan exceeded its configured budget.",
     "ERROR": "🛑 **ERROR** — abicheck encountered an error.",
 }
+
+
+_BUCKET_LABELS = {
+    "breaking": "🛑 Breaking (binary ABI)",
+    "api_break": "🛑 API break (source)",
+    "risk": "⚠️ Risk",
+    "compatible": "✅ Compatible (gating cause only, if any)",
+    "not_evaluated": "➖ Not evaluated (contract-excluded)",
+}
+
+#: Cap on how many individual findings this renders per section -- the full
+#: list always still lives in the abicheck-report artifact; this comment is
+#: a summary, not a mirror of the JSON (matches diff.findings_truncated's
+#: own cap philosophy, just applied a second time for comment brevity).
+_MAX_RENDERED_FINDINGS = 15
+
+
+def _finding_line(entry):
+    kind = entry.get("kind") or "?"
+    symbol = entry.get("symbol") or "?"
+    description = entry.get("description")
+    loc = entry.get("source_location")
+    line = f"- `{kind}` — `{symbol}`"
+    if description:
+        line += f" — {description}"
+    if loc:
+        line += f" ({loc})"
+    return line
+
+
+def _render_findings(diff):
+    """Render the actual per-symbol findings behind ``diff``'s bucket counts.
+
+    ``diff`` is ``report.get("diff")`` -- the ``scan --against`` summary
+    dict (see this module's own docstring for the exact schema). ``None``
+    or empty when the scan never ran a baseline compare (no ``--against``,
+    or a hard error before the compare stage) -- in that case this renders
+    nothing, same as before this function existed.
+    """
+    if not diff or not isinstance(diff, dict):
+        return []
+
+    lines = ["---", "", "### Findings", ""]
+
+    # Codex review: `not_evaluated` (ADR-049 contract-excluded findings,
+    # `cli_scan_baseline`'s summary) is a real bucket `_BUCKET_LABELS`
+    # already has a label for -- omitting it here silently hid it from the
+    # aggregate table, and if those entries also fell past the 15-item
+    # display cap below, the comment gave no sign they existed at all.
+    counts = {
+        bucket: diff.get(bucket)
+        for bucket in ("breaking", "api_break", "risk", "compatible", "not_evaluated")
+        if diff.get(bucket) is not None
+    }
+    if counts:
+        lines.append("| Bucket | Count |")
+        lines.append("|--------|------:|")
+        for bucket, count in counts.items():
+            label = _BUCKET_LABELS.get(bucket, bucket)
+            lines.append(f"| {label} | {count} |")
+        lines.append("")
+
+    findings = diff.get("findings") or []
+    if findings:
+        shown, rest = findings[:_MAX_RENDERED_FINDINGS], findings[_MAX_RENDERED_FINDINGS:]
+        for entry in shown:
+            lines.append(_finding_line(entry))
+        # Two independent truncation points, reported separately (Codex
+        # review): `rest` is only what THIS renderer additionally cut, on
+        # top of whatever abicheck's own `scan --against` summary already
+        # capped `diff.findings` to upstream (`findings_truncated` +
+        # `findings_truncated_kinds`, a kind -> cut-count map -- see
+        # `cli_scan_baseline._baseline_finding_dicts`'s docstring). If the
+        # upstream cap and this renderer's cap happen to coincide (e.g.
+        # both discard nothing further because the report already has
+        # exactly `_MAX_RENDERED_FINDINGS` entries), `rest` is empty but
+        # `findings_truncated` can still be true -- collapsing the two
+        # into one count would silently understate (or, before this fix,
+        # completely hide as "+0 more") what abicheck itself already
+        # discarded before this script ever saw the report.
+        if rest:
+            lines.append(
+                f"- _(+{len(rest)} more finding(s) not shown here (this comment's "
+                "own display cap) -- see the full abicheck-report artifact.)_"
+            )
+        if diff.get("findings_truncated"):
+            cut_kinds = diff.get("findings_truncated_kinds") or {}
+            cut_total = sum(cut_kinds.values()) if isinstance(cut_kinds, dict) else None
+            detail = f" ({cut_total} finding(s) by kind: {cut_kinds})" if cut_kinds else ""
+            lines.append(
+                "- _(abicheck's own report already truncated `diff.findings` "
+                f"before this comment was rendered{detail} -- the full, "
+                "untruncated set is not available in this report; re-run with "
+                "a higher `--max-findings` for the complete list.)_"
+            )
+        lines.append("")
+    elif counts and any(counts.get(b) for b in ("breaking", "api_break", "risk")):
+        # A gating bucket has a non-zero count but `findings` is empty or
+        # missing -- an older abicheck version (pre-finding-itemization) or
+        # a schema this script hasn't been updated for. Say so explicitly
+        # rather than silently showing an empty Findings section under a
+        # non-zero count, which reads as "nothing to see" when the report
+        # actually says otherwise.
+        lines.append(
+            "_A gating bucket above is non-zero but this report's `diff` block "
+            "carries no itemized `findings` list -- see the full abicheck-report "
+            "artifact for the underlying changes._"
+        )
+        lines.append("")
+
+    additions = diff.get("additions") or []
+    quality = diff.get("quality") or []
+    if additions or quality:
+        lines.append("<details>")
+        lines.append(
+            f"<summary>Compatible surface changes ({len(additions)} addition(s), "
+            f"{len(quality)} other compatible/quality change(s))</summary>"
+        )
+        lines.append("")
+        for entry in additions[:_MAX_RENDERED_FINDINGS]:
+            lines.append(_finding_line(entry))
+        for entry in quality[:_MAX_RENDERED_FINDINGS]:
+            lines.append(_finding_line(entry))
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    suppressed = diff.get("suppressed") or []
+    suppressed_count = diff.get("suppressed_count") or len(suppressed)
+    if suppressed_count:
+        lines.append(
+            f"ℹ️ **{suppressed_count} finding(s) were suppressed** by an approved "
+            "`--suppress` rule and excluded from the buckets above."
+        )
+        if suppressed:
+            lines.append("")
+            lines.append("<details>")
+            lines.append("<summary>Suppressed findings</summary>")
+            lines.append("")
+            for entry in suppressed[:_MAX_RENDERED_FINDINGS]:
+                # CodeRabbit: `bucket` is the whole reason this section
+                # exists ("suppressed" alone doesn't say whether this was a
+                # suppressed BREAKING finding or a suppressed cosmetic RISK
+                # one) -- render it, not just capture it unused.
+                pre = entry.get("bucket")
+                rule = entry.get("suppression_rule")
+                pre_label = f" [was: `{pre}`]" if pre else ""
+                extra = f" (rule: `{rule}`)" if rule else ""
+                lines.append(_finding_line(entry) + pre_label + extra)
+            lines.append("")
+            lines.append("</details>")
+        lines.append("")
+
+    if not findings and not additions and not quality and not suppressed_count and not counts:
+        lines.append("_No `diff` findings data in this report (no baseline compare ran)._")
+        lines.append("")
+
+    return lines
+
+
+def _render_bazel_evidence_summary(summary):
+    """Render `build_bazel_evidence_pack.py --summary-output`'s counts.
+
+    Distinguishes the requested root target(s) from the full transitive
+    closure `cquery deps(...)` resolves -- without this, a report like
+    `bazel_targets=32` for a workspace scanning one two-file library reads
+    as if 32 *products* were scanned, when it's really 1 root target plus
+    31 dependency-closure nodes cquery had to walk to reach it.
+    """
+    if not summary:
+        return []
+    lines = ["---", "", "### Bazel target resolution", ""]
+    requested = summary.get("root_targets_requested") or []
+    resolved = summary.get("root_targets_resolved") or []
+    unresolved = summary.get("root_targets_unresolved") or []
+    lines.append("| Fact | Value |")
+    lines.append("|------|-------|")
+    lines.append(f"| Requested root target(s) | {', '.join(f'`{t}`' for t in requested) or '_none given_'} |")
+    lines.append(f"| Resolved root target(s) | {', '.join(f'`{t}`' for t in resolved) or '_none_'} |")
+    # CodeRabbit: without the total, a reader can't connect this section
+    # to a raw report showing e.g. `bazel_targets=32` -- that confusion is
+    # exactly what this whole section exists to resolve.
+    lines.append(f"| Total resolved targets | {summary.get('resolved_target_count', '?')} |")
+    lines.append(f"| Transitive targets (dependency closure) | {summary.get('transitive_target_count', '?')} |")
+    lines.append(f"| Compile units | {summary.get('compile_unit_count', '?')} |")
+    lines.append(f"| Link units | {summary.get('link_unit_count', '?')} |")
+    lines.append("")
+    if unresolved:
+        lines.append(
+            f"> ⚠️ {len(unresolved)} requested root target(s) did not resolve in "
+            f"`cquery`'s output: {', '.join(f'`{t}`' for t in unresolved)}."
+        )
+        lines.append("")
+    return lines
 
 
 def _render_coverage_contract(contract):
@@ -91,7 +297,17 @@ def _render_coverage_contract(contract):
     return lines
 
 
-def render(report, *, base_sha, head_sha, requested_depth, run_url, artifact_note, coverage_contract=None):
+def render(
+    report,
+    *,
+    base_sha,
+    head_sha,
+    requested_depth,
+    run_url,
+    artifact_note,
+    coverage_contract=None,
+    bazel_evidence_summary=None,
+):
     verdict = report.get("verdict", "UNKNOWN")
     exit_code = report.get("exit_code")
     level = report.get("level", {}) or {}
@@ -131,6 +347,8 @@ def render(report, *, base_sha, head_sha, requested_depth, run_url, artifact_not
         lines.append("</details>")
         lines.append("")
 
+    lines.extend(_render_findings(report.get("diff")))
+    lines.extend(_render_bazel_evidence_summary(bazel_evidence_summary))
     lines.extend(_render_coverage_contract(coverage_contract))
 
     if run_url:
@@ -159,6 +377,10 @@ def main():
     parser.add_argument(
         "--coverage-contract", default="",
         help="Path to scripts/check_coverage_contract.py's output JSON (optional)",
+    )
+    parser.add_argument(
+        "--bazel-evidence-summary", default="",
+        help="Path to scripts/build_bazel_evidence_pack.py's --summary-output JSON (optional)",
     )
     args = parser.parse_args()
 
@@ -192,6 +414,23 @@ def main():
                 "facts": {},
             }
 
+    bazel_evidence_summary = None
+    if args.bazel_evidence_summary:
+        try:
+            with open(args.bazel_evidence_summary, "r", encoding="utf-8") as fh:
+                bazel_evidence_summary = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            # CodeRabbit: OSError (not just FileNotFoundError) also covers
+            # a permission error or a path that's a directory -- this
+            # section's whole contract is "best-effort only, unlike
+            # --coverage-contract" (see below), so any read failure should
+            # omit it, not abort the whole comment render.
+            # Best-effort only, unlike --coverage-contract: this section is
+            # purely informational (never gates), so a missing/unreadable
+            # summary (e.g. the Bazel evidence-pack step didn't run) just
+            # means the section is omitted, same as never passing the flag.
+            bazel_evidence_summary = None
+
     if report is None:
         body = (
             f"{MARKER}\n## ABICheck source scan\n\n"
@@ -209,6 +448,7 @@ def main():
             run_url=args.run_url,
             artifact_note=args.artifact_note,
             coverage_contract=coverage_contract,
+            bazel_evidence_summary=bazel_evidence_summary,
         )
 
     with open(args.output, "w", encoding="utf-8") as fh:

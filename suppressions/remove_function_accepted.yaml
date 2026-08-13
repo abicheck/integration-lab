@@ -1,0 +1,19 @@
+--- # scenarios/manifest.yaml's remove_function_suppressed scenario oracle.
+#
+# Suppresses exactly the one symbol fixtures/remove_function/{v1,v2} removes
+# (scenario::removed_function(int)) -- an exact-symbol selector, not a broad
+# namespace/pattern one, so no allow_public_break is needed (AGENTS.md's own
+# suppression guidance: a narrow, exact-symbol rule is already an explicit,
+# audited decision; a broad rule silently hiding a public break is the case
+# that flag exists to gate, not this one).
+version: 1
+suppressions:
+  - symbol: _ZN8scenario16removed_functionEi
+    change_kind: func_removed
+    label: accepted-removal-demo
+    reason: >
+      Demo suppression for the suppression/reclassify scenario matrix --
+      this scenario proves a known, approved breaking finding stops gating
+      while remaining visible in the report's suppressed-findings audit
+      trail (suppressed_count), rather than the underlying ABI break simply
+      going undetected.

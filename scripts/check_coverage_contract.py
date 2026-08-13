@@ -121,11 +121,31 @@ _BUILD_AFFECTING_PATTERNS = (
 )
 
 
+# Codex review (P1), fresh evidence: without this, a PR mixing a fixture
+# change with a genuinely relevant path (e.g. this file, or
+# .github/workflows/abi-scan.yml itself -- exactly the shape of commits
+# this repo's own architecture-review PR made throughout) would still see
+# its fixtures/*.cc paths classified as build-affecting here, denying the
+# empty-scope exemption on any future diff where scope=changed's replay
+# selection legitimately resolves to 0 TUs (nothing in //:math's own
+# source changed). Same exclusion, same reasoning, as
+# scripts/paths_changed.py's EXCLUDED_PREFIXES -- duplicated rather than
+# imported, matching this pair of scripts' existing convention of keeping
+# their pattern lists as independent, doc-linked supersets rather than a
+# shared module (see this file's own docstring on that invariant).
+_EXCLUDED_PREFIXES = (
+    "fixtures/",
+    "scenarios/",
+    "suppressions/",
+)
+
+
 def _is_build_affecting(changed_files):
     import fnmatch
     return any(
         fnmatch.fnmatch(path, pattern)
         for path in changed_files
+        if not any(path.startswith(prefix) for prefix in _EXCLUDED_PREFIXES)
         for pattern in _BUILD_AFFECTING_PATTERNS
     )
 
