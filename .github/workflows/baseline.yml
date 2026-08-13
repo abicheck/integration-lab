@@ -54,6 +54,22 @@ jobs:
           python3 scripts/normalize_baseline.py \
             "$RUNNER_TEMP/math.raw.abicheck.json" \
             abi/math.abicheck.json
+      # This is a direct push straight to main -- by design (see
+      # .github/CODEOWNERS: "baseline.yml's bot-authored refresh commits are
+      # the only unreviewed path this file can change through"). But a
+      # standard "require a pull request before merging" branch protection
+      # rule on main -- the exact rule CODEOWNERS review depends on to have
+      # any teeth -- blocks *all* direct pushes, including this one, for
+      # anyone without an explicit bypass (Codex review). Enabling that
+      # protection without also granting this workflow's actor a bypass (a
+      # repository ruleset's "bypass list", scoped to the github-actions
+      # app or a dedicated bot identity) doesn't make baseline refreshes
+      # reviewed -- it makes them fail outright, silently leaving
+      # abi/math.abicheck.json stale while every later PR keeps comparing
+      # against an old baseline. This is an operational prerequisite that
+      # has to be configured in GitHub's branch protection UI/API, not
+      # something this script or workflow can satisfy on its own; tracked
+      # in README.md alongside the rest of the CODEOWNERS caveats.
       - name: Commit refreshed baseline
         run: |
           git add -f abi/math.abicheck.json

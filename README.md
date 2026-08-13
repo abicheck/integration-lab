@@ -42,6 +42,19 @@ also changes the library (once branch protection requires code-owner review
 on `main` — this repo can declare that requirement, but can't turn it on for
 itself).
 
+**Operational prerequisite for whoever does turn that protection on:**
+`baseline.yml` pushes its refresh commits directly to `main` (deliberately
+unreviewed — it's built from `main`'s own already-merged source, not from a
+PR branch; see the `CODEOWNERS` comment). A standard "require a pull
+request before merging" rule — the exact setting that gives the
+`CODEOWNERS` entries above any effect — blocks *all* direct pushes to
+`main`, including this workflow's, unless its actor is explicitly added to
+the rule's bypass list (a repository ruleset scoped to the `github-actions`
+app or a dedicated bot identity). Turning on branch protection without that
+bypass doesn't make baseline refreshes reviewed; it makes them fail
+silently, leaving `abi/math.abicheck.json` stale while every later PR keeps
+comparing against an old baseline (Codex review).
+
 `since` is likewise pinned to `github.event.pull_request.base.sha` rather
 than a moving branch ref, so the analysis is reproducible even if `main`
 advances while the PR's checks are running.

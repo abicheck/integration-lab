@@ -6,6 +6,12 @@
 # needs a human to sign off, so `baseline.yml`'s bot-authored refresh
 # commits are the only unreviewed path this file can change through.
 #
+# Whoever turns this requirement on: enabling "require a pull request
+# before merging" on `main` also blocks baseline.yml's direct push unless
+# its actor has an explicit bypass -- see the comment on that workflow's
+# "Commit refreshed baseline" step and README.md's CODEOWNERS section
+# (Codex review).
+#
 # That protection covers the baseline's *output* -- but baseline.yml runs
 # with `contents: write` and can commit/push any abi/math.abicheck.json,
 # so a PR could equally bypass review by editing the *producer* instead:
