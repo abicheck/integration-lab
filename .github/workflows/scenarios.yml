@@ -1,0 +1,70 @@
+name: ABICheck scenario validation
+
+# The "validation platform" layer: independent fixture pairs (fixtures/,
+# oracle in scenarios/manifest.yaml) proving abicheck actually detects a
+# real binary/API break and correctly leaves a compatible change alone --
+# something abi-scan.yml's gate on the lab's own //:math library can never
+# prove on its own, since it only ever sees whatever that PR's diff
+# happens to be.
+on:
+  pull_request:
+    paths:
+      - 'fixtures/**'
+      - 'scenarios/**'
+      - 'scripts/run_scenario.py'
+      - '.github/workflows/scenarios.yml'
+      # Shared Bazel configuration that every fixture's build actually
+      # goes through -- a rules_cc bump, a changed -std/link flag, or a
+      # MODULE.bazel dependency change can alter or break every scenario's
+      # output without any file under fixtures/ or scenarios/ itself
+      # changing, so this workflow needs to run then too (Codex review).
+      - 'MODULE.bazel'
+      - 'MODULE.bazel.lock'
+      - '.bazelrc'
+      - '.bazelversion'
+      - 'BUILD.bazel'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: abicheck-scenarios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      # Same system deps abicheck's own action/install-deps.sh installs
+      # (castxml + gcc/g++ for L2 header AST, clang for anything source-
+      # aware) -- this workflow calls the bare `abicheck` CLI directly
+      # rather than going through the Action wrapper (it needs to loop
+      # over N scenarios in one job, not one abicheck invocation per
+      # workflow step), so it has to provision the same dependencies
+      # itself instead of getting them from the Action's own setup step.
+      - name: Install system dependencies for abicheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq castxml gcc g++ clang
+
+      - name: Install abicheck + PyYAML
+        run: |
+          pip install --quiet pyyaml
+          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      - name: Run scenarios against the manifest oracle
+        run: python3 scripts/run_scenario.py
+
+      - name: Upload scenario results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-results
+          path: scenario-results/
+          if-no-files-found: warn
+          retention-days: 30
