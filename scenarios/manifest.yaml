@@ -35,6 +35,24 @@ scenarios:
     new_header: fixtures/remove_function/v2/lib.h
     expected_verdict: BREAKING
 
+  - name: default_argument_added
+    description: >
+      v2 gives an existing parameter a default value. The mangled symbol is
+      unchanged (default arguments aren't part of Itanium mangling), so
+      this is invisible at binary/DWARF depth -- but a caller compiled
+      against v2's header can now omit the argument, while one still
+      compiled against v1's header cannot. This must read as a source-level
+      API break, not COMPATIBLE: it is a header-visible contract change
+      that a binary-only diff structurally cannot see. Regression scenario
+      for the depth-of-evidence gap AGENTS.md documents as fixed ("addition
+      of default argument now detected as API_BREAK").
+    old_target: "//fixtures/default_argument_added/v1:impl"
+    new_target: "//fixtures/default_argument_added/v2:impl"
+    old_output: bazel-bin/fixtures/default_argument_added/v1/libimpl.so
+    new_output: bazel-bin/fixtures/default_argument_added/v2/libimpl.so
+    new_header: fixtures/default_argument_added/v2/lib.h
+    expected_verdict: API_BREAK
+
   - name: change_signature
     description: >
       v2 changes an exported function's parameter type (int -> long).

@@ -162,7 +162,9 @@ jobs:
             --cquery "$RUNNER_TEMP/bazel-cquery.json" \
             --aquery "$RUNNER_TEMP/bazel-aquery.json" \
             --workspace "$(pwd)" \
-            --output "$RUNNER_TEMP/bazel-evidence-pack"
+            --output "$RUNNER_TEMP/bazel-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
       # Single canonical analysis: this one scan is the gate, the source
@@ -296,6 +298,7 @@ jobs:
             --requested-depth source \
             --run-url "$RUN_URL" \
             --coverage-contract "$RUNNER_TEMP/coverage-contract.json" \
+            --bazel-evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json" \
             --artifact-note "A non-gating binary/header-only diagnostic is available in the \`abicheck-diagnostic-compare\` workflow artifact."
 
       # Best-effort only: on a fork PR (or a similarly restricted
