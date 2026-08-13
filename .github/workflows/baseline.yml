@@ -38,6 +38,47 @@ jobs:
             bazel-disk-${{ runner.os }}-
       - name: Build shared library with Bazel
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Same evidence pipeline as abi-scan.yml's `scan` job -- see that
+      # workflow's comments for the full rationale. Without this, the
+      # baseline would keep abicheck's degraded auto-inference (0 targets,
+      # no public-header provenance) while the gating scan supplies full
+      # evidence, so a source-only API change (macro/template/inline body)
+      # a full-evidence comparison could catch would go undetected against
+      # a baseline whose old side never recorded that surface at all
+      # (Codex review). Best-effort/fail-closed: falls back to the same
+      # degraded auto-inference on any problem, exactly as before these
+      # steps existed -- never blocks a baseline refresh.
+      - name: Capture Bazel cquery/aquery for target-aware L3 evidence
+        id: bazel_queries
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//...)' \
+            > "$RUNNER_TEMP/bazel-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//...))" \
+            > "$RUNNER_TEMP/bazel-aquery.json"
+
+      - name: Install abicheck (for the Bazel evidence-pack helper script)
+        id: abicheck_pip
+        if: steps.bazel_queries.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      - name: Build combined Bazel evidence pack (targets + compile units)
+        id: bazel_pack
+        if: steps.abicheck_pip.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack"
+          echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
+
       - name: Collect source-aware ABI baseline
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -45,6 +86,8 @@ jobs:
           new-library: bazel-bin/libmath.so
           header: include/abicheck_lab/math.h
           sources: .
+          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          extra-args: '--public-header-dir include'
           depth: source
           new-version: main-${{ github.sha }}
           output-file: ${{ runner.temp }}/math.raw.abicheck.json

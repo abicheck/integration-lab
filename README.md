@@ -133,6 +133,17 @@ the workflow level**, not just gated red and documented:
   (targets-less) auto-inference on any problem, so this can only improve
   evidence, never regress it.
 
+Both fixes apply to `baseline.yml`'s `dump` too, not just the gating
+`scan` — an earlier version of this fix only wired the PR-side scan,
+leaving the *baseline*'s old side with degraded evidence (0 targets, no
+provenance) while the candidate side got full evidence. That asymmetry
+would have let a source-only API change (a macro, a template, an inline
+body) slip through: the coverage contract only asserts on the candidate's
+own evidence completeness, so it can't by itself tell you the *old* side
+was never fully captured (Codex review). `baseline.yml` now runs the same
+cquery/aquery/evidence-pack pipeline before `dump`, so both sides of every
+comparison have equivalent evidence going forward.
+
 **Export-to-source symbol matching is exempted, not enforced, when there's
 nothing to match.** `depth: source` defaults to `scope=changed` replay, so
 a PR that doesn't touch any C++ source (e.g. this repo's own gate-only
