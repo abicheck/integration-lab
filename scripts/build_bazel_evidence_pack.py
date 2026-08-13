@@ -108,10 +108,12 @@ def build_pack(cquery_path, aquery_path, workspace, output_dir, root_targets=())
         "link_unit_count": len(ev.link_units),
     }
     if root_targets and len(resolved_root_ids) < len(requested_ids):
-        missing = sorted(root_targets) if not resolved_root_ids else sorted(
+        # CodeRabbit: the two ternary branches computed the same thing --
+        # when resolved_root_ids is empty, every label trivially satisfies
+        # "not in {}", so the comprehension alone already covers both cases.
+        summary["root_targets_unresolved"] = sorted(
             label for label in root_targets if f"target://{label}" not in resolved_root_ids
         )
-        summary["root_targets_unresolved"] = missing
 
     print(
         f"build_bazel_evidence_pack: wrote {len(ev.targets)} target(s) "

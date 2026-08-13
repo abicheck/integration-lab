@@ -194,10 +194,15 @@ def _render_findings(diff):
             lines.append("<summary>Suppressed findings</summary>")
             lines.append("")
             for entry in suppressed[:_MAX_RENDERED_FINDINGS]:
+                # CodeRabbit: `bucket` is the whole reason this section
+                # exists ("suppressed" alone doesn't say whether this was a
+                # suppressed BREAKING finding or a suppressed cosmetic RISK
+                # one) -- render it, not just capture it unused.
                 pre = entry.get("bucket")
                 rule = entry.get("suppression_rule")
+                pre_label = f" [was: `{pre}`]" if pre else ""
                 extra = f" (rule: `{rule}`)" if rule else ""
-                lines.append(_finding_line(entry) + extra)
+                lines.append(_finding_line(entry) + pre_label + extra)
             lines.append("")
             lines.append("</details>")
         lines.append("")
@@ -228,6 +233,10 @@ def _render_bazel_evidence_summary(summary):
     lines.append("|------|-------|")
     lines.append(f"| Requested root target(s) | {', '.join(f'`{t}`' for t in requested) or '_none given_'} |")
     lines.append(f"| Resolved root target(s) | {', '.join(f'`{t}`' for t in resolved) or '_none_'} |")
+    # CodeRabbit: without the total, a reader can't connect this section
+    # to a raw report showing e.g. `bazel_targets=32` -- that confusion is
+    # exactly what this whole section exists to resolve.
+    lines.append(f"| Total resolved targets | {summary.get('resolved_target_count', '?')} |")
     lines.append(f"| Transitive targets (dependency closure) | {summary.get('transitive_target_count', '?')} |")
     lines.append(f"| Compile units | {summary.get('compile_unit_count', '?')} |")
     lines.append(f"| Link units | {summary.get('link_unit_count', '?')} |")
@@ -410,7 +419,12 @@ def main():
         try:
             with open(args.bazel_evidence_summary, "r", encoding="utf-8") as fh:
                 bazel_evidence_summary = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):
+            # CodeRabbit: OSError (not just FileNotFoundError) also covers
+            # a permission error or a path that's a directory -- this
+            # section's whole contract is "best-effort only, unlike
+            # --coverage-contract" (see below), so any read failure should
+            # omit it, not abort the whole comment render.
             # Best-effort only, unlike --coverage-contract: this section is
             # purely informational (never gates), so a missing/unreadable
             # summary (e.g. the Bazel evidence-pack step didn't run) just
