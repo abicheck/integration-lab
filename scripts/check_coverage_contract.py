@@ -35,8 +35,9 @@ key at all. Either way, each entry is a `{layer, status, confidence?,
 detail, elapsed_s?}` object. `L3_build`/`L4_source_abi` don't carry
 structured counts for target/symbol matching -- only free-text `detail`
 strings, e.g. `"bazel, 1 compile units, 0 targets"` and `"scope=changed,
-0/0 TUs parsed, 0/6 symbols matched, ..."`. This script regex-extracts
-those counts. That's inherently fragile against a detail-string format
+0/0 TUs parsed, 0/6 symbols matched, 3/6 accounted, 6 unmatched, ..."`.
+This script regex-extracts those counts. That's inherently fragile against
+a detail-string format
 change upstream -- documented here, not hidden: if the pattern stops
 matching, this script fails closed (treats the requirement as unmet)
 rather than silently passing, since a coverage gate that can't read its
@@ -62,6 +63,7 @@ import sys
 
 L3_BUILD_RE = re.compile(r"(\d+)\s+compile\s+units?,\s+(\d+)\s+targets?")
 L4_SYMBOLS_RE = re.compile(r"(\d+)/(\d+)\s+symbols\s+matched")
+L4_ACCOUNTED_RE = re.compile(r"(\d+)/(\d+)\s+accounted")
 L4_TUS_RE = re.compile(r"(\d+)/(\d+)\s+TUs\s+parsed")
 
 # Deliberately duplicated from scripts/paths_changed.py's own pattern list
@@ -182,6 +184,41 @@ def _extract_l4(coverage):
     if not m:
         return None, None, f"could not parse L4_source_abi detail: {entry.get('detail')!r}"
     return int(m.group(1)), int(m.group(2)), None
+
+
+def _extract_l4_accounted(coverage):
+    """Return (accounted, total) from L4_source_abi's "A/Y accounted", or (None, None).
+
+    `matched`/`total` (see `_extract_l4`) counts every exported symbol in
+    the denominator, including ones abicheck itself classifies as
+    non-public (ELF-linker artifacts like `_end`/`_edata`/`__bss_start`,
+    and hidden-visibility compiler-generated special members) -- those can
+    never be linked back to source, by construction, no matter how
+    complete the real public-API evidence is. Verified against the real
+    committed baseline (`abi/math.abicheck.json`): of 6 "exported"
+    symbols, 3 are classified non-public, capping `matched/total` at 50%
+    forever regardless of how good the public-function linkage actually
+    is (Codex review, fresh evidence -- "Exclude classified internal
+    exports from the match ratio").
+
+    `accounted` is a *third* count abicheck reports alongside `matched`
+    and `total`: symbols that are either matched to source OR explicitly
+    classified as non-public, i.e. symbols whose coverage status is fully
+    explained one way or the other. `total - accounted` is the number of
+    exported symbols with no explanation at all -- neither linked to
+    source nor classified as internal -- which is the real evidence gap
+    this contract should be gating on. (None, None) on any parse failure,
+    same fail-closed contract as every other extractor here: the caller
+    must fall back to the stricter `matched/total` basis, not silently
+    treat missing evidence as 100% accounted.
+    """
+    entry = coverage.get("L4_source_abi")
+    if entry is None:
+        return None, None
+    m = L4_ACCOUNTED_RE.search(entry.get("detail", ""))
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2))
 
 
 def _extract_l4_tus(coverage):
@@ -327,11 +364,34 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
                 "nothing to link"
             )
         else:
-            ratio = (matched / total) if total else 0.0
+            # Prefer `accounted` (matched + classified-non-public) over raw
+            # `matched` as the ratio's numerator -- see _extract_l4_accounted
+            # for why: a symbol abicheck itself classifies as non-public
+            # (ELF-linker artifacts, hidden-visibility compiler-generated
+            # special members) can never be linked to source, so counting
+            # it as an unmatched failure caps the ratio below 100% forever,
+            # independent of real public-API linkage quality (Codex review,
+            # fresh evidence). Only trusted when `accounted`'s own total
+            # agrees with `matched`'s total -- a mismatch means the two
+            # counts came from different underlying symbol sets (schema
+            # drift) and accounted can't be safely substituted; falls back
+            # to the stricter raw `matched/total` basis instead, same
+            # fail-closed contract as everywhere else in this script.
+            accounted, accounted_total = _extract_l4_accounted(coverage)
+            facts["symbols_accounted"] = accounted
+            if accounted is not None and accounted_total == total:
+                ratio_numerator = accounted
+                ratio_basis = "accounted"
+            else:
+                ratio_numerator = matched
+                ratio_basis = "matched"
+            facts["export_match_ratio_basis"] = ratio_basis
+            ratio = (ratio_numerator / total) if total else 0.0
             facts["export_match_ratio"] = round(ratio, 4)
             if ratio < min_export_match_ratio:
                 failures.append(
-                    f"export-to-source link ratio {matched}/{total} ({ratio:.0%}) "
+                    f"export-to-source link ratio ({ratio_basis}) "
+                    f"{ratio_numerator}/{total} ({ratio:.0%}) "
                     f"< required minimum {min_export_match_ratio:.0%}"
                 )
 
