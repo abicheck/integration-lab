@@ -529,17 +529,27 @@ jobs:
       # commit the rest of this workflow uses (d28c0bf...), so the plugin's
       # reference recipe (clang.py's source-fact shape) matches the
       # abicheck version actually ingesting its output later.
+      # Codex review: `git clone --depth 1` shallow-clones the remote's
+      # *current HEAD* only -- the pinned commit this workflow targets
+      # (d28c0bf..., the v0.5.0 tag) is an OLDER commit than abicheck/main's
+      # current HEAD, so that historical commit object was never fetched at
+      # all and `git checkout d28c0bf...` failed with "reference is not a
+      # tree" on every run (silently, since this whole job is best-effort).
+      # Fixed by fetching that pinned ref directly (`git fetch --depth 1
+      # origin <ref>`) instead of shallow-cloning HEAD and hoping an
+      # arbitrary older commit is still reachable from it.
       - name: Fetch abicheck-clang-plugin source
         id: fetch_plugin_source
         if: steps.install_plugin_deps.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
-          git clone --filter=blob:none --no-checkout --depth 1 \
-            https://github.com/abicheck/abicheck.git "$RUNNER_TEMP/abicheck-src"
+          git init -q "$RUNNER_TEMP/abicheck-src"
           cd "$RUNNER_TEMP/abicheck-src"
+          git remote add origin https://github.com/abicheck/abicheck.git
+          git fetch --depth 1 origin d28c0bf28796b3c6daca9584ad6dd44b54f044f7
           git sparse-checkout set --no-cone contrib/abicheck-clang-plugin
-          git checkout d28c0bf28796b3c6daca9584ad6dd44b54f044f7
+          git checkout FETCH_HEAD
 
       - name: Build the Clang plugin
         id: build_plugin
@@ -647,6 +657,29 @@ jobs:
   # binary depth delivered, but still reported COMPATIBLE" gap called out
   # against the stable lane. Update the pinned SHA periodically; do not
   # float this to @main.
+  #
+  # Native scan-mode PR comment (checked against abicheck/main@400f634e,
+  # this pin's own commit, via action/run.sh's `_maybe_post_pr_comment`):
+  # `case "$MODE" in compare | scan) ;;` now covers `scan` too, so setting
+  # `pr-comment: true` here would work. Deliberately still `pr-comment:
+  # false`, not yet flipped: abicheck's own sticky-comment renderer uses a
+  # single FIXED marker (`<!-- abicheck-sticky-report -->`, action/run.sh)
+  # with no per-workflow/per-job label, so turning this on today would post
+  # a second, unlabeled sticky comment on every PR with no way to tell it
+  # apart from the canonical stable-lane comment above at a glance — the
+  # exact "two stale comments" failure mode this repo's own architecture
+  # review calls out avoiding. The intended migration is the other
+  # direction: once the *stable* lane itself pins to a released abicheck
+  # with native scan-comment support, retire scripts/render_scan_comment.py
+  # entirely and let the stable gate's own `scan` step post natively —
+  # consolidating to one comment, not adding a second one now. Flip this
+  # canary pr-comment on ahead of that migration only if you also add a
+  # canary-specific marker/prefix (not available in abicheck's action as of
+  # this pin) so the two can't be confused.
+  #
+  # Pinned SHA refresh policy: point this at a real abicheck/main commit
+  # (not a placeholder) each time it's updated, and verify against that
+  # exact commit's action/run.sh before changing the pr-comment note above.
   canary:
     runs-on: ubuntu-24.04
     steps:
@@ -720,7 +753,7 @@ jobs:
         id: canary_scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@e5fabd40357f36a946b572948866f34f6c9f0575 # main (pin updated manually — see comment above)
+        uses: abicheck/abicheck@400f634e7e81e4448bcaa88ce05143c11185801d # main (pin updated manually — see comment above)
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -764,5 +797,5 @@ jobs:
           {
             echo "### Canary lane (non-blocking)"
             echo
-            echo "Ran against \`abicheck/main@e5fabd40357f36a946b572948866f34f6c9f0575\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
+            echo "Ran against \`abicheck/main@400f634e7e81e4448bcaa88ce05143c11185801d\`, not the released v0.5.0 used for the gate above. This never blocks the PR."
           } >> "$GITHUB_STEP_SUMMARY"
