@@ -92,7 +92,9 @@ jobs:
             --cquery "$RUNNER_TEMP/bazel-cquery.json" \
             --aquery "$RUNNER_TEMP/bazel-aquery.json" \
             --workspace "$(pwd)" \
-            --output "$RUNNER_TEMP/bazel-evidence-pack"
+            --output "$RUNNER_TEMP/bazel-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
       - name: Collect source-aware ABI baseline
@@ -132,7 +134,8 @@ jobs:
             "$RUNNER_TEMP/math.raw.abicheck.json" \
             -o "$RUNNER_TEMP/baseline-coverage-contract.json" \
             --requested-depth source \
-            --no-require-public-header-provenance
+            --no-require-public-header-provenance \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json"
 
       - name: Normalize baseline (strip volatile provenance/timing metadata)
         run: |

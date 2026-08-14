@@ -267,7 +267,8 @@ jobs:
             -o "$RUNNER_TEMP/coverage-contract.json" \
             --requested-depth source \
             --changed-files "$RUNNER_TEMP/changed-files.txt" \
-            --buildfiles "$RUNNER_TEMP/bazel-buildfiles.txt"
+            --buildfiles "$RUNNER_TEMP/bazel-buildfiles.txt" \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json"
 
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
