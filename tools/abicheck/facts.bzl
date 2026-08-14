@@ -99,6 +99,49 @@ _SOURCE_EXTENSIONS = ("c", "cc", "cpp", "cxx", "c++", "C", "CC", "cu")
 def _is_source_file(f):
     return f.extension in _SOURCE_EXTENSIONS
 
+def _public_roots_for(ctx, compilation_context):
+    """The subset of `compilation_context.system_includes` that actually
+    backs at least one DIRECT public header of this target or one of its
+    direct `deps` -- not the full transitively-merged list.
+
+    `system_includes` is a fully-merged, transitive view: it accumulates
+    every `-isystem` root any dependency anywhere in the closure
+    contributed, including one a completely unrelated, several-hops-away
+    library exports for its OWN `includes = [...]` attribute (Codex
+    review, fresh evidence). Blindly promoting the whole list to
+    `public-roots=` (see the module docstring's own reasoning for why
+    `-isystem` roots need promoting to `-I` at all) would classify that
+    unrelated dependency's own private/third-party declarations as part
+    of THIS library's public surface too.
+
+    `compilation_context.direct_public_headers` is the corrective: it's
+    scoped to exactly the headers a `hdrs` attribute directly declares
+    (not inherited from deps), so cross-referencing which `system_includes`
+    entry is actually a path prefix of one of those files' own paths
+    recovers "the root this target's OWN public API lives under" instead
+    of trusting the merged list wholesale. One hop is taken beyond the
+    visited target itself -- direct `deps`' own `direct_public_headers` --
+    covering the common "binary depends directly on its own API library"
+    shape (exactly this repo's own `:math`/`:math_api` relationship,
+    where the compiled `cc_binary` itself declares no `hdrs` at all, so
+    its own `direct_public_headers` is always empty and the real answer
+    lives one hop up). A public header re-exported through a longer
+    facade-library chain is not covered by this narrower, verifiable
+    check; documented as a known limitation rather than guessed at.
+    """
+    direct_header_paths = [f.path for f in compilation_context.direct_public_headers]
+    if hasattr(ctx.rule.attr, "deps"):
+        for dep in ctx.rule.attr.deps:
+            if CcInfo in dep:
+                direct_header_paths.extend(
+                    [f.path for f in dep[CcInfo].compilation_context.direct_public_headers],
+                )
+    return [
+        root
+        for root in compilation_context.system_includes.to_list()
+        if any([p.startswith(root + "/") for p in direct_header_paths])
+    ]
+
 def _dep_facts(ctx):
     """Every `abicheck_facts` OutputGroupInfo depset already produced by this
     aspect on `ctx.rule.attr.deps` (Codex review, fresh evidence, confirmed
@@ -147,10 +190,12 @@ def _abicheck_facts_aspect_impl(target, ctx):
     )
     compilation_context = target[CcInfo].compilation_context
 
-    # The same directories the real compile resolves `-isystem` from --
-    # see the module docstring for why this (not the plugin's own
-    # auto-derivation) is the correct public-surface source for this repo.
-    public_roots = compilation_context.system_includes.to_list()
+    # Validated -isystem roots (see _public_roots_for's own docstring --
+    # Codex review, fresh evidence: the full, transitively-merged
+    # system_includes list can carry an unrelated dependency's own
+    # -isystem root that has nothing to do with THIS library's public
+    # surface).
+    public_roots = _public_roots_for(ctx, compilation_context)
 
     toolchain_inputs = depset(
         transitive = [cc_toolchain.all_files],
