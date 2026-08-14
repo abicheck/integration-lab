@@ -79,7 +79,7 @@ jobs:
         run: |
           curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
             --output "$RUNNER_TEMP/install-castxml.sh" \
-            "https://raw.githubusercontent.com/abicheck/abicheck/6dadbe82141e64c7fe3d12b363e2ee2c78b4264b/action/install-castxml.sh"
+            "https://raw.githubusercontent.com/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/action/install-castxml.sh"
           bash "$RUNNER_TEMP/install-castxml.sh"
 
       # The one deliberate difference from scenarios.yml: install from

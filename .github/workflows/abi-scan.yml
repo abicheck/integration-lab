@@ -156,7 +156,7 @@ jobs:
         id: abicheck_pip
         if: steps.bazel_queries.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -194,7 +194,7 @@ jobs:
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -297,7 +297,7 @@ jobs:
         id: l2_castxml
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -331,7 +331,7 @@ jobs:
         id: l2_clang
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -506,7 +506,7 @@ jobs:
         id: l4_clang_replay
         if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -619,7 +619,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: compare
           old-library: ${{ runner.temp }}/strings.base.abicheck.json
@@ -692,7 +692,7 @@ jobs:
       - name: Install abicheck (for aggregate)
         id: install_abicheck
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       - name: Aggregate per-target reports (discovered-only, informational)
         if: steps.install_abicheck.outcome == 'success'
@@ -850,7 +850,7 @@ jobs:
         id: compare
         if: steps.build_base_consumer.outputs.available == 'true' || steps.build_head_consumer_fallback.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: compare
           old-library: >-
@@ -1025,7 +1025,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b # abicheck/main @ 6dadbe8
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -1191,7 +1191,7 @@ jobs:
           git init -q "$RUNNER_TEMP/abicheck-src"
           cd "$RUNNER_TEMP/abicheck-src"
           git remote add origin https://github.com/abicheck/abicheck.git
-          git fetch --depth 1 origin 6dadbe82141e64c7fe3d12b363e2ee2c78b4264b
+          git fetch --depth 1 origin 891bd9d7157dda8af38a8b9e145e564dc7fc1c71
           git sparse-checkout set --no-cone contrib/abicheck-clang-plugin
           git checkout FETCH_HEAD
 
@@ -1259,7 +1259,7 @@ jobs:
         id: install_abicheck
         if: steps.verify_facts.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       # Codex review: --ast-frontend clang added -- without it, the header
       # side of this compare silently used abicheck's CastXML default,
