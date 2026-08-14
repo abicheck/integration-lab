@@ -48,10 +48,37 @@ jobs:
       # over N scenarios in one job, not one abicheck invocation per
       # workflow step), so it has to provision the same dependencies
       # itself instead of getting them from the Action's own setup step.
+      #
+      # castxml is deliberately NOT installed from the distro apt package
+      # here (Ubuntu's castxml bundles an old Clang that can't parse some
+      # GCC 13 libstdc++ headers, and current abicheck/main only supports
+      # CastXML >=0.6.11,<0.8.0 with a bundled/linked Clang >=18 -- see
+      # AGENTS.md). gcc/g++/clang stay on the plain apt path -- those are
+      # not version-pinned by abicheck's own contract.
       - name: Install system dependencies for abicheck
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq castxml gcc g++ clang
+          sudo apt-get install -y -qq gcc g++ clang
+
+      # castxml: mirrors abicheck's own CI/composite-Action mechanism
+      # exactly instead of inventing a new one -- action/install-deps.sh's
+      # default path for Ubuntu 22.04/24.04 (this runner) installs the
+      # pinned CastXML Superbuild via action/install-castxml.sh, a
+      # checksum-verified release download (SHA256-pinned archive, and the
+      # script itself re-verifies the extracted castxml/bundled-Clang
+      # version strings after install). Fetched from the exact abicheck
+      # commit this workflow already pins abicheck itself to below, so the
+      # installer -- and the castxml release/checksum it verifies against
+      # -- are identical to what abicheck's own CI uses, not a
+      # independently-chosen version. install-castxml.sh appends its
+      # install dir to $GITHUB_PATH itself, so no further PATH step is
+      # needed here.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6dadbe82141e64c7fe3d12b363e2ee2c78b4264b/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
 
       - name: Install abicheck + PyYAML
         run: |

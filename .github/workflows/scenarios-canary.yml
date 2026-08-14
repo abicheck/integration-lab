@@ -56,12 +56,31 @@ jobs:
         with:
           persist-credentials: false
 
-      # Same system deps as scenarios.yml's own install step.
+      # Same system deps as scenarios.yml's own install step -- see that
+      # workflow for the full rationale. castxml is NOT installed from the
+      # distro apt package (see scenarios.yml's comment); gcc/g++/clang
+      # stay on plain apt.
       - name: Install system dependencies for abicheck
         id: install_deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq castxml gcc g++ clang
+          sudo apt-get install -y -qq gcc g++ clang
+
+      # castxml: same checksum-pinned CastXML Superbuild mechanism as
+      # scenarios.yml (mirroring abicheck's own action/install-castxml.sh),
+      # fetched from the same pinned commit for a stable, verified castxml
+      # even though the abicheck *package* installed below deliberately
+      # tracks main HEAD -- this is a canary for abicheck's own detector/
+      # scenario behavior, not for castxml compatibility drift, so pinning
+      # the header-AST frontend the same way scenarios.yml does keeps that
+      # axis controlled.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        id: install_castxml
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6dadbe82141e64c7fe3d12b363e2ee2c78b4264b/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
 
       # The one deliberate difference from scenarios.yml: install from
       # abicheck/main's current HEAD, not a pinned release SHA -- this is
