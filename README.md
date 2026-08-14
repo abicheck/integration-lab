@@ -346,6 +346,26 @@ Run locally: `python3 scripts/run_scenario.py` (needs `bazel` and the
 `abicheck` CLI on `PATH`, and `pyyaml` installed) — or `--only <name>` for
 a single scenario. Results are written to `scenario-results/summary.json`.
 
+### Automatic stale-suppression detection (`scenarios-canary.yml`)
+
+`scenarios.yml` re-verifies every scenario's expected verdict and every
+suppression's `expected_suppressed_count`/`expected_suppressed_symbols`
+on every run — but only ever against the one pinned `abicheck` commit,
+and only when this repo's own fixtures/scenarios/suppressions change. A
+suppression can go stale for a reason that has nothing to do with a
+change in *this* repo: an upstream `abicheck` release changes how a
+finding is classified or matched, and a selector that used to match a
+real finding silently stops. `scenarios-canary.yml` closes that gap: the
+identical scenario suite, run against `abicheck/main`'s current HEAD on a
+weekly schedule (plus `workflow_dispatch` for an on-demand check right
+before a planned pin bump) — so staleness is caught independently of any
+lab-repo PR activity, before the pin is ever bumped to include it. Never
+gates a PR (nothing here triggers it) and posts no PR comment (there is
+none); a red run in the Actions tab plus its own job summary is the
+signal, and it means "review before bumping the pin" (which may be a
+desired detector improvement, not necessarily a bug), not "this repo is
+broken."
+
 **Not yet covered** (explicitly out of scope for this initial slice, not
 silently dropped): a `cc_shared_library` scenario, a generated-header
 scenario, a multi-library/consumer-app scenario, `MODULE.bazel.lock`
