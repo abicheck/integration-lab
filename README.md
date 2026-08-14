@@ -474,6 +474,34 @@ Deliberately non-gating (no "Enforce gate" step, same posture as
 *mechanism*, not this fixture's own ABI, and must never block a PR that
 never touched `consumer/`.
 
+## GCC/Clang × C++ standard profile matrix (architecture review P1-7)
+
+`//:math`'s real ABI must not depend on which compiler or C++ standard
+built it — the same source, the same target triple, the same x86-64
+System V ABI. `.bazelrc` deliberately pins the whole workspace to one
+fixed toolchain (default gcc, `-std=c++17`) for reproducibility, which is
+correct for the required gate but means nothing in this repo's CI ever
+proves the gate's own *findings* are actually toolchain-invariant — only
+that one fixed toolchain's output compares cleanly against itself.
+
+`abi-scan.yml`'s `toolchain_matrix` job (a GitHub Actions matrix,
+`fail-fast: false`) rebuilds `//:math` under four (compiler × standard)
+combinations — `{gcc, clang-18} × {c++17, c++20}`, each overriding
+`--cxxopt=-std=<standard>` and `CC`/`CXX` on the command line — and runs
+`abicheck compare` against the SAME committed baseline every other leg
+uses. Any per-leg divergence (a finding that appears under one
+compiler/standard combination and not another, despite no real source
+change) is directly visible in each leg's own artifact/job summary
+instead of silently invisible behind the single pinned toolchain the
+required gate always uses. Verified locally: a `gcc -std=c++20` build
+already surfaces a real, informative divergence — the compiler-generated
+default constructor's export shape differs from the `-std=c++17`
+baseline it's compared against, exactly the class of standard-driven ABI
+question this matrix exists to surface (not itself an error in the
+fixture or the workflow). Deliberately non-gating (no "Enforce gate"
+step): this validates toolchain-invariance as a property to *watch*, not
+a pass/fail contract this fixture's own ABI must additionally satisfy.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =

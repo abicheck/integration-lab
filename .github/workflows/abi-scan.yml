@@ -906,6 +906,173 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Architecture review P1-7 (GCC/Clang x C++ standard profile matrix):
+  # //:math's real ABI must not depend on which compiler/standard built it
+  # -- the same source, the same target triple, the same x86-64 System V
+  # ABI. `.bazelrc` pins the WHOLE workspace to one fixed toolchain
+  # (default gcc, `-std=c++17`) deliberately (see its own comment), which
+  # is correct for the required gate's own reproducibility but means
+  # nothing in this repo's CI ever proves the gate's *findings* are
+  # actually toolchain-invariant, only that one fixed toolchain's output
+  # compares cleanly against itself. This job rebuilds //:math under a
+  # small (compiler x standard) matrix -- each leg overriding
+  # --cxxopt=-std=<standard> and CC/CXX -- and runs the SAME `abicheck
+  # compare` against the SAME committed baseline every other leg uses, so
+  # any spurious per-leg divergence (a finding that appears under one
+  # compiler/standard combination and not another, despite no real source
+  # change) is directly visible instead of silently invisible behind the
+  # single pinned toolchain the required gate always uses. Deliberately
+  # non-gating (continue-on-error throughout, no "Enforce gate" step,
+  # `fail-fast: false` so one leg's failure doesn't hide the others): this
+  # validates toolchain-invariance as a property to watch, not a pass/fail
+  # contract this fixture's own ABI must additionally satisfy -- and see
+  # AGENTS.md's (abicheck/abicheck) own "toolchain-identity probe" known
+  # gap for why a real compiler-*version* drift (as opposed to the
+  # compiler-*family*/standard axis this matrix covers) isn't yet folded
+  # into abicheck's own extraction-context fingerprint.
+  toolchain_matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: gcc-cxx17
+            cc: gcc
+            cxx: g++
+            std: c++17
+          - id: gcc-cxx20
+            cc: gcc
+            cxx: g++
+            std: c++20
+          - id: clang-cxx17
+            cc: clang-18
+            cxx: clang++-18
+            std: c++17
+          - id: clang-cxx20
+            cc: clang-18
+            cxx: clang++-18
+            std: c++20
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve trusted baseline from PR base SHA
+        id: resolve_baseline
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      # Only the clang-18 legs need this installed -- gcc/g++ already ship
+      # on the runner image. continue-on-error: an apt hiccup degrades
+      # this one matrix leg to skipped, same "expected, not exceptional"
+      # posture as l4-clang-plugin's own identical install step below.
+      - name: Install Clang (clang-* legs only)
+        id: install_clang
+        if: steps.resolve_baseline.outcome == 'success' && startsWith(matrix.cc, 'clang')
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18
+
+      - name: Set up Bazel disk cache
+        if: steps.resolve_baseline.outcome == 'success' && (steps.install_clang.outcome == 'success' || steps.install_clang.outcome == 'skipped')
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-toolchain-${{ matrix.id }}-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-toolchain-${{ matrix.id }}-
+            bazel-disk-${{ runner.os }}-
+
+      # --cxxopt/--host_cxxopt on the command line override .bazelrc's own
+      # `build --cxxopt=-std=c++17` (last flag wins for a repeated Bazel
+      # option), so each leg genuinely gets its own matrix.std, not just a
+      # relabeled default.
+      - name: Build candidate library with Bazel (${{ matrix.id }})
+        id: build
+        if: steps.resolve_baseline.outcome == 'success' && (steps.install_clang.outcome == 'success' || steps.install_clang.outcome == 'skipped')
+        continue-on-error: true
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          bazel build //:math \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --cxxopt=-std=${{ matrix.std }} \
+            --host_cxxopt=-std=${{ matrix.std }}
+
+      - name: ABICheck compare (${{ matrix.id }}, non-gating, artifact only)
+        id: compare
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          format: json
+          output-file: abicheck-toolchain-${{ matrix.id }}.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload toolchain-matrix report artifact (${{ matrix.id }})
+        if: always() && steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-toolchain-${{ matrix.id }}
+          path: abicheck-toolchain-${{ matrix.id }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Report toolchain-matrix leg status (${{ matrix.id }})
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Toolchain matrix: ${{ matrix.id }} (P1-7, best-effort, non-blocking)"
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not resolve abi/math.abicheck.json from the PR base SHA.'
+            elif [ "${{ steps.install_clang.outcome }}" == "failure" ]; then
+              echo '⏭️ Skipped: could not install clang-18 for this leg.'
+            elif [ "${{ steps.build.outcome }}" != "success" ]; then
+              echo "⏭️ Skipped: \`bazel build //:math\` failed under CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} -std=${{ matrix.std }}."
+            elif [ "${{ steps.compare.outcome }}" != "success" ]; then
+              echo '⚠️ Build succeeded but the abicheck compare step failed -- see the job log above.'
+            else
+              echo "✅ Ran successfully -- see the \`abicheck-toolchain-${{ matrix.id }}\` artifact for the report."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # l4-clang-plugin: the fourth leg of the L2/L4 profile matrix -- the
   # zero-extra-parse Clang plugin producer (ADR-038 Plugin injection,
   # `contrib/abicheck-clang-plugin` in abicheck/abicheck), instead of the
