@@ -22,17 +22,22 @@ pairs this script is actually run against straddle both mode shapes
 single-shape parser would silently see one side as empty instead of
 comparing anything.
 
-Matching is by the flat ``(kind, symbol)`` tuple -- not (yet) abicheck's
-own backend-independent ``canonical_finding_id`` (schema 2.35, not present
-in the pinned v0.5.0 release this workflow currently runs), which would be
-a strictly better key once this lab upgrades its pinned abicheck version.
-``old_value``/``new_value`` are compared only as an *annotation* on an
-already-kind+symbol-matched pair (flagged as a "value mismatch" rather than
-treated as a separate matching dimension), since the two producers are not
-guaranteed to spell an old/new type identically (CastXML's ``char const*``
-vs. Clang's ``char const *``) -- the same backend-spelling variance
-abicheck's own ``finding_identity.canonicalize_type_name`` exists to paper
-over report-side, which this lab-side script does not attempt to reproduce.
+Matching is a *multiset* match on ``(kind, symbol)`` (Codex review: an
+earlier revision collapsed same-key findings into a dict, silently
+dropping a duplicate -- e.g. two ``PARAM_TYPE_CHANGED`` findings on the
+same function for two different parameters -- into one). Findings whose
+full ``(kind, symbol, old_value, new_value)`` tuple matches exactly are
+counted as agreeing; the *remainder* on each side is then paired up by
+``(kind, symbol)`` alone to report as a "value mismatch" (old/new differs
+on an otherwise-matched finding -- may be a genuine cross-backend
+type-spelling difference, e.g. CastXML's ``char const*`` vs. Clang's
+``char const *``, not necessarily a bug -- this lab-side script does not
+attempt abicheck's own ``finding_identity.canonicalize_type_name``
+normalization), with only the true leftover reported as producer-only.
+Not (yet) using abicheck's own backend-independent ``canonical_finding_id``
+(schema 2.35, not present in the pinned v0.5.0 release this workflow
+currently runs), which would be a strictly better key once this lab
+upgrades its pinned abicheck version.
 """
 
 from __future__ import annotations
@@ -40,9 +45,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 MARKER_TEMPLATE = "<!-- abicheck-lab-conformance-report:{key} -->"
+
+#: `compare` reports an unchanged pair as `NO_CHANGE`; `scan` reports the
+#: same "nothing gated" outcome as `COMPATIBLE` (see scenarios/manifest.yaml
+#: and render_scan_comment.py's own `_VERDICT_LINES`, respectively) -- two
+#: spellings of the same "clean" verdict, not a real disagreement (Codex
+#: review, fresh evidence: comparing raw strings falsely flagged the L4
+#: replay/plugin pair as disagreeing on every implementation-only change).
+_EQUIVALENT_CLEAN_VERDICTS = frozenset({"NO_CHANGE", "COMPATIBLE"})
 
 
 def _load_report(path: Path | None) -> dict | None:
@@ -118,11 +132,55 @@ def _extract_findings(report: dict | None) -> list[dict[str, str]]:
     return out
 
 
+def _findings_truncated(report: dict | None) -> tuple[bool, dict]:
+    """Whether *report*'s own ``diff.findings`` was already truncated by
+    abicheck itself before this script ever saw it (``scan``-mode reports
+    only -- see ``scripts/render_scan_comment.py``'s identical check).
+
+    A `compare`-mode report's flat ``changes`` list has no equivalent
+    truncation flag in this codebase, so this only ever fires for the
+    `scan`-mode side of a pair (Codex review: without this, every finding
+    upstream already cut from a truncated `l4-clang-replay` scan read as a
+    false "plugin-only" producer divergence instead of "unknown -- replay's
+    own report was incomplete").
+    """
+    if report is None:
+        return False, {}
+    diff = report.get("diff")
+    if not isinstance(diff, dict):
+        return False, {}
+    truncated = bool(diff.get("findings_truncated"))
+    cut_kinds = diff.get("findings_truncated_kinds")
+    return truncated, cut_kinds if isinstance(cut_kinds, dict) else {}
+
+
 def _report_verdict(report: dict | None) -> str:
     if report is None:
         return "unavailable"
     verdict = report.get("verdict")
     return str(verdict) if verdict is not None else "unknown"
+
+
+def _normalize_verdict(verdict: str) -> str:
+    return "CLEAN" if verdict in _EQUIVALENT_CLEAN_VERDICTS else verdict
+
+
+def _multiset(findings: list[dict[str, str]]) -> Counter:
+    return Counter(
+        (f["kind"], f["symbol"], f["old_value"], f["new_value"]) for f in findings
+    )
+
+
+def _group_by_kind_symbol(
+    counter: Counter,
+) -> dict[tuple[str, str], list[tuple[str, str]]]:
+    """Expand a ``(kind, symbol, old, new)`` multiset (with its counts)
+    into ``{(kind, symbol): [(old, new), ...]}`` -- one list entry per
+    occurrence, preserving duplicates."""
+    grouped: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    for (kind, symbol, old, new), count in counter.items():
+        grouped[(kind, symbol)].extend([(old, new)] * count)
+    return grouped
 
 
 def build_report(
@@ -149,40 +207,63 @@ def build_report(
 
     left_verdict = _report_verdict(left)
     right_verdict = _report_verdict(right)
-    verdict_line = (
-        "✅ Verdicts agree"
-        if left_verdict == right_verdict
-        else "⚠️ **Verdicts disagree**"
-    )
-    lines.append(f"{verdict_line}: `{left_verdict}` vs. `{right_verdict}`.")
+    if _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict):
+        verdict_line = f"✅ Verdicts agree: `{left_verdict}` vs. `{right_verdict}`."
+    else:
+        verdict_line = f"⚠️ **Verdicts disagree**: `{left_verdict}` vs. `{right_verdict}`."
+    lines.append(verdict_line)
     lines.append("")
+
+    left_truncated, left_cut_kinds = _findings_truncated(left)
+    right_truncated, right_cut_kinds = _findings_truncated(right)
+    if left_truncated or right_truncated:
+        lines.append(
+            "⚠️ **At least one side's own report already truncated its findings "
+            "list before this comparison ran** -- any producer-only finding "
+            "below may just be a truncated-away entry, not a real divergence:"
+        )
+        if left_truncated:
+            lines.append(f"  - {left_label}: truncated ({left_cut_kinds or 'unknown counts'}).")
+        if right_truncated:
+            lines.append(f"  - {right_label}: truncated ({right_cut_kinds or 'unknown counts'}).")
+        lines.append("")
 
     left_findings = _extract_findings(left)
     right_findings = _extract_findings(right)
 
-    def _key(f: dict[str, str]) -> tuple[str, str]:
-        return (f["kind"], f["symbol"])
+    left_ms = _multiset(left_findings)
+    right_ms = _multiset(right_findings)
+    exact_matched = left_ms & right_ms
+    matched_count = sum(exact_matched.values())
+    left_remainder = left_ms - exact_matched
+    right_remainder = right_ms - exact_matched
 
-    left_by_key = {_key(f): f for f in left_findings}
-    right_by_key = {_key(f): f for f in right_findings}
-    left_keys = set(left_by_key)
-    right_keys = set(right_by_key)
+    left_grouped = _group_by_kind_symbol(left_remainder)
+    right_grouped = _group_by_kind_symbol(right_remainder)
 
-    matched = left_keys & right_keys
-    only_left = left_keys - right_keys
-    only_right = right_keys - left_keys
+    value_mismatches: list[tuple[str, str, tuple[str, str], tuple[str, str]]] = []
+    only_left: list[tuple[str, str, tuple[str, str]]] = []
+    only_right: list[tuple[str, str, tuple[str, str]]] = []
 
-    value_mismatches = [
-        k
-        for k in matched
-        if (left_by_key[k]["old_value"], left_by_key[k]["new_value"])
-        != (right_by_key[k]["old_value"], right_by_key[k]["new_value"])
-    ]
+    for key in sorted(set(left_grouped) | set(right_grouped)):
+        lvals = left_grouped.get(key, [])
+        rvals = right_grouped.get(key, [])
+        n = min(len(lvals), len(rvals))
+        for i in range(n):
+            value_mismatches.append((*key, lvals[i], rvals[i]))
+        for v in lvals[n:]:
+            only_left.append((*key, v))
+        for v in rvals[n:]:
+            only_right.append((*key, v))
 
     lines.append(
-        f"- {len(matched)} finding(s) matched by (kind, symbol) in both reports "
-        f"({len(value_mismatches)} with differing old/new value text -- may be a "
-        "genuine cross-backend type-spelling difference, not necessarily a bug)."
+        f"- {matched_count} finding(s) match exactly (same kind, symbol, and "
+        "old/new value) in both reports."
+    )
+    lines.append(
+        f"- {len(value_mismatches)} finding(s) matched by (kind, symbol) but with "
+        "differing old/new value text -- may be a genuine cross-backend "
+        "type-spelling difference, not necessarily a bug."
     )
     lines.append(
         f"- {len(only_left)} finding(s) present only in **{left_label}** "
@@ -194,15 +275,17 @@ def build_report(
     )
     lines.append("")
 
-    def _render_section(title: str, keys: set[tuple[str, str]], cap: int = 20) -> None:
-        if not keys:
+    def _render_section(
+        title: str, entries: list[tuple[str, str, tuple[str, str]]], cap: int = 20
+    ) -> None:
+        if not entries:
             return
-        lines.append(f"<details><summary>{title} ({len(keys)})</summary>")
+        lines.append(f"<details><summary>{title} ({len(entries)})</summary>")
         lines.append("")
-        for kind, symbol in sorted(keys)[:cap]:
-            lines.append(f"- `{kind}`: `{symbol}`")
-        if len(keys) > cap:
-            lines.append(f"- _(and {len(keys) - cap} more)_")
+        for kind, symbol, (old, new) in entries[:cap]:
+            lines.append(f"- `{kind}`: `{symbol}` (`{old}` → `{new}`)")
+        if len(entries) > cap:
+            lines.append(f"- _(and {len(entries) - cap} more)_")
         lines.append("")
         lines.append("</details>")
         lines.append("")
@@ -214,13 +297,10 @@ def build_report(
             f"<details><summary>Value mismatches on matched findings ({len(value_mismatches)})</summary>"
         )
         lines.append("")
-        for kind, symbol in sorted(value_mismatches)[:20]:
-            lf = left_by_key[(kind, symbol)]
-            rf = right_by_key[(kind, symbol)]
+        for kind, symbol, (lold, lnew), (rold, rnew) in value_mismatches[:20]:
             lines.append(
                 f"- `{kind}`: `{symbol}` -- {left_label}: "
-                f"`{lf['old_value']}` → `{lf['new_value']}`; {right_label}: "
-                f"`{rf['old_value']}` → `{rf['new_value']}`"
+                f"`{lold}` → `{lnew}`; {right_label}: `{rold}` → `{rnew}`"
             )
         if len(value_mismatches) > 20:
             lines.append(f"- _(and {len(value_mismatches) - 20} more)_")
@@ -228,8 +308,14 @@ def build_report(
         lines.append("</details>")
         lines.append("")
 
-    if not only_left and not only_right:
-        lines.append("✅ No producer-only findings -- the two producers fully agree.")
+    if not only_left and not only_right and not value_mismatches:
+        lines.append("✅ No producer-only findings and no value mismatches -- the two producers fully agree.")
+    elif not only_left and not only_right:
+        lines.append(
+            "ℹ️ The two producers agree on **which** findings exist, but "
+            f"differ in reported old/new values for {len(value_mismatches)} "
+            "of them (see above)."
+        )
 
     return "\n".join(lines) + "\n"
 
