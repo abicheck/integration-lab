@@ -280,15 +280,309 @@ real `bazel mod deps --lockfile_mode=update` run, which isn't available
 while authoring these files outside CI — tracked as a follow-up rather than
 hand-authored here.
 
+## Producer conformance reports
+
+The three non-gating L2/L4 profile diagnostics (`l2-castxml`, `l2-clang`,
+`l4-clang-replay`, plus the separate best-effort `l4-clang-plugin` job) all
+analyze the same candidate library/header/baseline through a different
+producer. `abi-scan.yml` now also renders two conformance reports
+comparing sibling producers pairwise, via `scripts/render_conformance_report.py`:
+
+- **L2 · CastXML vs. Clang** — do the two header-AST frontends agree on
+  this library's public surface? Rendered as a step in the `scan` job
+  (both artifacts are local there) and uploaded as `abicheck-conformance-l2`.
+- **L4 · Clang replay vs. Clang plugin** — do the two L4 source-fact
+  producers agree? Rendered in its own `conformance` job (`needs: [scan,
+  l4_clang_plugin]`, `if: always()`, since `l4_clang_plugin` is best-effort
+  and may not run) and uploaded as `abicheck-conformance-l4`.
+
+Each report matches findings by `(kind, symbol)` across the two reports
+(`compare`- and `scan`-mode report shapes are both handled — see the
+script's own docstring), and flags: findings present in only one side,
+and old/new value text that differs on an otherwise-matched finding (which
+may be a genuine cross-backend type-spelling difference, e.g. CastXML's
+`char const*` vs. Clang's `char const *`, not necessarily a bug). A
+scan-mode finding never carries old/new at all, so a pairing where either
+side is scan-shaped (the L4 pair) matches by `(kind, symbol)` only, with
+an explicit note rather than a false "value mismatch". A verdict outside
+abicheck's own conclusive set (`NO_CHANGE`/`COMPATIBLE`/
+`COMPATIBLE_WITH_RISK`/`API_BREAK`/`BREAKING` — e.g. `NOT_COMPARABLE`,
+`BUDGET_OVERFLOW`, an error) means that side's run didn't reach a real
+conclusion, so a matching (or even empty) findings list on both sides
+never reads as a green "fully agree" in that case — an incomplete or
+failed run is producer *silence*, not producer *agreement*. Both reports
+post to the job summary; neither ever gates. A missing side (e.g.
+`l4_clang_plugin` skipped on this runner) degrades to a labeled "skipped"
+section rather than failing.
+
+**Compiler consistency for the L4 pair:** `l4-clang-plugin` must be
+built with Clang (the plugin injects via `-Xclang`), so `l4-clang-replay`'s
+own candidate is *also* rebuilt with `CC=clang-18`/`CXX=clang++-18` right
+before that leg runs (after the required gate and both L2 legs have
+already consumed the original gcc-built binary) — otherwise
+compiler-dependent symbols/DWARF/type representations could read as a
+producer-only divergence even when the two producers genuinely agree,
+defeating the point of isolating the producer axis. The Bazel evidence
+pack feeding L4 source facts is re-captured (a second `cquery`/`aquery` +
+`build_bazel_evidence_pack.py` run) under the same clang-18 environment
+too, so `l4-clang-replay`'s recorded compile actions describe the same
+toolchain as the binary it's scanning, not the required gate's original
+gcc build. Best-effort like the plugin job's own Clang install: a
+failure anywhere in this chain just skips the `l4-clang-replay`
+diagnostic for that run.
+
+## Declared-output source-fact collection (`tools/abicheck/facts.bzl`)
+
+The `l4-clang-plugin` profile used to inject the abicheck Clang plugin via
+`--copt` onto `//:math`'s own ordinary compile action -- from Bazel's point
+of view that action's only output was the object file, so the plugin's
+`source_facts/*.jsonl` write was an untracked *side effect* invisible to
+Bazel's caching machinery (local, disk, or remote): a cache hit on that
+exact compile action would silently skip invoking clang -- and therefore
+the plugin -- entirely, leaving the facts directory empty while the build
+still reported success. The `l4_clang_plugin` job's own fix at the time
+was to simply never consult a disk cache for this job at all.
+
+`tools/abicheck/facts.bzl`'s `abicheck_facts_aspect` closes this
+structurally instead: for every compiled source in a `cc_library`/
+`cc_binary`, it runs the plugin as its *own*, separate action (a second
+`-fsyntax-only` invocation of the same compiler, built from the target's
+real `CcInfo` compilation context) with the resulting `source_facts/`
+directory declared via `ctx.actions.declare_directory` -- a real Bazel
+action output like any other, so it now participates in Bazel's ordinary
+caching contract correctly. `abicheck_facts_pack` (the same file) merges
+every per-source-file directory across a target and its `deps` into one
+`abicheck_inputs/`-shaped pack (per-TU filenames already embed a
+source-content hash, so merging is a safe flatten). `//tools/abicheck:math_abicheck_inputs`
+(root `BUILD.bazel`) is this repo's own wiring of it, and
+`.github/workflows/abi-scan.yml`'s `l4_clang_plugin` job now just builds
+that target directly (`bazel build //:math //tools/abicheck:math_abicheck_inputs`)
+instead of hand-composing `--copt` flags, with a disk-cache step enabled
+the same way the `scan`/`canary` jobs already have one.
+
+**A second, independent fix was required, not just the declared-output
+change:** even with a correctly-matching explicit `public-roots=`, the
+facts action still produced zero declarations, because the plugin gates
+every declaration on `SourceManager::isInSystemHeader()` *before* ever
+testing it against `public-roots` -- and this repo's own `:math_api`
+target declares its public header directory via `cc_library`'s
+`includes = [...]` attribute, which Bazel always renders as `-isystem`
+(verified empirically: a manual `clang -H` comparison across `-I` vs.
+`-isystem`, and across relative vs. absolute search-directory forms,
+traced through to the plugin's own `isInSystemHeader` call sites in
+`AbicheckFactsPlugin.cpp`). The aspect's facts-collecting action therefore
+builds its command line with `system_includes` folded into
+`include_directories` (`-I`, not `-isystem`) for this one action only --
+the target's real compile action is untouched, and this reclassification
+only removes the system-header disqualification for directories the
+caller already names in `public_roots`, so it cannot broaden the public
+surface to some unrelated third-party `-isystem` directory. See the
+`.bzl` file's own module docstring for the full design notes.
+
+The plugin's built `.so` is staged at `tools/abicheck/libabicheck-facts.so`
+(gitignored -- it's a compiled artifact, ABI-locked to the loading clang's
+exact LLVM major, never committed) by the `l4_clang_plugin` job's existing
+"Build the Clang plugin" step before `abicheck_facts_aspect` runs; outside
+CI, build it locally with the recipe in
+`contrib/abicheck-clang-plugin/README.md` (in the `abicheck/abicheck`
+repo) and copy it to that same path before running
+`bazel build //tools/abicheck:math_abicheck_inputs`.
+
+## Multi-library aggregate gate (architecture review P1-5)
+
+`strings_lib/` (`strings_lib/BUILD.bazel`) is a second, deliberately
+independent `cc_library` + `cc_binary(linkshared = True)` target —
+unrelated to `//:math`, so a change to one never touches the other's ABI.
+It exists to prove the gate architecture generalizes past a single
+target, and to exercise `abicheck aggregate` (the CLI command that turns
+several independent per-target reports into one combined verdict)
+against a real multi-target report set produced by this repo's own CI,
+not a synthetic fixture.
+
+It's its own Bazel package rather than folded into root `BUILD.bazel`
+alongside `:math`/`:math_api`: `scripts/check_coverage_contract.py`'s own
+`buildfiles(deps(//:math))`-based exemption (see above) answers per
+*file*, not per target within a file — if `:strings`'s declaration lived
+in root `BUILD.bazel` too, any PR touching only `:strings` would still
+(correctly, if uselessly) disqualify `:math`'s own coverage-contract
+exemption, since Bazel can't tell "this diff to `BUILD.bazel` only
+touched an unrelated target" without literal diff-content parsing. A
+separate package sidesteps the whole question: root `BUILD.bazel` simply
+never changes for a `:strings`-only PR. Its public header
+(`strings_lib/include/abicheck_lab/strings.h`) deliberately avoids
+`std::string`/STL containers for an unrelated, empirically-verified
+reason: a direct-clang dump of a header taking `std::string` pulls in a
+multi-megabyte L5 source-graph closure over libstdc++'s own template
+internals (visible even at the default `headers` depth), which would
+bloat this committed baseline for no reason connected to what this
+fixture actually validates.
+
+Unlike `//:math`, `strings_lib`'s baseline (`abi/strings.abicheck.json`,
+collected by `baseline.yml`) and PR-time check (`scan_strings` job in
+`abi-scan.yml`) are deliberately scoped down to a plain binary+header
+`depth: headers` comparison — no Bazel evidence pack, no `depth: source`
+replay. That's on purpose: this library's job is to validate the
+*aggregate* plumbing across multiple targets, not to duplicate `:math`'s
+own full source-evidence pipeline a second time.
+
+`abi-scan.yml`'s `aggregate` job downloads both `abi-report-math.json`
+(a copy of the required `scan` job's own canonical report) and
+`abi-report-strings.json` (from `scan_strings`) and runs `abicheck
+aggregate --discovered-only`, publishing a small target/verdict table to
+the job summary. Deliberately **not** a required gate itself, and
+deliberately `--discovered-only` rather than `--expect math,strings`:
+both upstream jobs already skip their own scan/compare step entirely on
+an ABI-irrelevant PR (no report uploaded at all), and a hard `--expect`
+would fail this job's own coverage gate on every such PR for a target
+that was never supposed to run this time — exactly the kind of
+non-signal a real coverage gate should never produce. `:math`'s own
+required gate (the `scan` job's "Enforce gate" step) is unaffected
+either way; this job validates the aggregate CLI's plumbing, not this
+fixture's own ABI.
+
+## Consumer/app-scoped validation (architecture review P1-6)
+
+`consumer/` (`consumer/BUILD.bazel`) is a real, separately-built
+application binary (`consumer_app`) that dynamically links against
+`//:math` (via a `cc_import` wrapping its shared-library output) and
+calls only a subset of its public API — `Calculator::add()`, deliberately
+never `Calculator::multiply()` or `api_version()` (see `consumer/app.cc`'s
+own comment). It exists to exercise abicheck's `compare --used-by`/
+`--verify-runtime` app-scoping machinery against a *real* consumer's
+actual dynamic-symbol imports, not a hand-written or synthetic import
+list.
+
+`abicheck compare --used-by <consumer_app>` reads the consumer binary's
+own `.dynsym` undefined-symbol table to scope the comparison: a change to
+a function this consumer never calls (`::multiply`) is demoted to
+informational context (folded into the report's `full_verdict`/
+`full_summary`, kept for visibility but not driving the primary verdict),
+while a change to one it does call (`::add`) still drives the app-scoped
+verdict and exit code. `--verify-runtime` goes one step further and
+actually *runs* the consumer binary once against each library side
+(`LD_BIND_NOW=1`), recording a runtime-load-failure finding if the
+dynamic linker itself rejects the new library — the strongest evidence
+this repo's gate architecture can offer for "would this consumer
+actually still run", not just "does the reported symbol table look
+compatible".
+
+`abi-scan.yml`'s `consumer_scoped` job runs this comparison on every
+ABI-relevant PR, publishing an `abicheck-consumer-scoped` artifact and
+job summary. Deliberately non-gating (no "Enforce gate" step, same
+posture as `scan_strings`/`aggregate` above): this job validates the
+app-scoping *mechanism*, not this fixture's own ABI, and must never
+block a PR that never touched `consumer/`.
+
+**Both `consumer_app` and the "old" library are deliberately built from
+the PR's *base* SHA (a `git worktree` checkout), never from HEAD.**
+`--used-by` exists to answer "would an already-deployed, already-compiled
+consumer still work" — rebuilding `consumer_app` from HEAD instead
+answers a much weaker question ("does freshly-recompiled source still
+compile and link"), which is trivially true even for a source-compatible-
+but-ABI-breaking change (e.g. a parameter type change the existing call
+site still compiles against unchanged): a HEAD-rebuilt consumer imports
+the *new* mangled symbol and would report full coverage even though the
+real, already-shipped binary imports the *old* symbol and would fail to
+load. Building the historical `consumer_app` from base SHA answers the
+real question. The historical `libmath.so` is used as `old-library` for
+the same run, for a second reason: abicheck's runtime probe backing
+`--verify-runtime` silently no-ops unless *both* sides are real binary
+paths (`isinstance(old_lib, Path)`) — the persisted `abi/math.abicheck.json`
+JSON snapshot doesn't satisfy that, so without this, `--verify-runtime`
+was doing nothing. The PR that first introduces `consumer/` has no
+historical copy to build against at its own base SHA — that bootstrap
+case degrades to a HEAD-rebuilt fallback with an explicit caveat in the
+job summary, not a hard failure; every PR after this one merges gets the
+real historical-binary comparison.
+
+## GCC/Clang × C++ standard profile matrix (architecture review P1-7)
+
+`//:math`'s real ABI must not depend on which compiler or C++ standard
+built it — the same source, the same target triple, the same x86-64
+System V ABI. `.bazelrc` deliberately pins the whole workspace to one
+fixed toolchain (default gcc, `-std=c++17`) for reproducibility, which is
+correct for the required gate but means nothing in this repo's CI ever
+proves the gate's own *findings* are actually toolchain-invariant — only
+that one fixed toolchain's output compares cleanly against itself.
+
+`abi-scan.yml`'s `toolchain_matrix` job (a GitHub Actions matrix,
+`fail-fast: false`) rebuilds `//:math` under four (compiler × standard)
+combinations — `{gcc, clang-18} × {c++17, c++20}`, each overriding
+`--cxxopt=-std=<standard>` and `CC`/`CXX` on the command line — and runs
+`abicheck compare` against the SAME committed baseline every other leg
+uses. Any per-leg divergence (a finding that appears under one
+compiler/standard combination and not another, despite no real source
+change) is directly visible in each leg's own artifact/job summary
+instead of silently invisible behind the single pinned toolchain the
+required gate always uses. Verified locally: a `gcc -std=c++20` build
+already surfaces a real, informative divergence — the compiler-generated
+default constructor's export shape differs from the `-std=c++17`
+baseline it's compared against, exactly the class of standard-driven ABI
+question this matrix exists to surface (not itself an error in the
+fixture or the workflow). Deliberately non-gating (no "Enforce gate"
+step): this validates toolchain-invariance as a property to *watch*, not
+a pass/fail contract this fixture's own ABI must additionally satisfy.
+
+## Cold/warm performance benchmarks (architecture review P1-8)
+
+`performance.yml` — a dedicated, `workflow_dispatch` + weekly-scheduled
+workflow (never on every PR: a genuinely cold Bazel build plus a cold
+`abicheck dump` is real wall-clock cost, not worth paying per-PR for a
+number nobody's blocked on) — measures the actual speedup Bazel's disk
+cache and abicheck's own snapshot cache (`XDG_CACHE_HOME`-scoped) give,
+rather than assuming one.
+
+- **Bazel**: `bazel clean --expunge` + an empty disk-cache directory,
+  then `bazel build //:math`, timed — "cold". `bazel clean` (server/output
+  tree wiped, but the disk-cache directory from the cold run kept) and
+  the identical build again, timed — "warm", isolating the disk cache's
+  own contribution from in-server incrementality (which the cold run
+  never had a chance to use either).
+- **abicheck**: the identical isolation, one layer up — an empty, dedicated
+  `XDG_CACHE_HOME` for `abicheck dump bazel-bin/libmath.so ...`, timed
+  cold, then the same command again against the same (now-populated)
+  cache directory, timed warm.
+
+Publishes a Markdown cold/warm/speedup table (`scripts/
+render_performance_summary.py`) to the job summary and an
+`abicheck-lab-performance-timings` JSON artifact (90-day retention, long
+enough to eyeball a trend by hand across runs — no trend-reporting
+database exists yet, see AGENTS.md's (abicheck/abicheck) own "Deferred
+entirely" entry for that same open gap upstream). `contents: read` only,
+no PR interaction, never gates.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
-True)` target with a single header-only public surface. It does not yet
-cover: `cc_shared_library`, generated headers, multiple libraries, a
-consumer binary, a `MODULE.bazel.lock`, or a machine-readable scenario
-matrix with an expected/actual oracle per patch (fixtures/patches/scripts
-that apply a change to a clean fixture, run a scan, and assert on the JSON
-— rather than relying on long-lived PRs and human eyeballing of comments).
+True)` target (`//:math`) with the full `depth: source` gate pipeline,
+a second, independent library (`//strings_lib:strings`, see
+"Multi-library aggregate gate" above) exercising the `abicheck aggregate`
+CLI at a deliberately scoped-down `depth: headers`, and a real consumer
+application (`//consumer:consumer_app`, see "Consumer/app-scoped
+validation" above) exercising `compare --used-by`/`--verify-runtime`. It
+does not yet cover: `cc_shared_library` or a `MODULE.bazel.lock`. It DOES
+now have a machine-readable scenario matrix
+with an expected/actual oracle per patch (fixtures/patches/scripts that
+apply a change to a clean fixture, run a scan, and assert on the JSON —
+rather than relying on long-lived PRs and human eyeballing of comments) --
+see "Scenario validation" below -- and a **generated-header** scenario
+closing that specific gap: `generated_header_removed_function`
+(`fixtures/generated_header/`) sources its public header from a Bazel
+`genrule` rather than a checked-in file, proving abicheck's header
+ingestion works against a build-output header, not just a source-tree one.
+Getting this working surfaced a real GCC quote-include mechanics gotcha,
+worth recording since it'll bite any future generated-header fixture the
+same way: a bare `#include "lib.h"` only ever resolves via gcc's own
+same-directory-as-the-compiling-file check, which can only succeed for a
+real, checked-in source-tree file -- for a header that's a build output,
+that check fails and `-iquote bazel-out/.../bin` (Bazel's own fallback,
+which appends the include text verbatim to the bin root, not the
+compiling file's own package path) never finds it either unless the
+`#include` spells out the full package-relative path
+(`#include "fixtures/generated_header/v1/lib.h"`, not bare `"lib.h"`) --
+confirmed with `CcInfo.compilation_context.headers` correctly listing the
+generated file all along, so this is a compiler include-search-order
+detail, not a Bazel dependency-graph bug.
 A security scenario specifically demonstrating "breaking code change +
 modified committed baseline in the same PR still gates red" also hasn't
 been exercised as an actual test PR yet — the architecture above (baseline
@@ -315,13 +609,38 @@ Current scenarios:
 | `add_function` | v2 adds a new exported function | `COMPATIBLE` |
 | `remove_function` | v2 removes an exported function | `BREAKING` |
 | `change_signature` | v2 changes a parameter type (mangled-name change) | `BREAKING` |
+| `generated_header_removed_function` | v2's Bazel-*generated* header drops an exported function | `BREAKING` |
 
 Run locally: `python3 scripts/run_scenario.py` (needs `bazel` and the
 `abicheck` CLI on `PATH`, and `pyyaml` installed) — or `--only <name>` for
 a single scenario. Results are written to `scenario-results/summary.json`.
 
+### Automatic stale-suppression detection (`scenarios-canary.yml`)
+
+`scenarios.yml` re-verifies every scenario's expected verdict and every
+suppression's `expected_suppressed_count`/`expected_suppressed_symbols`
+on every run — but only ever against the one pinned `abicheck` commit,
+and only when this repo's own fixtures/scenarios/suppressions change. A
+suppression can go stale for a reason that has nothing to do with a
+change in *this* repo: an upstream `abicheck` release changes how a
+finding is classified or matched, and a selector that used to match a
+real finding silently stops. `scenarios-canary.yml` closes that gap: the
+identical scenario suite, run against `abicheck/main`'s current HEAD on a
+weekly schedule (plus `workflow_dispatch` for an on-demand check right
+before a planned pin bump) — so staleness is caught independently of any
+lab-repo PR activity, before the pin is ever bumped to include it. Never
+gates a PR (nothing here triggers it) and posts no PR comment (there is
+none); a red run in the Actions tab plus its own job summary is the
+signal, and it means "review before bumping the pin" (which may be a
+desired detector improvement, not necessarily a bug), not "this repo is
+broken."
+
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario, a generated-header
-scenario, a multi-library/consumer-app scenario, `MODULE.bazel.lock`
-pinning, and a benchmark workflow. These are real follow-up work, not
+silently dropped): a `cc_shared_library` scenario and `MODULE.bazel.lock`
+pinning. `fixtures/`/`scenarios/` themselves are still single-library
+`v1`/`v2` compare fixtures — the multi-library *aggregate-plumbing* gap
+is covered separately by `strings_lib/`'s own CI wiring (see
+"Multi-library aggregate gate" above) and the consumer/app-scoped gap by
+`consumer/`'s own CI wiring (see "Consumer/app-scoped validation" above),
+neither by a `scenarios.yml` entry. These are real follow-up work, not
 abandoned scope.

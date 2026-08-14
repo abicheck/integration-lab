@@ -1,0 +1,43 @@
+load(":facts.bzl", "abicheck_facts_pack")
+
+# The Clang plugin's built shared object. NOT committed (it's a compiled
+# artifact, ABI-locked to the loading clang's exact LLVM major per
+# contrib/abicheck-clang-plugin's own README -- committing one binary would
+# only be correct for whichever LLVM major built it). The workflow step
+# that builds contrib/abicheck-clang-plugin (see abi-scan.yml's
+# `l4_clang_plugin` job) copies its output here before invoking
+# `abicheck_facts_aspect`; see ../../.gitignore.
+#
+# `allow_single_file` on the aspect's own `_plugin_so` attr means this must
+# resolve to a real file on disk at analysis time -- if it's missing
+# (`bazel build --aspects=...abicheck_facts_aspect` invoked without the
+# plugin-build step first), Bazel fails loudly with a normal missing-input
+# error rather than silently producing an empty facts pack.
+exports_files(["libabicheck-facts.so"])
+
+alias(
+    name = "plugin_so",
+    actual = "//tools/abicheck:libabicheck-facts.so",
+    visibility = ["//visibility:public"],
+)
+
+# //:math's declared-output source-fact pack (architecture review P1-1) --
+# see facts.bzl's module docstring for why it exists. `bazel build
+# //tools/abicheck:math_abicheck_inputs` produces
+# `bazel-bin/tools/abicheck/math_abicheck_inputs/` -- pass that directly as
+# `abicheck compare/dump --build-info`.
+#
+# Deliberately defined HERE, in this package, rather than in the root
+# BUILD.bazel that declares `//:math`/`//:math_api` themselves -- targeting
+# `//:math` by its fully-qualified label needs no local declaration in
+# `:math`'s own package. Keeping root BUILD.bazel's own diff scoped to only
+# `:math`'s own declaration is what lets
+# scripts/check_coverage_contract.py's coverage-contract exemption
+# correctly tell "an unrelated Bazel package gained a new target" (this)
+# apart from "something in :math's own package changed" (genuinely
+# compile-affecting) -- see that script's own `--cquery`-aware check.
+abicheck_facts_pack(
+    name = "math_abicheck_inputs",
+    target = "//:math",
+    visibility = ["//visibility:public"],
+)

@@ -3,3 +3,5 @@ bazel-*
 __pycache__/
 *.pyc
 scenario-results/
+tools/abicheck/libabicheck-facts.so
+MODULE.bazel.lock

@@ -112,9 +112,12 @@ PATTERNS = (
     ".github/CODEOWNERS",
     "scripts/normalize_baseline.py",
     "scripts/render_scan_comment.py",
+    "scripts/render_conformance_report.py",
+    "scripts/render_aggregate_summary.py",
     "scripts/check_coverage_contract.py",
     "scripts/paths_changed.py",
     "scripts/build_bazel_evidence_pack.py",
+    "scripts/merge_abicheck_facts.py",
 )
 
 

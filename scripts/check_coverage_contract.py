@@ -133,21 +133,175 @@ _BUILD_AFFECTING_PATTERNS = (
 # imported, matching this pair of scripts' existing convention of keeping
 # their pattern lists as independent, doc-linked supersets rather than a
 # shared module (see this file's own docstring on that invariant).
+#
+# Codex review, fresh evidence (P1-5/P1-6 follow-up): strings_lib/ and
+# consumer/ are real, independently-compiled Bazel packages -- unlike
+# fixtures/scenarios/suppressions, they DO have their own real compile
+# actions -- but, same as those three, `bazel query 'buildfiles(deps(
+# //:math))'` never resolves through either (verified empirically when
+# each was added: only //:BUILD.bazel is present), so a change confined
+# to one of them structurally cannot affect //:math's own compiled
+# output, same as this whole exemption already reasons for BUILD.bazel/
+# .bzl files via --buildfiles. Without this, a PR touching ONLY
+# strings_lib/src/strings.cc (or consumer/app.cc) matched the generic
+# *.cc/*.h source patterns below unconditionally -- there's no
+# --buildfiles-equivalent target-reachability check for *source* files,
+# only for BUILD-graph files -- denying the empty-scope exemption and
+# failing the required :math gate's export-match-ratio floor for a diff
+# that never touched :math (scope=changed correctly selects 0 TUs from
+# deps(//:math), since neither tree is in it). Unlike
+# scripts/paths_changed.py's own EXCLUDED_PREFIXES, this deliberately
+# does NOT add these two trees there too: paths_changed.py decides
+# whether ANY of this workflow's jobs run at all, including the
+# scan_strings/consumer_scoped diagnostic jobs that exist specifically to
+# react to a strings_lib/consumer-only change -- excluding them there
+# would make those jobs skip themselves on exactly the changes they're
+# supposed to run for. This file's own exemption is scoped narrowly to
+# "can this diff affect //:math", which is the only question these two
+# trees are structurally guaranteed to answer "no" to.
 _EXCLUDED_PREFIXES = (
     "fixtures/",
     "scenarios/",
     "suppressions/",
+    "strings_lib/",
+    "consumer/",
 )
 
 
-def _is_build_affecting(changed_files):
+# Repo-wide: these affect EVERY target's toolchain/build configuration
+# regardless of which Bazel package they live in (a bzlmod dependency
+# bump, a global copt in .bazelrc, a Bazel version pin), so package
+# awareness below never applies to them -- always disqualifying.
+_REPO_WIDE_BUILD_AFFECTING_PATTERNS = (
+    "MODULE.bazel",
+    "MODULE.bazel.lock",
+    ".bazelrc",
+    ".bazelversion",
+    ".abicheck.yml",
+)
+
+# Package-scoped: a BUILD.bazel/BUILD/.bzl file only disqualifies the
+# exemption when its OWN package is one `deps(//:math)` actually resolves
+# through -- see _is_build_affecting's own docstring for why (P1-1,
+# architecture review: this repo's own facts.bzl/BUILD.bazel additions
+# under tools/abicheck/ are a real, first-hand example of a Bazel-file
+# change that structurally cannot affect `:math`'s own compilation, since
+# nothing in `:math`'s dependency closure references that package at all).
+_PACKAGE_SCOPED_BUILD_AFFECTING_PATTERNS = (
+    "BUILD.bazel",
+    "*/BUILD",
+    "*/BUILD.bazel",
+    "*.bzl",
+)
+
+# Real C/C++ source patterns stay unconditionally disqualifying, same as
+# before -- unlike a BUILD.bazel/.bzl file, a source/header's mere
+# existence outside deps(//:math)'s resolved *target* set says nothing
+# about whether it's reachable from //:math's own compile (Bazel doesn't
+# require every included header to be its own declared target), so
+# there's no package-membership signal here that's safe to trust the way
+# there is for a BUILD-graph file.
+_SOURCE_BUILD_AFFECTING_PATTERNS = (
+    "include/*",
+    "src/*",
+    "*.h",
+    "*.hh",
+    "*.hpp",
+    "*.hxx",
+    "*.inc",
+    "*.c",
+    "*.C",
+    "*.cc",
+    "*.cpp",
+    "*.cxx",
+    "*.c++",
+)
+
+assert set(_BUILD_AFFECTING_PATTERNS) == (
+    set(_REPO_WIDE_BUILD_AFFECTING_PATTERNS)
+    | set(_PACKAGE_SCOPED_BUILD_AFFECTING_PATTERNS)
+    | set(_SOURCE_BUILD_AFFECTING_PATTERNS)
+), "the three-way split above must stay a partition of _BUILD_AFFECTING_PATTERNS"
+
+
+def _label_to_path(label):
+    """`//pkg:file` -> `pkg/file` (repo-relative path); `//:file` (root
+    package) -> `file`. `None` for an external-repo label (`@repo//pkg:file`)
+    -- a changed file path from a PR diff is always workspace-relative, so
+    it can never equal one of those and there's nothing useful to compare
+    against.
+    """
+    if not label.startswith("//"):
+        return None
+    pkg, _, name = label[2:].partition(":")
+    return f"{pkg}/{name}" if pkg else name
+
+
+def _loaded_buildfiles(buildfiles_path):
+    """The exact set of repo-relative BUILD/.bzl file paths
+    `bazel query 'buildfiles(deps(//:math))'`'s own output resolved to
+    (one label per line), or None if unreadable -- None (not an empty
+    set) so the caller can tell "no data available, fall back to the
+    fully conservative check" apart from "resolved, and none of them are
+    in this diff", matching this file's fail-closed convention everywhere
+    else (an empty set would make EVERY BUILD.bazel/.bzl file look safe to
+    exempt, which is exactly backwards for missing data).
+
+    `buildfiles()` is Bazel's own answer to "which BUILD/.bzl files were
+    actually loaded to analyze this target set" -- strictly more precise
+    than a package-membership guess (Codex review, fresh evidence: a
+    package-membership check can't see a `.bzl` macro loaded from an
+    unrelated package, e.g. `//build_defs:cc.bzl`, that a target's BUILD
+    file `load()`s -- `buildfiles()` includes exactly that file since it
+    walks the real load graph, not just the target graph).
+    """
+    try:
+        with open(buildfiles_path, "r", encoding="utf-8") as fh:
+            labels = [line.strip() for line in fh if line.strip()]
+    except OSError:
+        return None
+    paths = set()
+    for label in labels:
+        path = _label_to_path(label)
+        if path is not None:
+            paths.add(path)
+    return paths
+
+
+def _is_build_affecting(changed_files, loaded_buildfiles=None):
+    """True if any path in `changed_files` could plausibly change what
+    `//:math` compiles to.
+
+    `loaded_buildfiles`, when given (from `_loaded_buildfiles`, i.e. real
+    `bazel query 'buildfiles(deps(//:math))'` output), narrows the
+    package-scoped patterns (`BUILD.bazel`/`*.bzl`/...): a matching file
+    only disqualifies the exemption when it's one of the EXACT files
+    Bazel's own load graph says were actually used to build `//:math` --
+    an unrelated BUILD.bazel/.bzl file elsewhere in the repo structurally
+    cannot affect `:math`'s compilation, regardless of what changed inside
+    it. `loaded_buildfiles is None` (query data unavailable, or the caller
+    didn't supply it) falls back to the original, fully conservative
+    behavior: every package-scoped pattern match disqualifies, same as
+    before this refinement (fail closed on missing evidence, matching
+    every other extractor in this file). Repo-wide and source patterns are
+    never narrowed by this -- see their own pattern-list comments for why.
+    """
     import fnmatch
-    return any(
-        fnmatch.fnmatch(path, pattern)
-        for path in changed_files
-        if not any(path.startswith(prefix) for prefix in _EXCLUDED_PREFIXES)
-        for pattern in _BUILD_AFFECTING_PATTERNS
-    )
+
+    def _matches(path, patterns):
+        return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+    for path in changed_files:
+        if any(path.startswith(prefix) for prefix in _EXCLUDED_PREFIXES):
+            continue
+        if _matches(path, _REPO_WIDE_BUILD_AFFECTING_PATTERNS):
+            return True
+        if _matches(path, _SOURCE_BUILD_AFFECTING_PATTERNS):
+            return True
+        if _matches(path, _PACKAGE_SCOPED_BUILD_AFFECTING_PATTERNS):
+            if loaded_buildfiles is None or path in loaded_buildfiles:
+                return True
+    return False
 
 # crosscheck layers that require public-header provenance to run at all --
 # verified against the real report: with no --public-header/--public-header-dir
@@ -301,7 +455,7 @@ def _has_public_header_provenance(coverage):
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
              require_public_header_provenance, min_export_match_ratio,
-             changed_files=None):
+             changed_files=None, loaded_buildfiles=None):
     coverage = _coverage_by_layer(report)
     # `level.depth` only exists on a `scan`-mode report. `dump`-mode
     # snapshots (baseline.yml) have no `level` key at all -- absent, not
@@ -368,7 +522,7 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
         exemptible = (
             selected_tus == 0
             and changed_files is not None
-            and not _is_build_affecting(changed_files)
+            and not _is_build_affecting(changed_files, loaded_buildfiles)
         )
         if exemptible:
             # Confirmed empty scope=changed replay over a confirmed
@@ -452,6 +606,16 @@ def main():
         "export-match-ratio exemption to ever apply. Omit to always "
         "enforce the ratio check (the pre-exemption behavior).",
     )
+    parser.add_argument(
+        "--buildfiles", default="",
+        help="Path to `bazel query 'buildfiles(deps(//:math))'` output "
+        "(one label per line). Narrows the exemption's BUILD.bazel/.bzl "
+        "disqualification to only the exact files Bazel's own load graph "
+        "says were actually used to build //:math (see "
+        "_is_build_affecting's own docstring). Omit to fall back to the "
+        "original, fully conservative behavior -- any BUILD.bazel/.bzl "
+        "change anywhere disqualifies.",
+    )
     args = parser.parse_args()
 
     changed_files = None
@@ -465,6 +629,8 @@ def main():
             # these match" check and wrongly permit the exemption. None
             # correctly falls through to the ordinary ratio check instead.
             changed_files = None
+
+    loaded_buildfiles = _loaded_buildfiles(args.buildfiles) if args.buildfiles else None
 
     try:
         with open(args.report, "r", encoding="utf-8") as fh:
@@ -490,6 +656,7 @@ def main():
         require_public_header_provenance=args.require_public_header_provenance,
         min_export_match_ratio=args.min_export_match_ratio,
         changed_files=changed_files,
+        loaded_buildfiles=loaded_buildfiles,
     )
 
     with open(args.output, "w", encoding="utf-8") as fh:
