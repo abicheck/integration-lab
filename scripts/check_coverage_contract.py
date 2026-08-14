@@ -133,10 +133,38 @@ _BUILD_AFFECTING_PATTERNS = (
 # imported, matching this pair of scripts' existing convention of keeping
 # their pattern lists as independent, doc-linked supersets rather than a
 # shared module (see this file's own docstring on that invariant).
+#
+# Codex review, fresh evidence (P1-5/P1-6 follow-up): strings_lib/ and
+# consumer/ are real, independently-compiled Bazel packages -- unlike
+# fixtures/scenarios/suppressions, they DO have their own real compile
+# actions -- but, same as those three, `bazel query 'buildfiles(deps(
+# //:math))'` never resolves through either (verified empirically when
+# each was added: only //:BUILD.bazel is present), so a change confined
+# to one of them structurally cannot affect //:math's own compiled
+# output, same as this whole exemption already reasons for BUILD.bazel/
+# .bzl files via --buildfiles. Without this, a PR touching ONLY
+# strings_lib/src/strings.cc (or consumer/app.cc) matched the generic
+# *.cc/*.h source patterns below unconditionally -- there's no
+# --buildfiles-equivalent target-reachability check for *source* files,
+# only for BUILD-graph files -- denying the empty-scope exemption and
+# failing the required :math gate's export-match-ratio floor for a diff
+# that never touched :math (scope=changed correctly selects 0 TUs from
+# deps(//:math), since neither tree is in it). Unlike
+# scripts/paths_changed.py's own EXCLUDED_PREFIXES, this deliberately
+# does NOT add these two trees there too: paths_changed.py decides
+# whether ANY of this workflow's jobs run at all, including the
+# scan_strings/consumer_scoped diagnostic jobs that exist specifically to
+# react to a strings_lib/consumer-only change -- excluding them there
+# would make those jobs skip themselves on exactly the changes they're
+# supposed to run for. This file's own exemption is scoped narrowly to
+# "can this diff affect //:math", which is the only question these two
+# trees are structurally guaranteed to answer "no" to.
 _EXCLUDED_PREFIXES = (
     "fixtures/",
     "scenarios/",
     "suppressions/",
+    "strings_lib/",
+    "consumer/",
 )
 
 
