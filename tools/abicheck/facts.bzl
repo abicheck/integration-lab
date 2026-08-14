@@ -226,20 +226,51 @@ def _abicheck_facts_aspect_impl(target, ctx):
         transitive = [cc_toolchain.all_files],
     )
 
+    # Codex review, fresh evidence: --cxxopt/--copt/--conlyopt (workspace
+    # .bazelrc entries like this repo's own `build --cxxopt=-std=c++17`, or
+    # a command-line override) are exposed on the cpp configuration
+    # fragment, NOT on the rule's own `copts` attribute -- the previous
+    # `user_compile_flags = ctx.rule.attr.copts` fed this action only the
+    # rule-local flags, silently dropping every workspace-level one. A
+    # header that branches on __cplusplus/the resolved standard, or any
+    # future -D/-U passed via --copt, would then be parsed under a
+    # different effective configuration than the real compile that
+    # produced the binary this facts pack is meant to describe -- exactly
+    # the class of divergence the L4 replay-vs-plugin conformance report
+    # exists to catch, not manufacture. `--copt` applies to both C and C++
+    # compiles; `--cxxopt`/`--conlyopt` apply to only one, so the split
+    # below picks the matching one per source rather than always using
+    # cxxopts (which would wrongly inject a C++-only flag into a `.c`
+    # compile). Order matches a real compile action: workspace-level flags
+    # first, rule-local `copts` last, so a rule's own override still wins.
+
     facts_dirs = []
     for src in srcs:
+        # `.c` (lowercase) is the one extension this aspect treats as C
+        # rather than C++ -- matching gcc/clang's own suffix convention (a
+        # capital `.C` is C++, same as `.cc`/`.cpp`/...), and the only
+        # split that matters for choosing cxxopts vs conlyopts below.
+        is_c_source = src.extension == "c"
+        source_specific_opts = (
+            ctx.fragments.cpp.conlyopts if is_c_source else ctx.fragments.cpp.cxxopts
+        )
+
         # src.short_path (the full package-relative path), not
-        # src.basename -- two sources sharing a basename in different
-        # subdirectories (srcs = ["client/foo.cc", "server/foo.cc"], a
-        # completely ordinary layout) would otherwise both declare the
-        # identical "<name>.abicheck_facts/foo.cc" tree artifact, which
-        # Bazel rejects as a duplicate output at analysis time (Codex
-        # review, fresh evidence). "/" -> "_" keeps the declared path a
-        # single directory component per source rather than nesting.
+        # src.basename, and NOT a flattened "/" -> "_" encoding of it
+        # either -- that flattening aliased two distinct valid paths onto
+        # the same declared directory (e.g. "a/b.cc" and "a_b.cc" both
+        # produced "a_b.cc"), which Bazel rejects as a duplicate output at
+        # analysis time exactly like the bare-basename collision this was
+        # originally written to fix (Codex review, fresh evidence).
+        # declare_directory accepts a path containing "/" directly -- it
+        # creates the intermediate directories as part of the declared
+        # tree artifact, so preserving the real relative path is both
+        # simpler and, unlike string-munging a separator, guaranteed
+        # injective (two different paths are never equal as paths).
         out_dir = ctx.actions.declare_directory(
             "{}.abicheck_facts/{}".format(
                 ctx.rule.attr.name,
-                src.short_path.replace("/", "_"),
+                src.short_path,
             ),
         )
 
@@ -264,7 +295,9 @@ def _abicheck_facts_aspect_impl(target, ctx):
                 compilation_context.local_defines.to_list(),
             ),
             user_compile_flags = (
-                ctx.rule.attr.copts if hasattr(ctx.rule.attr, "copts") else []
+                ctx.fragments.cpp.copts +
+                source_specific_opts +
+                (ctx.rule.attr.copts if hasattr(ctx.rule.attr, "copts") else [])
             ),
         )
         command_line = cc_common.get_memory_inefficient_command_line(
