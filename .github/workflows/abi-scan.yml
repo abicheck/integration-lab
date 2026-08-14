@@ -385,18 +385,18 @@ jobs:
       # from here through l4_clang_replay only ever gates on its own
       # predecessor's outcome, never on the required gate above.
       #
-      # Residual, deliberately not chased further: the Bazel evidence pack
-      # (`steps.bazel_pack`, built from an aquery captured against the
-      # ORIGINAL gcc build) is reused unchanged rather than re-captured
-      # against this clang-18 rebuild -- its own recorded compile actions
-      # (source/flags/target graph) still describe the gcc invocation. This
-      # doesn't reintroduce the confound Codex flagged (that was about the
-      # *compiled binary's* symbols/DWARF/layout, which this fix does
-      # address), only a narrower, separate question of whether the L3/L4
-      # evidence pack's own recorded compiler identity matches; re-deriving
-      # it too would mean re-running the cquery/aquery/evidence-pack chain
-      # a second time for one non-gating diagnostic leg, which was judged
-      # not worth the added job time for this pass.
+      # Codex review, fresh evidence (second round): rebuilding only the
+      # *binary* with clang-18 above was not enough on its own -- the
+      # evidence pack (`steps.bazel_pack`) still described the ORIGINAL
+      # gcc compile action (source/flags/target graph from the aquery
+      # captured before any of this), so the L4 replay leg reconstructed
+      # its source-fact view from a gcc-flavored compile command even
+      # while scanning a clang-compiled binary. Compiler-specific macros,
+      # default include paths, or flags reaching source facts could still
+      # read as a producer-only divergence for that reason alone. Fixed by
+      # re-capturing cquery/aquery and rebuilding the evidence pack here,
+      # under the same clang-18 CC/CXX environment as the rebuild above,
+      # into a pack this leg uses instead of the original gcc-derived one.
       - name: Install Clang for the L4 replay leg (matches l4-clang-plugin's toolchain)
         id: install_l4_replay_clang
         if: steps.relevance.outputs.relevant == 'true'
@@ -415,6 +415,38 @@ jobs:
           CXX: clang++-18
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
 
+      - name: Capture Bazel cquery/aquery for L4 replay (clang-18)
+        id: l4_replay_bazel_queries
+        if: steps.l4_replay_build.outcome == 'success'
+        continue-on-error: true
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/bazel-cquery-clang.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/bazel-aquery-clang.json"
+
+      # Reuses steps.abicheck_pip's already-installed abicheck (same
+      # pinned commit) rather than reinstalling.
+      - name: Build Bazel evidence pack for L4 replay (clang-18)
+        id: l4_replay_bazel_pack
+        if: steps.l4_replay_bazel_queries.outcome == 'success' && steps.abicheck_pip.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery-clang.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery-clang.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack-clang" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary-clang.json"
+          echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack-clang" >> "$GITHUB_OUTPUT"
+
       # l4-clang-replay: same shape as the required-gate scan above
       # (depth: source, --sources . replay producer, same committed
       # baseline and Bazel evidence pack) but with the Clang header
@@ -426,7 +458,7 @@ jobs:
       # overrides in one matrix (see this repo's own architecture notes).
       - name: L4 diagnostic · Clang replay (non-gating, artifact only)
         id: l4_clang_replay
-        if: always() && steps.l4_replay_build.outcome == 'success'
+        if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
@@ -434,7 +466,7 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           sources: .
-          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          build-info: ${{ steps.l4_replay_bazel_pack.outputs.pack_dir }}
           ast-frontend: clang
           extra-args: '--public-header-dir include'
           against: ${{ runner.temp }}/math.base.abicheck.json

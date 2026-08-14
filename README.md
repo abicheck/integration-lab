@@ -316,9 +316,14 @@ before that leg runs (after the required gate and both L2 legs have
 already consumed the original gcc-built binary) — otherwise
 compiler-dependent symbols/DWARF/type representations could read as a
 producer-only divergence even when the two producers genuinely agree,
-defeating the point of isolating the producer axis. Best-effort like the
-plugin job's own Clang install: a failure here just skips the
-`l4-clang-replay` diagnostic for that run.
+defeating the point of isolating the producer axis. The Bazel evidence
+pack feeding L4 source facts is re-captured (a second `cquery`/`aquery` +
+`build_bazel_evidence_pack.py` run) under the same clang-18 environment
+too, so `l4-clang-replay`'s recorded compile actions describe the same
+toolchain as the binary it's scanning, not the required gate's original
+gcc build. Best-effort like the plugin job's own Clang install: a
+failure anywhere in this chain just skips the `l4-clang-replay`
+diagnostic for that run.
 
 ## Known limitations / follow-ups
 
