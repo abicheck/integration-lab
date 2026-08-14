@@ -116,6 +116,7 @@ PATTERNS = (
     "scripts/check_coverage_contract.py",
     "scripts/paths_changed.py",
     "scripts/build_bazel_evidence_pack.py",
+    "scripts/merge_abicheck_facts.py",
 )
 
 

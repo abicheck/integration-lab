@@ -1,0 +1,20 @@
+# The Clang plugin's built shared object. NOT committed (it's a compiled
+# artifact, ABI-locked to the loading clang's exact LLVM major per
+# contrib/abicheck-clang-plugin's own README -- committing one binary would
+# only be correct for whichever LLVM major built it). The workflow step
+# that builds contrib/abicheck-clang-plugin (see abi-scan.yml's
+# `l4_clang_plugin` job) copies its output here before invoking
+# `abicheck_facts_aspect`; see ../../.gitignore.
+#
+# `allow_single_file` on the aspect's own `_plugin_so` attr means this must
+# resolve to a real file on disk at analysis time -- if it's missing
+# (`bazel build --aspects=...abicheck_facts_aspect` invoked without the
+# plugin-build step first), Bazel fails loudly with a normal missing-input
+# error rather than silently producing an empty facts pack.
+exports_files(["libabicheck-facts.so"])
+
+alias(
+    name = "plugin_so",
+    actual = "//tools/abicheck:libabicheck-facts.so",
+    visibility = ["//visibility:public"],
+)

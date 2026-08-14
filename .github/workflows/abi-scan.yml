@@ -625,23 +625,38 @@ jobs:
             "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
             > "$RUNNER_TEMP/math.base.abicheck.json"
 
-      # Deliberately NO disk-cache step for this job, unlike scan/canary
-      # above (Codex review). This job's whole point is a SIDE EFFECT of
-      # compiling (the plugin's source_facts/*.jsonl output) that Bazel
-      # itself has no idea exists -- it's not a declared action output.
-      # Bazel's own remote/disk caching contract (bazel.build/remote/caching)
-      # is "a cache hit downloads the action's declared outputs instead of
-      # executing the action" -- so a disk-cache hit on this exact compile
-      # action (identical copts/toolchain, which every run of this job
-      # after the first one restoring a shared/prior cache entry would be)
-      # skips invoking clang (and therefore the plugin) entirely, leaving
-      # the freshly emptied abicheck_inputs/ directory empty while the
-      # build itself still reports success -- silently degrading this
-      # profile to an ordinary binary/header comparison with no visible
-      # sign anything was wrong. Never consulting a disk cache for this one
-      # build is the fix; the verify step below is the second layer (fail
-      # closed even if some other caching path -- a future flag, a runner
-      # image default -- reintroduces the same risk).
+      # Architecture review P1-1: this job used to have NO disk-cache step
+      # here, unlike scan/canary above, because the plugin was injected via
+      # --copt onto //:math's OWN ordinary compile action -- from Bazel's
+      # point of view that action's only output was the object file, so
+      # the plugin's source_facts/*.jsonl write was an untracked SIDE
+      # EFFECT no cache (local, disk, or remote) had any visibility into.
+      # A cache hit on that exact compile action would silently skip
+      # invoking clang (and therefore the plugin) entirely, leaving
+      # source_facts/ empty while the build still reported success.
+      #
+      # tools/abicheck/facts.bzl's abicheck_facts_aspect fixes this
+      # structurally rather than by avoiding caching altogether: it runs
+      # the plugin as its OWN action (a second, `-fsyntax-only` invocation,
+      # separate from the target's real compile) with the resulting
+      # source_facts/ directory declared via ctx.actions.declare_directory
+      # -- a real Bazel action output like any other, so this job's disk
+      # cache is now exactly as safe here as it already is on scan/canary
+      # (see facts.bzl's own module docstring for the full design and the
+      # empirical verification of why the naive --copt approach silently
+      # produced an empty pack in the first place). `//:math_abicheck_inputs`
+      # (root BUILD.bazel) is the merged, ready-to-consume pack this job
+      # now builds directly, instead of hand-composing --copt flags here.
+      - name: Set up Bazel disk cache
+        if: steps.relevance.outputs.relevant == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/facts.bzl') }}-plugin-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/facts.bzl') }}-
+            bazel-disk-${{ runner.os }}-
+
       # Ubuntu 24.04's default `clang`/`clang++` is LLVM 18 (confirmed by
       # this workflow's own install-deps.sh log output elsewhere in this
       # repo) -- the matching dev packages per contrib/abicheck-clang-plugin's
@@ -692,59 +707,48 @@ jobs:
           cd "$RUNNER_TEMP/abicheck-src/contrib/abicheck-clang-plugin"
           cmake -S . -B build -DCMAKE_PREFIX_PATH="$(llvm-config-18 --cmakedir)/.."
           cmake --build build
-          echo "plugin_so=$RUNNER_TEMP/abicheck-src/contrib/abicheck-clang-plugin/build/libabicheck-facts.so" >> "$GITHUB_OUTPUT"
+          # Staged inside the Bazel workspace (gitignored -- see
+          # tools/abicheck/BUILD.bazel's own comment) so
+          # abicheck_facts_aspect's `_plugin_so` attr, an ordinary Bazel
+          # source-file label, can depend on it like any other input.
+          cp build/libabicheck-facts.so "$GITHUB_WORKSPACE/tools/abicheck/libabicheck-facts.so"
 
-      # ADR-038's own recipe: each -Xclang token as a separate Bazel
-      # --copt, an absolute out= so the //:math target's single compile
-      # action converges on one pack dir. public-roots= scopes the public
-      # surface to this repo's own include/ tree, mirroring
-      # --public-header-dir include used elsewhere in this workflow.
-      #
-      # Codex review: with CC unset, Bazel's autoconfigured Unix cc toolchain
-      # falls back to the runner's default gcc, and --copt just forwards
-      # these flags to WHICHEVER compiler that autoconfig picked -- gcc
-      # rejects -Xclang outright, so without this the whole plugin leg
-      # silently never actually built with the plugin at all. CC (and CXX,
-      # for the C++ compile this target actually needs) select Clang before
-      # Bazel's toolchain autoconfiguration runs for this job's one-and-only
-      # `bazel build` invocation.
-      - name: Build //:math with the plugin injected (source-fact collection)
+      # `//:math_abicheck_inputs` (root BUILD.bazel) is the aspect-produced,
+      # already-merged pack -- see tools/abicheck/facts.bzl's module
+      # docstring for the full design (a separate, declared-output action
+      # per translation unit, not a --copt side effect on //:math's own
+      # compile action). CC/CXX select Clang before Bazel's toolchain
+      # autoconfiguration runs -- with CC unset, Bazel's autoconfigured
+      # Unix cc toolchain falls back to the runner's default gcc, and the
+      # aspect's compile action would inherit that resolved (non-Clang)
+      # compiler too, which can't load a Clang plugin at all.
+      - name: Build //:math_abicheck_inputs (declared-output source facts)
         id: plugin_build
         if: steps.build_plugin.outcome == 'success'
         continue-on-error: true
         env:
           CC: clang-18
           CXX: clang++-18
-        run: |
-          set -euo pipefail
-          rm -rf "$RUNNER_TEMP/abicheck_inputs"
-          mkdir -p "$RUNNER_TEMP/abicheck_inputs"
-          bazel build //:math \
-            --copt="-fplugin=${{ steps.build_plugin.outputs.plugin_so }}" \
-            --copt=-Xclang --copt=-plugin-arg-abicheck-facts --copt=-Xclang \
-            --copt="out=$RUNNER_TEMP/abicheck_inputs" \
-            --copt=-Xclang --copt=-plugin-arg-abicheck-facts --copt=-Xclang \
-            --copt="public-roots=$(pwd)/include"
-          echo "inputs_dir=$RUNNER_TEMP/abicheck_inputs" >> "$GITHUB_OUTPUT"
+        run: bazel build //:math //:math_abicheck_inputs --disk_cache="$HOME/.cache/bazel-disk"
 
-      # Codex review, second layer: even with no disk cache consulted
-      # above, verify the plugin's side-effect output actually landed
-      # rather than trusting a clean `bazel build` exit alone -- a clean
-      # exit only proves the ACTION succeeded, not that the plugin (a
-      # side effect Bazel has no declared-output visibility into) ran and
-      # wrote anything. Fails this step (continue-on-error keeps the job
-      # non-blocking; the status-summary step reports it distinctly from
-      # "build failed") rather than silently handing an empty/missing
-      # facts directory to the compare step below, which would otherwise
-      # degrade to an ordinary binary/header comparison while reporting
-      # success.
+      # Second layer, same reasoning as before this job's facts became a
+      # real declared output: a clean `bazel build` exit only proves the
+      # action succeeded, not that the plugin actually resolved this
+      # repo's public headers (e.g. a future public-roots/-isystem
+      # mismatch like the one facts.bzl's own docstring documents fixing
+      # would build cleanly and silently produce zero declarations).
+      # Fails this step (continue-on-error keeps the job non-blocking; the
+      # status-summary step reports it distinctly from "build failed")
+      # rather than silently handing an empty facts pack to the compare
+      # step below, which would otherwise degrade to an ordinary
+      # binary/header comparison while reporting success.
       - name: Verify source facts were actually collected
         id: verify_facts
         if: steps.plugin_build.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
-          facts_dir="${{ steps.plugin_build.outputs.inputs_dir }}/source_facts"
+          facts_dir="bazel-bin/math_abicheck_inputs/source_facts"
           count=$(find "$facts_dir" -name '*.jsonl' -size +0c 2>/dev/null | wc -l)
           echo "Found $count non-empty source_facts/*.jsonl file(s) in $facts_dir"
           if [ "$count" -lt 1 ]; then
@@ -789,7 +793,7 @@ jobs:
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
             --ast-frontend clang \
-            --build-info "${{ steps.plugin_build.outputs.inputs_dir }}" \
+            --build-info bazel-bin/math_abicheck_inputs \
             --format json \
             -o abicheck-l4-clang-plugin.json \
             --policy strict_abi || true
@@ -824,9 +828,9 @@ jobs:
             elif [ "${{ steps.build_plugin.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: plugin failed to build against this runner'"'"'s LLVM/Clang -- likely a version mismatch (this profile is ABI-locked to the loading Clang'"'"'s exact LLVM major per abicheck'"'"'s own docs).'
             elif [ "${{ steps.plugin_build.outcome }}" != "success" ]; then
-              echo '⏭️ Skipped: Bazel build with the plugin injected via --copt failed.'
+              echo '⏭️ Skipped: `bazel build //:math_abicheck_inputs` (the declared-output facts aspect, tools/abicheck/facts.bzl) failed.'
             elif [ "${{ steps.verify_facts.outcome }}" != "success" ]; then
-              echo '⚠️ Bazel build succeeded but no source facts were actually collected -- likely a cached compile action serving stale outputs without re-running the plugin (Codex review; see the verify step'"'"'s own comment for why this is checked).'
+              echo '⚠️ Bazel build succeeded but no source facts were actually collected -- see the verify step'"'"'s own comment for why this is checked.'
             elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: could not install abicheck to consume the collected facts.'
             elif [ "${{ steps.l4_clang_plugin_compare.outcome }}" != "success" ]; then

@@ -331,6 +331,63 @@ gcc build. Best-effort like the plugin job's own Clang install: a
 failure anywhere in this chain just skips the `l4-clang-replay`
 diagnostic for that run.
 
+## Declared-output source-fact collection (`tools/abicheck/facts.bzl`)
+
+The `l4-clang-plugin` profile used to inject the abicheck Clang plugin via
+`--copt` onto `//:math`'s own ordinary compile action -- from Bazel's point
+of view that action's only output was the object file, so the plugin's
+`source_facts/*.jsonl` write was an untracked *side effect* invisible to
+Bazel's caching machinery (local, disk, or remote): a cache hit on that
+exact compile action would silently skip invoking clang -- and therefore
+the plugin -- entirely, leaving the facts directory empty while the build
+still reported success. The `l4_clang_plugin` job's own fix at the time
+was to simply never consult a disk cache for this job at all.
+
+`tools/abicheck/facts.bzl`'s `abicheck_facts_aspect` closes this
+structurally instead: for every compiled source in a `cc_library`/
+`cc_binary`, it runs the plugin as its *own*, separate action (a second
+`-fsyntax-only` invocation of the same compiler, built from the target's
+real `CcInfo` compilation context) with the resulting `source_facts/`
+directory declared via `ctx.actions.declare_directory` -- a real Bazel
+action output like any other, so it now participates in Bazel's ordinary
+caching contract correctly. `abicheck_facts_pack` (the same file) merges
+every per-source-file directory across a target and its `deps` into one
+`abicheck_inputs/`-shaped pack (per-TU filenames already embed a
+source-content hash, so merging is a safe flatten). `//:math_abicheck_inputs`
+(root `BUILD.bazel`) is this repo's own wiring of it, and
+`.github/workflows/abi-scan.yml`'s `l4_clang_plugin` job now just builds
+that target directly (`bazel build //:math //:math_abicheck_inputs`)
+instead of hand-composing `--copt` flags, with a disk-cache step enabled
+the same way the `scan`/`canary` jobs already have one.
+
+**A second, independent fix was required, not just the declared-output
+change:** even with a correctly-matching explicit `public-roots=`, the
+facts action still produced zero declarations, because the plugin gates
+every declaration on `SourceManager::isInSystemHeader()` *before* ever
+testing it against `public-roots` -- and this repo's own `:math_api`
+target declares its public header directory via `cc_library`'s
+`includes = [...]` attribute, which Bazel always renders as `-isystem`
+(verified empirically: a manual `clang -H` comparison across `-I` vs.
+`-isystem`, and across relative vs. absolute search-directory forms,
+traced through to the plugin's own `isInSystemHeader` call sites in
+`AbicheckFactsPlugin.cpp`). The aspect's facts-collecting action therefore
+builds its command line with `system_includes` folded into
+`include_directories` (`-I`, not `-isystem`) for this one action only --
+the target's real compile action is untouched, and this reclassification
+only removes the system-header disqualification for directories the
+caller already names in `public_roots`, so it cannot broaden the public
+surface to some unrelated third-party `-isystem` directory. See the
+`.bzl` file's own module docstring for the full design notes.
+
+The plugin's built `.so` is staged at `tools/abicheck/libabicheck-facts.so`
+(gitignored -- it's a compiled artifact, ABI-locked to the loading clang's
+exact LLVM major, never committed) by the `l4_clang_plugin` job's existing
+"Build the Clang plugin" step before `abicheck_facts_aspect` runs; outside
+CI, build it locally with the recipe in
+`contrib/abicheck-clang-plugin/README.md` (in the `abicheck/abicheck`
+repo) and copy it to that same path before running
+`bazel build //:math_abicheck_inputs`.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =

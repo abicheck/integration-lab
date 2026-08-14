@@ -1,5 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//tools/abicheck:facts.bzl", "abicheck_facts_pack")
 
 cc_library(
     name = "math_api",
@@ -13,5 +14,17 @@ cc_binary(
     srcs = ["src/math.cc"],
     deps = [":math_api"],
     linkshared = True,
+    visibility = ["//visibility:public"],
+)
+
+# Architecture review P1-1: the abicheck Clang plugin's source_facts, as a
+# real declared Bazel output (see tools/abicheck/facts.bzl's module
+# docstring for why this exists and how it differs from the old
+# --copt-injection side effect). `bazel build //:math_abicheck_inputs`
+# produces `bazel-bin/math_abicheck_inputs/` -- pass that directly as
+# `abicheck compare/dump --build-info`.
+abicheck_facts_pack(
+    name = "math_abicheck_inputs",
+    target = ":math",
     visibility = ["//visibility:public"],
 )
