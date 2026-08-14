@@ -353,10 +353,10 @@ action output like any other, so it now participates in Bazel's ordinary
 caching contract correctly. `abicheck_facts_pack` (the same file) merges
 every per-source-file directory across a target and its `deps` into one
 `abicheck_inputs/`-shaped pack (per-TU filenames already embed a
-source-content hash, so merging is a safe flatten). `//:math_abicheck_inputs`
+source-content hash, so merging is a safe flatten). `//tools/abicheck:math_abicheck_inputs`
 (root `BUILD.bazel`) is this repo's own wiring of it, and
 `.github/workflows/abi-scan.yml`'s `l4_clang_plugin` job now just builds
-that target directly (`bazel build //:math //:math_abicheck_inputs`)
+that target directly (`bazel build //:math //tools/abicheck:math_abicheck_inputs`)
 instead of hand-composing `--copt` flags, with a disk-cache step enabled
 the same way the `scan`/`canary` jobs already have one.
 
@@ -386,7 +386,7 @@ exact LLVM major, never committed) by the `l4_clang_plugin` job's existing
 CI, build it locally with the recipe in
 `contrib/abicheck-clang-plugin/README.md` (in the `abicheck/abicheck`
 repo) and copy it to that same path before running
-`bazel build //:math_abicheck_inputs`.
+`bazel build //tools/abicheck:math_abicheck_inputs`.
 
 ## Known limitations / follow-ups
 

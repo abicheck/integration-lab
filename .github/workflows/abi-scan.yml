@@ -241,7 +241,8 @@ jobs:
           python3 scripts/check_coverage_contract.py abicheck-report.json \
             -o "$RUNNER_TEMP/coverage-contract.json" \
             --requested-depth source \
-            --changed-files "$RUNNER_TEMP/changed-files.txt"
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --cquery "$RUNNER_TEMP/bazel-cquery.json"
 
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
@@ -644,17 +645,19 @@ jobs:
       # cache is now exactly as safe here as it already is on scan/canary
       # (see facts.bzl's own module docstring for the full design and the
       # empirical verification of why the naive --copt approach silently
-      # produced an empty pack in the first place). `//:math_abicheck_inputs`
-      # (root BUILD.bazel) is the merged, ready-to-consume pack this job
-      # now builds directly, instead of hand-composing --copt flags here.
+      # produced an empty pack in the first place). `//tools/abicheck:math_abicheck_inputs`
+      # (tools/abicheck/BUILD.bazel -- deliberately not root BUILD.bazel,
+      # see that file's own comment) is the merged, ready-to-consume pack
+      # this job now builds directly, instead of hand-composing --copt
+      # flags here.
       - name: Set up Bazel disk cache
         if: steps.relevance.outputs.relevant == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/facts.bzl') }}-plugin-${{ github.run_id }}
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/BUILD.bazel', 'tools/abicheck/facts.bzl') }}-plugin-${{ github.run_id }}
           restore-keys: |
-            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/facts.bzl') }}-
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'tools/abicheck/BUILD.bazel', 'tools/abicheck/facts.bzl') }}-
             bazel-disk-${{ runner.os }}-
 
       # Ubuntu 24.04's default `clang`/`clang++` is LLVM 18 (confirmed by
@@ -713,7 +716,7 @@ jobs:
           # source-file label, can depend on it like any other input.
           cp build/libabicheck-facts.so "$GITHUB_WORKSPACE/tools/abicheck/libabicheck-facts.so"
 
-      # `//:math_abicheck_inputs` (root BUILD.bazel) is the aspect-produced,
+      # `//tools/abicheck:math_abicheck_inputs` (root BUILD.bazel) is the aspect-produced,
       # already-merged pack -- see tools/abicheck/facts.bzl's module
       # docstring for the full design (a separate, declared-output action
       # per translation unit, not a --copt side effect on //:math's own
@@ -722,14 +725,14 @@ jobs:
       # Unix cc toolchain falls back to the runner's default gcc, and the
       # aspect's compile action would inherit that resolved (non-Clang)
       # compiler too, which can't load a Clang plugin at all.
-      - name: Build //:math_abicheck_inputs (declared-output source facts)
+      - name: Build //tools/abicheck:math_abicheck_inputs (declared-output source facts)
         id: plugin_build
         if: steps.build_plugin.outcome == 'success'
         continue-on-error: true
         env:
           CC: clang-18
           CXX: clang++-18
-        run: bazel build //:math //:math_abicheck_inputs --disk_cache="$HOME/.cache/bazel-disk"
+        run: bazel build //:math //tools/abicheck:math_abicheck_inputs --disk_cache="$HOME/.cache/bazel-disk"
 
       # Second layer, same reasoning as before this job's facts became a
       # real declared output: a clean `bazel build` exit only proves the
@@ -748,7 +751,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          facts_dir="bazel-bin/math_abicheck_inputs/source_facts"
+          facts_dir="bazel-bin/tools/abicheck/math_abicheck_inputs/source_facts"
           count=$(find "$facts_dir" -name '*.jsonl' -size +0c 2>/dev/null | wc -l)
           echo "Found $count non-empty source_facts/*.jsonl file(s) in $facts_dir"
           if [ "$count" -lt 1 ]; then
@@ -793,7 +796,7 @@ jobs:
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
             --ast-frontend clang \
-            --build-info bazel-bin/math_abicheck_inputs \
+            --build-info bazel-bin/tools/abicheck/math_abicheck_inputs \
             --format json \
             -o abicheck-l4-clang-plugin.json \
             --policy strict_abi || true
@@ -828,7 +831,7 @@ jobs:
             elif [ "${{ steps.build_plugin.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: plugin failed to build against this runner'"'"'s LLVM/Clang -- likely a version mismatch (this profile is ABI-locked to the loading Clang'"'"'s exact LLVM major per abicheck'"'"'s own docs).'
             elif [ "${{ steps.plugin_build.outcome }}" != "success" ]; then
-              echo '⏭️ Skipped: `bazel build //:math_abicheck_inputs` (the declared-output facts aspect, tools/abicheck/facts.bzl) failed.'
+              echo '⏭️ Skipped: `bazel build //tools/abicheck:math_abicheck_inputs` (the declared-output facts aspect, tools/abicheck/facts.bzl) failed.'
             elif [ "${{ steps.verify_facts.outcome }}" != "success" ]; then
               echo '⚠️ Bazel build succeeded but no source facts were actually collected -- see the verify step'"'"'s own comment for why this is checked.'
             elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then

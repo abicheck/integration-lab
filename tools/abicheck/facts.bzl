@@ -99,18 +99,42 @@ _SOURCE_EXTENSIONS = ("c", "cc", "cpp", "cxx", "C", "CC", "cu")
 def _is_source_file(f):
     return f.extension in _SOURCE_EXTENSIONS
 
+def _dep_facts(ctx):
+    """Every `abicheck_facts` OutputGroupInfo depset already produced by this
+    aspect on `ctx.rule.attr.deps` (Codex review, fresh evidence, confirmed
+    against a real target: `attr_aspects = ["deps"]` alone only makes the
+    aspect *run* on each dep -- it does NOT automatically fold a dep's own
+    returned providers into the *visiting* target's. Without this, a target
+    with real compiled `deps` -- e.g. a `cc_binary` linking a `cc_library`
+    that itself has `.cc` sources, unlike this repo's own header-only
+    `:math_api` -- would silently drop every dependency TU's facts from
+    the merged pack `abicheck_facts_pack` produces, despite this file's own
+    docstring claiming "across the target and its deps").
+    """
+    if not hasattr(ctx.rule.attr, "deps"):
+        return []
+    return [
+        dep[OutputGroupInfo].abicheck_facts
+        for dep in ctx.rule.attr.deps
+        if OutputGroupInfo in dep and hasattr(dep[OutputGroupInfo], "abicheck_facts")
+    ]
+
 def _abicheck_facts_aspect_impl(target, ctx):
     # Only real compiled C/C++ targets are interesting -- a header-only
     # cc_library (e.g. this repo's own :math_api) has no compile action to
     # shadow, and any non-CcInfo target (a filegroup, a genrule, ...) can't
-    # supply the compilation context this aspect needs.
+    # supply the compilation context this aspect needs. Either way, still
+    # fold in whatever the aspect already collected from deps -- a
+    # header-only or non-CcInfo target can sit *between* two real compiled
+    # targets in a deps chain (e.g. an alias, or a wrapping cc_library),
+    # and dropping the depset here would silently truncate the chain.
     if CcInfo not in target:
-        return [OutputGroupInfo(abicheck_facts = depset())]
+        return [OutputGroupInfo(abicheck_facts = depset(transitive = _dep_facts(ctx)))]
     if not hasattr(ctx.rule.attr, "srcs"):
-        return [OutputGroupInfo(abicheck_facts = depset())]
+        return [OutputGroupInfo(abicheck_facts = depset(transitive = _dep_facts(ctx)))]
     srcs = [f for f in ctx.rule.files.srcs if _is_source_file(f)]
     if not srcs:
-        return [OutputGroupInfo(abicheck_facts = depset())]
+        return [OutputGroupInfo(abicheck_facts = depset(transitive = _dep_facts(ctx)))]
 
     plugin_so = ctx.file._plugin_so
 
@@ -208,7 +232,7 @@ def _abicheck_facts_aspect_impl(target, ctx):
         )
         facts_dirs.append(out_dir)
 
-    return [OutputGroupInfo(abicheck_facts = depset(facts_dirs))]
+    return [OutputGroupInfo(abicheck_facts = depset(facts_dirs, transitive = _dep_facts(ctx)))]
 
 abicheck_facts_aspect = aspect(
     implementation = _abicheck_facts_aspect_impl,
