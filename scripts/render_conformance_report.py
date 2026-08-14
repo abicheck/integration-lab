@@ -89,6 +89,27 @@ def _stringify(value: object) -> str:
     return str(value)
 
 
+def _report_has_values(report: dict | None) -> bool:
+    """Whether *report*'s own shape ever carries ``old_value``/``new_value``
+    at all.
+
+    A `compare`-mode report's flat ``changes`` list does; a `scan`-mode
+    report's ``diff.findings``/``diff.additions``/``diff.quality`` entries
+    never do -- they only ever carry ``kind``/``symbol``/``description``/
+    ``source_location`` (see ``render_scan_comment.py``, which renders the
+    identical shape). Treating a scan-mode entry's *absent* old/new as an
+    empty string made every shared finding in a scan-vs-compare pairing
+    (l4-clang-replay vs. l4-clang-plugin, the one pairing this script
+    actually mixes shapes for) read as a "value mismatch" against the
+    compare side's real values, so full agreement could never be confirmed
+    for that pair even when every finding genuinely matched (Codex review,
+    fresh evidence).
+    """
+    if report is None:
+        return False
+    return isinstance(report.get("changes"), list)
+
+
 def _extract_findings(report: dict | None) -> list[dict[str, str]]:
     """Return a flat list of ``{kind, symbol, old_value, new_value}`` dicts
     from *report*, regardless of whether it's a `compare`-mode report (a
@@ -165,10 +186,20 @@ def _normalize_verdict(verdict: str) -> str:
     return "CLEAN" if verdict in _EQUIVALENT_CLEAN_VERDICTS else verdict
 
 
-def _multiset(findings: list[dict[str, str]]) -> Counter:
-    return Counter(
-        (f["kind"], f["symbol"], f["old_value"], f["new_value"]) for f in findings
-    )
+def _multiset(
+    findings: list[dict[str, str]], *, include_values: bool = True
+) -> Counter:
+    """A ``(kind, symbol, old, new)`` multiset, or ``(kind, symbol)`` alone
+    when *include_values* is False -- see ``_report_has_values``: a
+    scan-mode report's findings never carry old/new at all, so folding
+    them in for that pairing would compare "real value" against "always
+    empty string" and never match.
+    """
+    if include_values:
+        return Counter(
+            (f["kind"], f["symbol"], f["old_value"], f["new_value"]) for f in findings
+        )
+    return Counter((f["kind"], f["symbol"]) for f in findings)
 
 
 def _group_by_kind_symbol(
@@ -210,7 +241,9 @@ def build_report(
     if _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict):
         verdict_line = f"✅ Verdicts agree: `{left_verdict}` vs. `{right_verdict}`."
     else:
-        verdict_line = f"⚠️ **Verdicts disagree**: `{left_verdict}` vs. `{right_verdict}`."
+        verdict_line = (
+            f"⚠️ **Verdicts disagree**: `{left_verdict}` vs. `{right_verdict}`."
+        )
     lines.append(verdict_line)
     lines.append("")
 
@@ -223,48 +256,82 @@ def build_report(
             "below may just be a truncated-away entry, not a real divergence:"
         )
         if left_truncated:
-            lines.append(f"  - {left_label}: truncated ({left_cut_kinds or 'unknown counts'}).")
+            lines.append(
+                f"  - {left_label}: truncated ({left_cut_kinds or 'unknown counts'})."
+            )
         if right_truncated:
-            lines.append(f"  - {right_label}: truncated ({right_cut_kinds or 'unknown counts'}).")
+            lines.append(
+                f"  - {right_label}: truncated ({right_cut_kinds or 'unknown counts'})."
+            )
         lines.append("")
 
     left_findings = _extract_findings(left)
     right_findings = _extract_findings(right)
 
-    left_ms = _multiset(left_findings)
-    right_ms = _multiset(right_findings)
+    # Whether old/new comparison is even meaningful for this pair -- see
+    # _report_has_values: a scan-mode report's findings never carry old/new,
+    # so folding an always-empty string in against the compare side's real
+    # values would classify every genuinely-matching finding as a "value
+    # mismatch" and full agreement could never be confirmed for the
+    # l4-clang-replay (scan) vs. l4-clang-plugin (compare) pairing (Codex
+    # review, fresh evidence).
+    values_comparable = _report_has_values(left) and _report_has_values(right)
+    if not values_comparable:
+        lines.append(
+            "ℹ️ At least one side's report shape never carries old/new finding "
+            "values (a `scan`-mode report only carries `kind`/`symbol`/"
+            "`description`) -- matching below is by `(kind, symbol)` only, "
+            "so a value mismatch cannot be detected for this pair."
+        )
+        lines.append("")
+
+    left_ms = _multiset(left_findings, include_values=values_comparable)
+    right_ms = _multiset(right_findings, include_values=values_comparable)
     exact_matched = left_ms & right_ms
     matched_count = sum(exact_matched.values())
     left_remainder = left_ms - exact_matched
     right_remainder = right_ms - exact_matched
 
-    left_grouped = _group_by_kind_symbol(left_remainder)
-    right_grouped = _group_by_kind_symbol(right_remainder)
-
     value_mismatches: list[tuple[str, str, tuple[str, str], tuple[str, str]]] = []
     only_left: list[tuple[str, str, tuple[str, str]]] = []
     only_right: list[tuple[str, str, tuple[str, str]]] = []
 
-    for key in sorted(set(left_grouped) | set(right_grouped)):
-        lvals = left_grouped.get(key, [])
-        rvals = right_grouped.get(key, [])
-        n = min(len(lvals), len(rvals))
-        for i in range(n):
-            value_mismatches.append((*key, lvals[i], rvals[i]))
-        for v in lvals[n:]:
-            only_left.append((*key, v))
-        for v in rvals[n:]:
-            only_right.append((*key, v))
+    if values_comparable:
+        left_grouped = _group_by_kind_symbol(left_remainder)
+        right_grouped = _group_by_kind_symbol(right_remainder)
+        for key in sorted(set(left_grouped) | set(right_grouped)):
+            lvals = left_grouped.get(key, [])
+            rvals = right_grouped.get(key, [])
+            n = min(len(lvals), len(rvals))
+            for i in range(n):
+                value_mismatches.append((*key, lvals[i], rvals[i]))
+            for v in lvals[n:]:
+                only_left.append((*key, v))
+            for v in rvals[n:]:
+                only_right.append((*key, v))
+    else:
+        # left_remainder/right_remainder are (kind, symbol) -> count here
+        # (no old/new to group by) -- render with a placeholder value pair.
+        for (kind, symbol), count in left_remainder.items():
+            only_left.extend([(kind, symbol, ("", ""))] * count)
+        for (kind, symbol), count in right_remainder.items():
+            only_right.extend([(kind, symbol, ("", ""))] * count)
 
     lines.append(
-        f"- {matched_count} finding(s) match exactly (same kind, symbol, and "
-        "old/new value) in both reports."
+        f"- {matched_count} finding(s) match exactly "
+        + (
+            "(same kind, symbol, and old/new value) "
+            if values_comparable
+            else "(same kind and symbol) "
+        )
+        + "in both reports."
     )
-    lines.append(
-        f"- {len(value_mismatches)} finding(s) matched by (kind, symbol) but with "
-        "differing old/new value text -- may be a genuine cross-backend "
-        "type-spelling difference, not necessarily a bug."
-    )
+    if values_comparable:
+        lines.append(
+            f"- {len(value_mismatches)} finding(s) matched by (kind, symbol) but with "
+            "differing old/new value text -- may be a genuine cross-backend "
+            "type-spelling difference, not necessarily a bug."
+        )
     lines.append(
         f"- {len(only_left)} finding(s) present only in **{left_label}** "
         f"({len(left_findings)} total)."
@@ -321,7 +388,9 @@ def build_report(
     # disagree" line above is self-contradictory (Codex review, fresh
     # evidence).
     findings_truncated = left_truncated or right_truncated
-    verdicts_agree = _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict)
+    verdicts_agree = _normalize_verdict(left_verdict) == _normalize_verdict(
+        right_verdict
+    )
     if not only_left and not only_right and not value_mismatches:
         if findings_truncated:
             lines.append(
@@ -335,8 +404,16 @@ def build_report(
                 "their overall **verdicts disagree** (see above) -- this is "
                 "not full agreement."
             )
+        elif values_comparable:
+            lines.append(
+                "✅ No producer-only findings and no value mismatches -- the two producers fully agree."
+            )
         else:
-            lines.append("✅ No producer-only findings and no value mismatches -- the two producers fully agree.")
+            lines.append(
+                "✅ No producer-only findings by (kind, symbol) -- the two producers "
+                "agree on which findings exist (old/new values were not "
+                "comparable for this pair, see note above)."
+            )
     elif not only_left and not only_right:
         lines.append(
             "ℹ️ The two producers agree on **which** findings exist, but "
@@ -349,9 +426,13 @@ def build_report(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--left", type=Path, required=True, help="Left report JSON path")
+    parser.add_argument(
+        "--left", type=Path, required=True, help="Left report JSON path"
+    )
     parser.add_argument("--left-label", required=True)
-    parser.add_argument("--right", type=Path, required=True, help="Right report JSON path")
+    parser.add_argument(
+        "--right", type=Path, required=True, help="Right report JSON path"
+    )
     parser.add_argument("--right-label", required=True)
     parser.add_argument(
         "--report-key",
