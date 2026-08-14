@@ -466,13 +466,34 @@ this repo's gate architecture can offer for "would this consumer
 actually still run", not just "does the reported symbol table look
 compatible".
 
-`abi-scan.yml`'s `consumer_scoped` job builds `//:math`
-`//consumer:consumer_app` and runs this comparison on every ABI-relevant
-PR, publishing an `abicheck-consumer-scoped` artifact and job summary.
-Deliberately non-gating (no "Enforce gate" step, same posture as
-`scan_strings`/`aggregate` above): this job validates the app-scoping
-*mechanism*, not this fixture's own ABI, and must never block a PR that
-never touched `consumer/`.
+`abi-scan.yml`'s `consumer_scoped` job runs this comparison on every
+ABI-relevant PR, publishing an `abicheck-consumer-scoped` artifact and
+job summary. Deliberately non-gating (no "Enforce gate" step, same
+posture as `scan_strings`/`aggregate` above): this job validates the
+app-scoping *mechanism*, not this fixture's own ABI, and must never
+block a PR that never touched `consumer/`.
+
+**Both `consumer_app` and the "old" library are deliberately built from
+the PR's *base* SHA (a `git worktree` checkout), never from HEAD.**
+`--used-by` exists to answer "would an already-deployed, already-compiled
+consumer still work" — rebuilding `consumer_app` from HEAD instead
+answers a much weaker question ("does freshly-recompiled source still
+compile and link"), which is trivially true even for a source-compatible-
+but-ABI-breaking change (e.g. a parameter type change the existing call
+site still compiles against unchanged): a HEAD-rebuilt consumer imports
+the *new* mangled symbol and would report full coverage even though the
+real, already-shipped binary imports the *old* symbol and would fail to
+load. Building the historical `consumer_app` from base SHA answers the
+real question. The historical `libmath.so` is used as `old-library` for
+the same run, for a second reason: abicheck's runtime probe backing
+`--verify-runtime` silently no-ops unless *both* sides are real binary
+paths (`isinstance(old_lib, Path)`) — the persisted `abi/math.abicheck.json`
+JSON snapshot doesn't satisfy that, so without this, `--verify-runtime`
+was doing nothing. The PR that first introduces `consumer/` has no
+historical copy to build against at its own base SHA — that bootstrap
+case degrades to a HEAD-rebuilt fallback with an explicit caveat in the
+job summary, not a hard failure; every PR after this one merges gets the
+real historical-binary comparison.
 
 ## GCC/Clang × C++ standard profile matrix (architecture review P1-7)
 

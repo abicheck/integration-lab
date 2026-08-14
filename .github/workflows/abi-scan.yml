@@ -807,6 +807,26 @@ jobs:
   # throughout, no "Enforce gate" step): this job validates the app-scoping
   # *mechanism*, not this fixture's own ABI, and must never block a PR that
   # never touched consumer/.
+  #
+  # Codex review, fresh evidence: the `used-by` binary and the `old-library`
+  # evidence below are BOTH deliberately built from the PR's BASE SHA (a
+  # `git worktree` checkout), never from HEAD. `--used-by` exists to answer
+  # "would an already-deployed, already-compiled consumer still work" --
+  # rebuilding consumer_app from HEAD instead answers a different, much
+  # weaker question ("does freshly-recompiled source still compile and
+  # link"), which is trivially true for a source-compatible-but-ABI-
+  # breaking change (e.g. a parameter type change the existing call site
+  # still compiles against unchanged): the HEAD-rebuilt consumer imports
+  # the NEW mangled symbol and the diagnostic would report full coverage
+  # even though the REAL, already-shipped binary imports the OLD symbol and
+  # would fail to load. Building the historical consumer_app (and the
+  # historical libmath.so, so `--verify-runtime` has a real old-side binary
+  # to execute -- it silently no-ops given a JSON snapshot, since abicheck's
+  # own runtime probe requires `isinstance(old_lib, Path)`) from base SHA
+  # instead answers the real question this diagnostic exists to ask.
+  # Base SHA won't have consumer/ at all for the one PR that introduces it
+  # (this one) -- that bootstrap case degrades to the HEAD-rebuilt fallback
+  # with an explicit caveat in the job summary, not a hard failure.
   consumer_scoped:
     runs-on: ubuntu-24.04
     steps:
@@ -851,24 +871,71 @@ jobs:
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'consumer/BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
 
-      - name: Build candidate library and consumer app with Bazel
+      - name: Build candidate library with Bazel (PR head)
         id: build
         if: steps.resolve_baseline.outcome == 'success'
         continue-on-error: true
-        run: bazel build //:math //consumer:consumer_app --disk_cache="$HOME/.cache/bazel-disk"
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
+      # A separate worktree, not a second checkout: keeps the PR-head
+      # working tree (and this job's other steps) untouched while giving
+      # Bazel a real, independent source tree to build the historical
+      # consumer/library pair from. `--detach`: base SHA is a commit, not a
+      # branch tip, and worktree add refuses to check out a branch that's
+      # already checked out elsewhere (irrelevant here, but detached is
+      # also just the correct mode for a bare commit).
+      - name: Checkout PR base SHA into a worktree
+        id: base_worktree
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base-worktree" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build historical consumer app + library from PR base SHA
+        id: build_base_consumer
+        if: steps.base_worktree.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/base-worktree/consumer/BUILD.bazel" ]; then
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'consumer/ does not exist at the PR base SHA (expected for the PR that first introduces it) -- falling back to a HEAD-rebuilt consumer for this run only.'
+            exit 0
+          fi
+          (cd "$RUNNER_TEMP/base-worktree" && bazel build //:math //consumer:consumer_app --disk_cache="$HOME/.cache/bazel-disk")
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+
+      # Fallback path only: reached when base_worktree/build_base_consumer
+      # didn't produce a historical binary (the bootstrap PR, or a
+      # transient worktree/build failure) -- see this job's own top
+      # comment for why this is a degraded, not equivalent, diagnostic.
+      - name: Build HEAD-rebuilt consumer app (fallback only)
+        id: build_head_consumer_fallback
+        if: steps.build.outcome == 'success' && steps.build_base_consumer.outputs.available != 'true'
+        continue-on-error: true
+        run: bazel build //consumer:consumer_app --disk_cache="$HOME/.cache/bazel-disk"
 
       - name: ABICheck compare --used-by (non-gating, artifact only)
         id: compare
-        if: steps.build.outcome == 'success'
+        if: steps.build_base_consumer.outputs.available == 'true' || steps.build_head_consumer_fallback.outcome == 'success'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
           mode: compare
-          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          old-library: >-
+            ${{ steps.build_base_consumer.outputs.available == 'true'
+                && format('{0}/base-worktree/bazel-bin/libmath.so', runner.temp)
+                || format('{0}/math.base.abicheck.json', runner.temp) }}
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
           ast-frontend: clang
-          used-by: bazel-bin/consumer/consumer_app
+          used-by: >-
+            ${{ steps.build_base_consumer.outputs.available == 'true'
+                && format('{0}/base-worktree/bazel-bin/consumer/consumer_app', runner.temp)
+                || 'bazel-bin/consumer/consumer_app' }}
           verify-runtime: 'true'
           format: json
           output-file: abicheck-consumer-scoped.json
@@ -898,11 +965,13 @@ jobs:
             elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
               echo '⏭️ Skipped: could not resolve abi/math.abicheck.json from the PR base SHA.'
             elif [ "${{ steps.build.outcome }}" != "success" ]; then
-              echo '⏭️ Skipped: `bazel build //:math //consumer:consumer_app` failed.'
+              echo '⏭️ Skipped: `bazel build //:math` (PR head) failed.'
             elif [ "${{ steps.compare.outcome }}" != "success" ]; then
               echo '⚠️ Build succeeded but the abicheck compare --used-by step failed -- see the job log above.'
+            elif [ "${{ steps.build_base_consumer.outputs.available }}" == "true" ]; then
+              echo '✅ Ran successfully against a historical (PR base SHA) consumer + library -- see the `abicheck-consumer-scoped` artifact for the app-scoped report.'
             else
-              echo '✅ Ran successfully -- see the `abicheck-consumer-scoped` artifact for the app-scoped report.'
+              echo '⚠️ Ran against a HEAD-rebuilt consumer (degraded fallback -- consumer/ is not present at the PR base SHA, or the historical build failed). This only genuinely validates a source-compatible-but-ABI-breaking change once a historical consumer/library pair is available on a future PR -- see this job'"'"'s own comment for why.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
