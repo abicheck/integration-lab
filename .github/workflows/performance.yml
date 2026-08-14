@@ -1,0 +1,138 @@
+name: Performance benchmarks (cold/warm)
+
+# Architecture review P1-8: neither Bazel's own disk cache nor abicheck's
+# own snapshot cache (abicheck/snapshot_cache.py, XDG_CACHE_HOME-scoped) has
+# ever had its actual cold-vs-warm speedup measured in this repo's CI --
+# every other workflow here either always builds with a warm-or-cold-by-luck
+# cache (abi-scan.yml/baseline.yml's actions/cache restore-keys) or never
+# times anything at all. This is a small, dedicated, non-gating workflow
+# whose only job is to measure that speedup directly and publish it,
+# on-demand or on a slow weekly cadence -- never on every PR (a cold Bazel
+# build plus a cold abicheck dump is real wall-clock cost, not worth paying
+# per-PR just to produce a number nobody's blocked on).
+#
+# Deliberately `contents: read` only, no secrets, no PR interaction --
+# same "no elevated permissions -> tag pinning is enough" reasoning
+# AGENTS.md's (abicheck/abicheck) own action-pinning entry documents for
+# its sibling performance.yml.
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, off-peak UTC -- see AGENTS.md's cron-anchoring note in
+    # create_trigger's own docs for why an hourly-anchored cron isn't
+    # relevant here (this is a plain weekly schedule, not hourly).
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      # `bazel clean --expunge` tears down BOTH the output base and any
+      # leftover local Bazel server state; combined with a disk-cache
+      # directory that starts out genuinely empty, this is as close to
+      # "never built this workspace before" as a single runner can get.
+      - name: Cold Bazel build (empty disk cache)
+        id: cold_build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$HOME/.cache/bazel-disk"
+          bazel clean --expunge
+          start_ns=$(date +%s%N)
+          bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+          end_ns=$(date +%s%N)
+          echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      # `bazel clean` (no --expunge) wipes the output tree/local action
+      # cache but leaves the disk cache directory from the cold run above
+      # in place -- so this rebuild's only source of "already done this
+      # work" is the disk cache itself, isolating the disk cache's own
+      # contribution from Bazel's separate in-server incrementality (which
+      # the cold run never got to use either, since the server was fresh).
+      - name: Warm Bazel build (same disk cache, cleaned local state)
+        id: warm_build
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel clean
+          start_ns=$(date +%s%N)
+          bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+          end_ns=$(date +%s%N)
+          echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Install abicheck
+        id: install_abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      # abicheck's own snapshot cache (snapshot_cache.py) is keyed on
+      # binary content + header content + relevant flags, and lives under
+      # $XDG_CACHE_HOME/abi_check/snapshots -- an empty, dedicated
+      # XDG_CACHE_HOME for this step is this run's "abicheck has never
+      # dumped this exact binary+header before" baseline, parallel to the
+      # Bazel disk-cache steps above.
+      - name: Cold abicheck dump (empty snapshot cache)
+        id: cold_dump
+        if: steps.install_abicheck.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_CACHE_HOME="$RUNNER_TEMP/abicheck-cache"
+          rm -rf "$XDG_CACHE_HOME"
+          start_ns=$(date +%s%N)
+          abicheck dump bazel-bin/libmath.so \
+            --header include/abicheck_lab/math.h \
+            --ast-frontend clang \
+            -o "$RUNNER_TEMP/math.perf.dump.json"
+          end_ns=$(date +%s%N)
+          echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Warm abicheck dump (same snapshot cache, identical inputs)
+        id: warm_dump
+        if: steps.cold_dump.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_CACHE_HOME="$RUNNER_TEMP/abicheck-cache"
+          start_ns=$(date +%s%N)
+          abicheck dump bazel-bin/libmath.so \
+            --header include/abicheck_lab/math.h \
+            --ast-frontend clang \
+            -o "$RUNNER_TEMP/math.perf.dump.warm.json"
+          end_ns=$(date +%s%N)
+          echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Write timings JSON
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/performance-timings.json" <<JSON
+          {
+            "bazel_build_cold_ms": ${{ steps.cold_build.outputs.ms || 'null' }},
+            "bazel_build_warm_ms": ${{ steps.warm_build.outputs.ms || 'null' }},
+            "abicheck_dump_cold_ms": ${{ steps.cold_dump.outputs.ms || 'null' }},
+            "abicheck_dump_warm_ms": ${{ steps.warm_dump.outputs.ms || 'null' }},
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}"
+          }
+          JSON
+          python3 scripts/render_performance_summary.py \
+            "$RUNNER_TEMP/performance-timings.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload timings artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-lab-performance-timings
+          path: ${{ runner.temp }}/performance-timings.json
+          if-no-files-found: warn
+          retention-days: 90

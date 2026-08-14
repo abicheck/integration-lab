@@ -502,6 +502,34 @@ fixture or the workflow). Deliberately non-gating (no "Enforce gate"
 step): this validates toolchain-invariance as a property to *watch*, not
 a pass/fail contract this fixture's own ABI must additionally satisfy.
 
+## Cold/warm performance benchmarks (architecture review P1-8)
+
+`performance.yml` — a dedicated, `workflow_dispatch` + weekly-scheduled
+workflow (never on every PR: a genuinely cold Bazel build plus a cold
+`abicheck dump` is real wall-clock cost, not worth paying per-PR for a
+number nobody's blocked on) — measures the actual speedup Bazel's disk
+cache and abicheck's own snapshot cache (`XDG_CACHE_HOME`-scoped) give,
+rather than assuming one.
+
+- **Bazel**: `bazel clean --expunge` + an empty disk-cache directory,
+  then `bazel build //:math`, timed — "cold". `bazel clean` (server/output
+  tree wiped, but the disk-cache directory from the cold run kept) and
+  the identical build again, timed — "warm", isolating the disk cache's
+  own contribution from in-server incrementality (which the cold run
+  never had a chance to use either).
+- **abicheck**: the identical isolation, one layer up — an empty, dedicated
+  `XDG_CACHE_HOME` for `abicheck dump bazel-bin/libmath.so ...`, timed
+  cold, then the same command again against the same (now-populated)
+  cache directory, timed warm.
+
+Publishes a Markdown cold/warm/speedup table (`scripts/
+render_performance_summary.py`) to the job summary and an
+`abicheck-lab-performance-timings` JSON artifact (90-day retention, long
+enough to eyeball a trend by hand across runs — no trend-reporting
+database exists yet, see AGENTS.md's (abicheck/abicheck) own "Deferred
+entirely" entry for that same open gap upstream). `contents: read` only,
+no PR interaction, never gates.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
