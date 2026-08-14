@@ -308,8 +308,35 @@ def build_report(
         lines.append("</details>")
         lines.append("")
 
+    # "Fully agree" additionally requires: (a) neither side's own findings
+    # list was truncated -- an omitted, truncated-away finding makes
+    # agreement unknowable, not confirmed (Codex review, fresh evidence:
+    # the truncation warning above was rendered but not factored into this
+    # verdict, so a truncated scan with a matching visible subset still
+    # printed a green "fully agree"); and (b) the two sides' normalized
+    # verdicts actually agree -- an identical finding multiset can still
+    # carry two different overall verdicts (e.g. one report's policy
+    # resolves the same findings to BREAKING, the other to API_BREAK), and
+    # printing "fully agree" right after an already-rendered "Verdicts
+    # disagree" line above is self-contradictory (Codex review, fresh
+    # evidence).
+    findings_truncated = left_truncated or right_truncated
+    verdicts_agree = _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict)
     if not only_left and not only_right and not value_mismatches:
-        lines.append("✅ No producer-only findings and no value mismatches -- the two producers fully agree.")
+        if findings_truncated:
+            lines.append(
+                "ℹ️ The visible findings fully agree, but at least one side's "
+                "report was truncated (see warning above) -- full agreement "
+                "cannot be confirmed."
+            )
+        elif not verdicts_agree:
+            lines.append(
+                "⚠️ The two producers agree on every individual finding, but "
+                "their overall **verdicts disagree** (see above) -- this is "
+                "not full agreement."
+            )
+        else:
+            lines.append("✅ No producer-only findings and no value mismatches -- the two producers fully agree.")
     elif not only_left and not only_right:
         lines.append(
             "ℹ️ The two producers agree on **which** findings exist, but "
