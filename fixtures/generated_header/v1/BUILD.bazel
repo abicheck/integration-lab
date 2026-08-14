@@ -1,0 +1,26 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# The header itself is a Bazel build OUTPUT (see gen_header.py's own
+# docstring for why this fixture exists), never checked into git --
+# architecture review "generated headers" gap.
+genrule(
+    name = "gen_lib_h",
+    outs = ["lib.h"],
+    cmd = "$(location //fixtures/generated_header:gen_header.py) $@ kept_function removed_function",
+    tools = ["//fixtures/generated_header:gen_header.py"],
+)
+
+cc_library(
+    name = "impl_api",
+    hdrs = ["lib.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "impl",
+    srcs = ["lib.cc"],
+    deps = [":impl_api"],
+    linkshared = True,
+    visibility = ["//visibility:public"],
+)

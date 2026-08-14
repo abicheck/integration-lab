@@ -392,11 +392,29 @@ repo) and copy it to that same path before running
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
 True)` target with a single header-only public surface. It does not yet
-cover: `cc_shared_library`, generated headers, multiple libraries, a
-consumer binary, a `MODULE.bazel.lock`, or a machine-readable scenario
-matrix with an expected/actual oracle per patch (fixtures/patches/scripts
-that apply a change to a clean fixture, run a scan, and assert on the JSON
-— rather than relying on long-lived PRs and human eyeballing of comments).
+cover: `cc_shared_library`, multiple libraries, a consumer binary, or a
+`MODULE.bazel.lock`. It DOES now have a machine-readable scenario matrix
+with an expected/actual oracle per patch (fixtures/patches/scripts that
+apply a change to a clean fixture, run a scan, and assert on the JSON —
+rather than relying on long-lived PRs and human eyeballing of comments) --
+see "Scenario validation" below -- and a **generated-header** scenario
+closing that specific gap: `generated_header_removed_function`
+(`fixtures/generated_header/`) sources its public header from a Bazel
+`genrule` rather than a checked-in file, proving abicheck's header
+ingestion works against a build-output header, not just a source-tree one.
+Getting this working surfaced a real GCC quote-include mechanics gotcha,
+worth recording since it'll bite any future generated-header fixture the
+same way: a bare `#include "lib.h"` only ever resolves via gcc's own
+same-directory-as-the-compiling-file check, which can only succeed for a
+real, checked-in source-tree file -- for a header that's a build output,
+that check fails and `-iquote bazel-out/.../bin` (Bazel's own fallback,
+which appends the include text verbatim to the bin root, not the
+compiling file's own package path) never finds it either unless the
+`#include` spells out the full package-relative path
+(`#include "fixtures/generated_header/v1/lib.h"`, not bare `"lib.h"`) --
+confirmed with `CcInfo.compilation_context.headers` correctly listing the
+generated file all along, so this is a compiler include-search-order
+detail, not a Bazel dependency-graph bug.
 A security scenario specifically demonstrating "breaking code change +
 modified committed baseline in the same PR still gates red" also hasn't
 been exercised as an actual test PR yet — the architecture above (baseline
@@ -423,6 +441,7 @@ Current scenarios:
 | `add_function` | v2 adds a new exported function | `COMPATIBLE` |
 | `remove_function` | v2 removes an exported function | `BREAKING` |
 | `change_signature` | v2 changes a parameter type (mangled-name change) | `BREAKING` |
+| `generated_header_removed_function` | v2's Bazel-*generated* header drops an exported function | `BREAKING` |
 
 Run locally: `python3 scripts/run_scenario.py` (needs `bazel` and the
 `abicheck` CLI on `PATH`, and `pyyaml` installed) — or `--only <name>` for
@@ -449,7 +468,6 @@ desired detector improvement, not necessarily a bug), not "this repo is
 broken."
 
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario, a generated-header
-scenario, a multi-library/consumer-app scenario, `MODULE.bazel.lock`
-pinning, and a benchmark workflow. These are real follow-up work, not
-abandoned scope.
+silently dropped): a `cc_shared_library` scenario, a multi-library/
+consumer-app scenario, and `MODULE.bazel.lock` pinning. These are real
+follow-up work, not abandoned scope.

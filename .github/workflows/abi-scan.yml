@@ -145,6 +145,14 @@ jobs:
           bazel aquery --output=jsonproto --include_param_files \
             "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
             > "$RUNNER_TEMP/bazel-aquery.json"
+          # scripts/check_coverage_contract.py's --buildfiles: the exact
+          # set of BUILD/.bzl files Bazel's own load graph says were used
+          # to build //:math -- narrows its empty-changed-scope exemption
+          # precisely (a BUILD.bazel/.bzl change outside this set
+          # structurally cannot affect //:math's compilation, regardless
+          # of which Bazel package it lives in).
+          bazel query 'buildfiles(deps(//:math))' \
+            > "$RUNNER_TEMP/bazel-buildfiles.txt"
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
@@ -242,7 +250,7 @@ jobs:
             -o "$RUNNER_TEMP/coverage-contract.json" \
             --requested-depth source \
             --changed-files "$RUNNER_TEMP/changed-files.txt" \
-            --cquery "$RUNNER_TEMP/bazel-cquery.json"
+            --buildfiles "$RUNNER_TEMP/bazel-buildfiles.txt"
 
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'

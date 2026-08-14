@@ -94,7 +94,7 @@ Design notes:
 load("@rules_cc//cc:action_names.bzl", "CPP_COMPILE_ACTION_NAME")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cpp_toolchain", "use_cc_toolchain")
 
-_SOURCE_EXTENSIONS = ("c", "cc", "cpp", "cxx", "C", "CC", "cu")
+_SOURCE_EXTENSIONS = ("c", "cc", "cpp", "cxx", "c++", "C", "CC", "cu")
 
 def _is_source_file(f):
     return f.extension in _SOURCE_EXTENSIONS
@@ -158,8 +158,19 @@ def _abicheck_facts_aspect_impl(target, ctx):
 
     facts_dirs = []
     for src in srcs:
+        # src.short_path (the full package-relative path), not
+        # src.basename -- two sources sharing a basename in different
+        # subdirectories (srcs = ["client/foo.cc", "server/foo.cc"], a
+        # completely ordinary layout) would otherwise both declare the
+        # identical "<name>.abicheck_facts/foo.cc" tree artifact, which
+        # Bazel rejects as a duplicate output at analysis time (Codex
+        # review, fresh evidence). "/" -> "_" keeps the declared path a
+        # single directory component per source rather than nesting.
         out_dir = ctx.actions.declare_directory(
-            "{}.abicheck_facts/{}".format(ctx.rule.attr.name, src.basename),
+            "{}.abicheck_facts/{}".format(
+                ctx.rule.attr.name,
+                src.short_path.replace("/", "_"),
+            ),
         )
 
         compile_variables = cc_common.create_compile_variables(

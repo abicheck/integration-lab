@@ -196,68 +196,62 @@ assert set(_BUILD_AFFECTING_PATTERNS) == (
 ), "the three-way split above must stay a partition of _BUILD_AFFECTING_PATTERNS"
 
 
-def _label_package(label):
-    """The Bazel package portion of a resolved target label, or None for
-    an external-repo label (`@repo//pkg:name`) -- a changed file path from
-    a PR diff is always workspace-relative, so it can never equal an
-    external repo's own package and there's nothing useful to compare
+def _label_to_path(label):
+    """`//pkg:file` -> `pkg/file` (repo-relative path); `//:file` (root
+    package) -> `file`. `None` for an external-repo label (`@repo//pkg:file`)
+    -- a changed file path from a PR diff is always workspace-relative, so
+    it can never equal one of those and there's nothing useful to compare
     against.
-
-    `//pkg:name` -> `"pkg"`; `//:name` (root package) -> `""`.
     """
     if not label.startswith("//"):
         return None
-    pkg = label[2:].split(":", 1)[0]
-    return pkg
+    pkg, _, name = label[2:].partition(":")
+    return f"{pkg}/{name}" if pkg else name
 
 
-def _cquery_packages(cquery_path):
-    """The set of Bazel packages `deps(//:math)`'s own cquery JSON output
-    resolved through, or None if unreadable/malformed -- None (not an
-    empty set) so the caller can tell "no package data available, fall
-    back to the fully conservative check" apart from "resolved packages,
-    and they're genuinely all outside this diff", matching this file's
-    fail-closed convention everywhere else (Codex review reasoning,
-    applied here too: an empty set would make EVERY BUILD.bazel/.bzl file
-    look safe to exempt, which is exactly backwards for missing data).
+def _loaded_buildfiles(buildfiles_path):
+    """The exact set of repo-relative BUILD/.bzl file paths
+    `bazel query 'buildfiles(deps(//:math))'`'s own output resolved to
+    (one label per line), or None if unreadable -- None (not an empty
+    set) so the caller can tell "no data available, fall back to the
+    fully conservative check" apart from "resolved, and none of them are
+    in this diff", matching this file's fail-closed convention everywhere
+    else (an empty set would make EVERY BUILD.bazel/.bzl file look safe to
+    exempt, which is exactly backwards for missing data).
+
+    `buildfiles()` is Bazel's own answer to "which BUILD/.bzl files were
+    actually loaded to analyze this target set" -- strictly more precise
+    than a package-membership guess (Codex review, fresh evidence: a
+    package-membership check can't see a `.bzl` macro loaded from an
+    unrelated package, e.g. `//build_defs:cc.bzl`, that a target's BUILD
+    file `load()`s -- `buildfiles()` includes exactly that file since it
+    walks the real load graph, not just the target graph).
     """
     try:
-        with open(cquery_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+        with open(buildfiles_path, "r", encoding="utf-8") as fh:
+            labels = [line.strip() for line in fh if line.strip()]
+    except OSError:
         return None
-    packages = set()
-    for result in data.get("results", []):
-        rule = result.get("target", {}).get("rule")
-        if not rule or "name" not in rule:
-            continue
-        pkg = _label_package(rule["name"])
-        if pkg is not None:
-            packages.add(pkg)
-    return packages
+    paths = set()
+    for label in labels:
+        path = _label_to_path(label)
+        if path is not None:
+            paths.add(path)
+    return paths
 
 
-def _file_package(path):
-    """The Bazel package a file belongs to, by simple containing-directory
-    convention (matching how BUILD.bazel/.bzl package membership actually
-    works) -- a root-level file has package `""`.
-    """
-    if "/" not in path:
-        return ""
-    return path.rsplit("/", 1)[0]
-
-
-def _is_build_affecting(changed_files, target_packages=None):
+def _is_build_affecting(changed_files, loaded_buildfiles=None):
     """True if any path in `changed_files` could plausibly change what
     `//:math` compiles to.
 
-    `target_packages`, when given (from `_cquery_packages`), narrows the
+    `loaded_buildfiles`, when given (from `_loaded_buildfiles`, i.e. real
+    `bazel query 'buildfiles(deps(//:math))'` output), narrows the
     package-scoped patterns (`BUILD.bazel`/`*.bzl`/...): a matching file
-    only disqualifies the exemption when its OWN package is one
-    `deps(//:math)` actually resolves through -- Bazel's own dependency
-    graph is strong, structural evidence that a package OUTSIDE that set
+    only disqualifies the exemption when it's one of the EXACT files
+    Bazel's own load graph says were actually used to build `//:math` --
+    an unrelated BUILD.bazel/.bzl file elsewhere in the repo structurally
     cannot affect `:math`'s compilation, regardless of what changed inside
-    it. `target_packages is None` (cquery data unavailable, or the caller
+    it. `loaded_buildfiles is None` (query data unavailable, or the caller
     didn't supply it) falls back to the original, fully conservative
     behavior: every package-scoped pattern match disqualifies, same as
     before this refinement (fail closed on missing evidence, matching
@@ -277,7 +271,7 @@ def _is_build_affecting(changed_files, target_packages=None):
         if _matches(path, _SOURCE_BUILD_AFFECTING_PATTERNS):
             return True
         if _matches(path, _PACKAGE_SCOPED_BUILD_AFFECTING_PATTERNS):
-            if target_packages is None or _file_package(path) in target_packages:
+            if loaded_buildfiles is None or path in loaded_buildfiles:
                 return True
     return False
 
@@ -433,7 +427,7 @@ def _has_public_header_provenance(coverage):
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
              require_public_header_provenance, min_export_match_ratio,
-             changed_files=None, target_packages=None):
+             changed_files=None, loaded_buildfiles=None):
     coverage = _coverage_by_layer(report)
     # `level.depth` only exists on a `scan`-mode report. `dump`-mode
     # snapshots (baseline.yml) have no `level` key at all -- absent, not
@@ -500,7 +494,7 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
         exemptible = (
             selected_tus == 0
             and changed_files is not None
-            and not _is_build_affecting(changed_files, target_packages)
+            and not _is_build_affecting(changed_files, loaded_buildfiles)
         )
         if exemptible:
             # Confirmed empty scope=changed replay over a confirmed
@@ -585,13 +579,14 @@ def main():
         "enforce the ratio check (the pre-exemption behavior).",
     )
     parser.add_argument(
-        "--cquery", default="",
-        help="Path to `bazel cquery --output=jsonproto 'deps(//:math)'` "
-        "JSON output. Narrows the exemption's BUILD.bazel/.bzl "
-        "disqualification to only the packages //:math's own dependency "
-        "closure actually resolves through (see _is_build_affecting's own "
-        "docstring). Omit to fall back to the original, fully conservative "
-        "behavior -- any BUILD.bazel/.bzl change anywhere disqualifies.",
+        "--buildfiles", default="",
+        help="Path to `bazel query 'buildfiles(deps(//:math))'` output "
+        "(one label per line). Narrows the exemption's BUILD.bazel/.bzl "
+        "disqualification to only the exact files Bazel's own load graph "
+        "says were actually used to build //:math (see "
+        "_is_build_affecting's own docstring). Omit to fall back to the "
+        "original, fully conservative behavior -- any BUILD.bazel/.bzl "
+        "change anywhere disqualifies.",
     )
     args = parser.parse_args()
 
@@ -607,7 +602,7 @@ def main():
             # correctly falls through to the ordinary ratio check instead.
             changed_files = None
 
-    target_packages = _cquery_packages(args.cquery) if args.cquery else None
+    loaded_buildfiles = _loaded_buildfiles(args.buildfiles) if args.buildfiles else None
 
     try:
         with open(args.report, "r", encoding="utf-8") as fh:
@@ -633,7 +628,7 @@ def main():
         require_public_header_provenance=args.require_public_header_provenance,
         min_export_match_ratio=args.min_export_match_ratio,
         changed_files=changed_files,
-        target_packages=target_packages,
+        loaded_buildfiles=loaded_buildfiles,
     )
 
     with open(args.output, "w", encoding="utf-8") as fh:

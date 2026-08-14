@@ -190,3 +190,27 @@ scenarios:
     expected:
       castxml: BREAKING
       clang: BREAKING
+
+  - name: generated_header_removed_function
+    description: >
+      Architecture review P1-4 ("generated headers" gap): unlike every
+      other fixture pair, v1/v2's `lib.h` is NOT a checked-in source file
+      -- a Bazel `genrule` (fixtures/generated_header/gen_header.py)
+      produces it at build time from a plain list of function names, so
+      the header abicheck reads via `--header new=...` is itself a build
+      output under bazel-bin/, not a source-tree path. v2's generator
+      invocation drops "removed_function" from the declared list (and
+      lib.cc correspondingly no longer defines it) -- the same shape as
+      remove_function, but proving the whole pipeline (Bazel genrule ->
+      generated header -> abicheck header ingestion -> detection) works
+      end to end for a generated public header, not just a checked-in one.
+      `new_header` below is deliberately a bazel-bin/ path (the genrule's
+      real output location), not a fixtures/ source path.
+    old_target: "//fixtures/generated_header/v1:impl"
+    new_target: "//fixtures/generated_header/v2:impl"
+    old_output: bazel-bin/fixtures/generated_header/v1/libimpl.so
+    new_output: bazel-bin/fixtures/generated_header/v2/libimpl.so
+    new_header: bazel-bin/fixtures/generated_header/v2/lib.h
+    expected:
+      castxml: BREAKING
+      clang: BREAKING

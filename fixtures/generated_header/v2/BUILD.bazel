@@ -1,0 +1,28 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# v2's generator invocation drops "removed_function" from the declared
+# function list -- a genuine, generated-header-driven ABI break, mirroring
+# fixtures/remove_function/ but sourced from a Bazel build output instead
+# of a checked-in header. See fixtures/generated_header/gen_header.py's
+# own docstring.
+genrule(
+    name = "gen_lib_h",
+    outs = ["lib.h"],
+    cmd = "$(location //fixtures/generated_header:gen_header.py) $@ kept_function",
+    tools = ["//fixtures/generated_header:gen_header.py"],
+)
+
+cc_library(
+    name = "impl_api",
+    hdrs = ["lib.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "impl",
+    srcs = ["lib.cc"],
+    deps = [":impl_api"],
+    linkshared = True,
+    visibility = ["//visibility:public"],
+)
