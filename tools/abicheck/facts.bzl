@@ -78,17 +78,24 @@ Design notes:
   `isInSystemHeader` call sites) -- and `-isystem` is exactly the compiler
   flag that marks a directory's headers as system headers to Clang itself,
   regardless of what `public-roots=` says about them. So this aspect
-  builds the facts-collection command line with `system_includes` folded
-  into `include_directories` (rendered as `-I`) INSTEAD of
-  `system_include_directories` (`-isystem`) -- for this one, separate
-  fact-collecting action only, never for the target's real compile action,
-  which keeps its ordinary `-isystem` semantics untouched. `public_roots`
-  itself still names exactly the same directories either way, so this
-  reclassification only removes the system-header disqualification for
-  directories the caller already intends as public roots -- it cannot
-  broaden the public surface to some other, unrelated `-isystem` directory
-  (a genuine third-party SDK/toolchain include) that isn't also named in
-  `public_roots`.
+  builds the facts-collection command line with ONLY the `public_roots`
+  subset of `system_includes` folded into `include_directories` (rendered
+  as `-I`) INSTEAD of `system_include_directories` (`-isystem`) -- for
+  this one, separate fact-collecting action only, never for the target's
+  real compile action, which keeps its ordinary `-isystem` semantics
+  untouched. Every OTHER `system_includes` root -- one that didn't back
+  a direct public header, e.g. a third-party/transitive dependency's own
+  `-isystem` root -- still reaches this action as a real `-isystem` entry
+  (`system_include_directories`, not emptied outright): dropping it
+  entirely would leave a TU that legitimately `#include`s something from
+  that root unable to resolve it in this facts-only action even though
+  the real compile resolves it fine, silently skipping the whole facts
+  action (Codex review, fresh evidence). `public_roots` itself still
+  names exactly the same directories either way, so this reclassification
+  only removes the system-header disqualification for directories the
+  caller already intends as public roots -- it cannot broaden the public
+  surface to some other, unrelated `-isystem` directory that isn't also
+  named in `public_roots`.
 """
 
 load("@rules_cc//cc:action_names.bzl", "CPP_COMPILE_ACTION_NAME")
@@ -197,6 +204,24 @@ def _abicheck_facts_aspect_impl(target, ctx):
     # surface).
     public_roots = _public_roots_for(ctx, compilation_context)
 
+    # Codex review, fresh evidence: the rest of system_includes -- every
+    # root NOT promoted to public_roots above -- still needs to reach this
+    # action as a real -isystem entry. A TU that #includes a header from a
+    # third-party/transitive dependency whose own root isn't one of this
+    # target's public roots gets that root via -isystem in the real
+    # compile; unconditionally dropping system_include_directories to an
+    # empty depset here (rather than just OMITTING the promoted subset)
+    # would make such a header unresolvable in this facts-only action even
+    # though the real compile resolves it fine -- silently skipping the
+    # declared-output facts action and the best-effort L4 plugin profile
+    # for any target with this shape, not a correctness gap in what gets
+    # classified public/private (that part is public_roots' own job).
+    non_public_system_includes = depset([
+        root
+        for root in compilation_context.system_includes.to_list()
+        if root not in public_roots
+    ])
+
     toolchain_inputs = depset(
         transitive = [cc_toolchain.all_files],
     )
@@ -232,7 +257,7 @@ def _abicheck_facts_aspect_impl(target, ctx):
                 compilation_context.includes.to_list() + public_roots,
             ),
             quote_include_directories = compilation_context.quote_includes,
-            system_include_directories = depset(),
+            system_include_directories = non_public_system_includes,
             framework_include_directories = compilation_context.framework_includes,
             preprocessor_defines = depset(
                 compilation_context.defines.to_list() +

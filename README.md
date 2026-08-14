@@ -388,11 +388,66 @@ CI, build it locally with the recipe in
 repo) and copy it to that same path before running
 `bazel build //tools/abicheck:math_abicheck_inputs`.
 
+## Multi-library aggregate gate (architecture review P1-5)
+
+`strings_lib/` (`strings_lib/BUILD.bazel`) is a second, deliberately
+independent `cc_library` + `cc_binary(linkshared = True)` target —
+unrelated to `//:math`, so a change to one never touches the other's ABI.
+It exists to prove the gate architecture generalizes past a single
+target, and to exercise `abicheck aggregate` (the CLI command that turns
+several independent per-target reports into one combined verdict)
+against a real multi-target report set produced by this repo's own CI,
+not a synthetic fixture.
+
+It's its own Bazel package rather than folded into root `BUILD.bazel`
+alongside `:math`/`:math_api`: `scripts/check_coverage_contract.py`'s own
+`buildfiles(deps(//:math))`-based exemption (see above) answers per
+*file*, not per target within a file — if `:strings`'s declaration lived
+in root `BUILD.bazel` too, any PR touching only `:strings` would still
+(correctly, if uselessly) disqualify `:math`'s own coverage-contract
+exemption, since Bazel can't tell "this diff to `BUILD.bazel` only
+touched an unrelated target" without literal diff-content parsing. A
+separate package sidesteps the whole question: root `BUILD.bazel` simply
+never changes for a `:strings`-only PR. Its public header
+(`strings_lib/include/abicheck_lab/strings.h`) deliberately avoids
+`std::string`/STL containers for an unrelated, empirically-verified
+reason: a direct-clang dump of a header taking `std::string` pulls in a
+multi-megabyte L5 source-graph closure over libstdc++'s own template
+internals (visible even at the default `headers` depth), which would
+bloat this committed baseline for no reason connected to what this
+fixture actually validates.
+
+Unlike `//:math`, `strings_lib`'s baseline (`abi/strings.abicheck.json`,
+collected by `baseline.yml`) and PR-time check (`scan_strings` job in
+`abi-scan.yml`) are deliberately scoped down to a plain binary+header
+`depth: headers` comparison — no Bazel evidence pack, no `depth: source`
+replay. That's on purpose: this library's job is to validate the
+*aggregate* plumbing across multiple targets, not to duplicate `:math`'s
+own full source-evidence pipeline a second time.
+
+`abi-scan.yml`'s `aggregate` job downloads both `abi-report-math.json`
+(a copy of the required `scan` job's own canonical report) and
+`abi-report-strings.json` (from `scan_strings`) and runs `abicheck
+aggregate --discovered-only`, publishing a small target/verdict table to
+the job summary. Deliberately **not** a required gate itself, and
+deliberately `--discovered-only` rather than `--expect math,strings`:
+both upstream jobs already skip their own scan/compare step entirely on
+an ABI-irrelevant PR (no report uploaded at all), and a hard `--expect`
+would fail this job's own coverage gate on every such PR for a target
+that was never supposed to run this time — exactly the kind of
+non-signal a real coverage gate should never produce. `:math`'s own
+required gate (the `scan` job's "Enforce gate" step) is unaffected
+either way; this job validates the aggregate CLI's plumbing, not this
+fixture's own ABI.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
-True)` target with a single header-only public surface. It does not yet
-cover: `cc_shared_library`, multiple libraries, a consumer binary, or a
+True)` target (`//:math`) with the full `depth: source` gate pipeline,
+plus a second, independent library (`//strings_lib:strings`, see
+"Multi-library aggregate gate" above) exercising the `abicheck aggregate`
+CLI at a deliberately scoped-down `depth: headers`. It does not yet
+cover: `cc_shared_library`, a consumer binary/app-scoped validation, or a
 `MODULE.bazel.lock`. It DOES now have a machine-readable scenario matrix
 with an expected/actual oracle per patch (fixtures/patches/scripts that
 apply a change to a clean fixture, run a scan, and assert on the JSON —
@@ -468,6 +523,10 @@ desired detector improvement, not necessarily a bug), not "this repo is
 broken."
 
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario, a multi-library/
-consumer-app scenario, and `MODULE.bazel.lock` pinning. These are real
-follow-up work, not abandoned scope.
+silently dropped): a `cc_shared_library` scenario, a consumer-app-scoped
+scenario, and `MODULE.bazel.lock` pinning. `fixtures/`/`scenarios/`
+themselves are still single-library `v1`/`v2` compare fixtures — the
+multi-library *aggregate-plumbing* gap is covered separately by
+`strings_lib/`'s own CI wiring (see "Multi-library aggregate gate"
+above), not by a `scenarios.yml` entry. These are real follow-up work,
+not abandoned scope.

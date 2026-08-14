@@ -1,0 +1,20 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# A second, independent library (architecture review P1-5). Deliberately
+# its own Bazel package, not folded into the root BUILD.bazel alongside
+# :math/:math_api -- see strings.h's own comment for why.
+cc_library(
+    name = "strings_api",
+    hdrs = ["include/abicheck_lab/strings.h"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "strings",
+    srcs = ["src/strings.cc"],
+    deps = [":strings_api"],
+    linkshared = True,
+    visibility = ["//visibility:public"],
+)

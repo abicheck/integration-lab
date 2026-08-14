@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'abi/math.abicheck.json'
+      - 'abi/strings.abicheck.json'
       - 'README.md'
   workflow_dispatch:
 
@@ -38,6 +39,15 @@ jobs:
             bazel-disk-${{ runner.os }}-
       - name: Build shared library with Bazel
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Architecture review P1-5 (multi-library aggregate validation):
+      # //strings_lib:strings is a second, deliberately independent library
+      # (its own Bazel package -- see strings_lib/BUILD.bazel's own comment
+      # for why it isn't folded into root BUILD.bazel alongside :math).
+      # Built here too so both baselines come from the same Bazel
+      # invocation/cache.
+      - name: Build strings_lib shared library with Bazel
+        run: bazel build //strings_lib:strings --disk_cache="$HOME/.cache/bazel-disk"
 
       # Same evidence pipeline as abi-scan.yml's `scan` job -- see that
       # workflow's comments for the full rationale. Deliberately NOT
@@ -129,6 +139,36 @@ jobs:
           python3 scripts/normalize_baseline.py \
             "$RUNNER_TEMP/math.raw.abicheck.json" \
             abi/math.abicheck.json
+
+      # strings_lib's own baseline: deliberately a plain header+binary
+      # (depth: headers, the abicheck default) dump, not depth: source --
+      # this second library exists to validate the *aggregate* CLI across
+      # multiple targets (see scripts/aggregate_*.py / README.md's
+      # "Multi-library aggregate gate" section), not to duplicate :math's
+      # own full source-evidence pipeline. Its header (strings_lib/include/
+      # abicheck_lab/strings.h) deliberately avoids std::string/STL for the
+      # same reason documented on the header itself: a direct-clang dump
+      # of an STL-taking signature pulls in a multi-megabyte L5 source-graph
+      # closure over libstdc++'s own template internals, which would bloat
+      # this committed baseline for no reason connected to what this
+      # fixture actually validates.
+      - name: Collect strings_lib ABI baseline (headers depth)
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: dump
+          new-library: bazel-bin/strings_lib/libstrings.so
+          header: strings_lib/include/abicheck_lab/strings.h
+          ast-frontend: clang
+          new-version: main-${{ github.sha }}
+          output-file: ${{ runner.temp }}/strings.raw.abicheck.json
+          fail-on-breaking: true
+
+      - name: Normalize strings_lib baseline
+        run: |
+          python3 scripts/normalize_baseline.py \
+            "$RUNNER_TEMP/strings.raw.abicheck.json" \
+            abi/strings.abicheck.json
+
       # This is a direct push straight to main -- by design (see
       # .github/CODEOWNERS: "baseline.yml's bot-authored refresh commits are
       # the only unreviewed path this file can change through"). But a
@@ -147,8 +187,8 @@ jobs:
       # in README.md alongside the rest of the CODEOWNERS caveats.
       - name: Commit refreshed baseline
         run: |
-          git add -f abi/math.abicheck.json
-          if git diff --cached --quiet -- abi/math.abicheck.json; then
+          git add -f abi/math.abicheck.json abi/strings.abicheck.json
+          if git diff --cached --quiet -- abi/math.abicheck.json abi/strings.abicheck.json; then
             echo 'Baseline unchanged (no semantic ABI diff after normalization).'
             exit 0
           fi

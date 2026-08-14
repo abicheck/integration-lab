@@ -230,6 +230,27 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # Architecture review P1-5: a copy under the `abi-report-<target>.json`
+      # naming convention `abicheck aggregate` expects (target_id_from_path's
+      # filename-stem fallback, since this report carries no explicit
+      # target_id of its own) -- consumed by the `aggregate` job below.
+      # Deliberately a *copy*, not a rename: abicheck-report.json/
+      # abicheck-report stay the canonical name every other step here
+      # (render-comment, coverage-contract, enforce-gate) already reads.
+      - name: Copy report for aggregate (abi-report-math.json)
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        shell: bash
+        run: cp abicheck-report.json abi-report-math.json
+
+      - name: Upload abi-report-math artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abi-report-math
+          path: abi-report-math.json
+          if-no-files-found: warn
+          retention-days: 30
+
       # Second, independent gate: `depth: source` only asks abicheck to
       # *attempt* source-level evidence -- v0.5.0 still reports plain
       # COMPATIBLE at exit 0 when that attempt degrades (0 Bazel targets
@@ -465,6 +486,25 @@ jobs:
       # exercised as its own non-blocking check-target-shaped leg since
       # abicheck's run-plan inputs don't yet support per-cell frontend
       # overrides in one matrix (see this repo's own architecture notes).
+      #
+      # Codex review, fresh evidence: deliberately NO `since:` here, unlike
+      # the required-gate scan above. `--depth source` without --since/
+      # --changed-path replays the *current library target* in full
+      # (abicheck's own docs: "never a zero-TU no-op"), rather than
+      # scope=changed's changed-path-intersected TU selection -- which
+      # scripts/check_coverage_contract.py's own docstring documents can
+      # resolve to 0 TUs on a BUILD/.bzl-only PR that changes compiler
+      # flags but touches no C++ source file. The conformance report below
+      # (l4-replay-vs-plugin) compares this leg against l4-clang-plugin,
+      # which replays the COMPLETE facts pack with no scope filtering at
+      # all -- a scope mismatch between the two legs would read as a
+      # producer-only divergence when it's really just "one leg saw fewer
+      # TUs than the other for reasons unrelated to either producer".
+      # Always replaying the full target here keeps both legs of that one
+      # comparison on the same TU scope; the required-gate scan above
+      # keeps its own scope=changed behavior unchanged (out of scope for
+      # this fix, and consistent with its own documented budget/cost
+      # tradeoff for the actual PR gate).
       - name: L4 diagnostic · Clang replay (non-gating, artifact only)
         id: l4_clang_replay
         if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
@@ -479,7 +519,6 @@ jobs:
           ast-frontend: clang
           extra-args: '--public-header-dir include'
           against: ${{ runner.temp }}/math.base.abicheck.json
-          since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
           format: json
@@ -583,6 +622,173 @@ jobs:
             echo 'depth: source coverage contract not satisfied -- the requested evidence depth was not actually achieved (see the PR comment and coverage-contract-result artifact for details).' >&2
           fi
           exit 1
+
+  # Architecture review P1-5 (multi-library aggregate validation):
+  # //strings_lib:strings is a second, deliberately independent library
+  # (strings_lib/BUILD.bazel, its own Bazel package -- see that file's own
+  # comment for why it's separate from root BUILD.bazel). This job proves
+  # the gate architecture generalizes past one target and exercises
+  # `abicheck aggregate` (the `aggregate` job below) across a real
+  # multi-target report set -- deliberately NOT a required gate itself
+  # (continue-on-error throughout, no "Enforce gate" step): it validates
+  # the multi-library *plumbing*, not this fixture's own ABI, and it must
+  # never be able to block a PR that never touched strings_lib/. A plain
+  # headers-depth `compare` (not `scan --depth source`), matching this
+  # library's own deliberately-scoped-down baseline (see baseline.yml's
+  # strings collection step) -- there is no Bazel evidence pack or
+  # source-replay machinery here, on purpose.
+  scan_strings:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve trusted baseline from PR base SHA
+        id: resolve_baseline
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/strings.abicheck.json" \
+            > "$RUNNER_TEMP/strings.base.abicheck.json"
+
+      - name: Set up Bazel disk cache
+        if: steps.resolve_baseline.outcome == 'success'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'strings_lib/BUILD.bazel') }}-strings-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'strings_lib/BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate strings_lib shared library with Bazel
+        id: build
+        if: steps.resolve_baseline.outcome == 'success'
+        continue-on-error: true
+        run: bazel build //strings_lib:strings --disk_cache="$HOME/.cache/bazel-disk"
+
+      - name: ABICheck compare (strings_lib, non-gating, artifact only)
+        id: compare
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/strings.base.abicheck.json
+          new-library: bazel-bin/strings_lib/libstrings.so
+          new-header: strings_lib/include/abicheck_lab/strings.h
+          ast-frontend: clang
+          format: json
+          output-file: abi-report-strings.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload abi-report-strings artifact
+        if: always() && steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abi-report-strings
+          path: abi-report-strings.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Report strings_lib profile status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### strings_lib profile (P1-5, best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not resolve abi/strings.abicheck.json from the PR base SHA.'
+            elif [ "${{ steps.build.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: `bazel build //strings_lib:strings` failed.'
+            elif [ "${{ steps.compare.outcome }}" != "success" ]; then
+              echo '⚠️ Build succeeded but the abicheck compare step failed -- see the job log above.'
+            else
+              echo '✅ Ran successfully -- see the `abi-report-strings` artifact for the report.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Architecture review P1-5: `abicheck aggregate` exercised across a real
+  # multi-target report set (math + strings), proving the aggregate CLI's
+  # own plumbing works in this repo's actual CI shape -- not itself a
+  # required gate (see scan_strings's own comment for why). `--discovered-
+  # only` rather than `--expect math,strings`: both upstream jobs already
+  # skip their own scan/compare step on an ABI-irrelevant PR (no report
+  # uploaded at all), and a hard `--expect` would then fail this job's own
+  # coverage gate on every such PR for a target that was never supposed to
+  # run -- exactly the kind of non-signal this job exists to avoid. See
+  # README.md's "Multi-library aggregate gate" section.
+  aggregate:
+    needs: [scan, scan_strings]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Download per-target reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: abi-report-*
+          path: ${{ runner.temp }}/reports
+          merge-multiple: true
+
+      - name: Install abicheck (for aggregate)
+        id: install_abicheck
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+
+      - name: Aggregate per-target reports (discovered-only, informational)
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/reports"
+          abicheck aggregate "$RUNNER_TEMP/reports" \
+            --discovered-only \
+            --format json \
+            -o "$RUNNER_TEMP/aggregate-report.json" \
+            || true
+          python3 scripts/render_aggregate_summary.py "$RUNNER_TEMP/aggregate-report.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregate report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-aggregate-report
+          path: ${{ runner.temp }}/aggregate-report.json
+          if-no-files-found: ignore
+          retention-days: 30
 
   # l4-clang-plugin: the fourth leg of the L2/L4 profile matrix -- the
   # zero-extra-parse Clang plugin producer (ADR-038 Plugin injection,
