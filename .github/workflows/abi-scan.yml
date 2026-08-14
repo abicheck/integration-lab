@@ -790,6 +790,122 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # Architecture review P1-6 (consumer/app-scoped validation): //consumer's
+  # `consumer_app` is a real, separately-built application binary that
+  # dynamically links against //:math and calls only a subset of its public
+  # API (Calculator::add -- never ::multiply or api_version; see
+  # consumer/app.cc's own comment). `abicheck compare --used-by` reads that
+  # binary's ACTUAL dynamic-symbol imports (not a hand-written list) to
+  # scope the comparison: a change to a function this consumer never calls
+  # is demoted to informational context while a change to one it does call
+  # still drives the app-scoped verdict. `--verify-runtime` additionally
+  # runs the real consumer binary once against each library side
+  # (LD_BIND_NOW=1) and records a runtime-load-failure finding if the
+  # dynamic linker itself rejects the new library -- the strongest evidence
+  # this repo's gate architecture can offer for "would this consumer
+  # actually still run". Deliberately non-gating (continue-on-error
+  # throughout, no "Enforce gate" step): this job validates the app-scoping
+  # *mechanism*, not this fixture's own ABI, and must never block a PR that
+  # never touched consumer/.
+  consumer_scoped:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve trusted baseline from PR base SHA
+        id: resolve_baseline
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+
+      - name: Set up Bazel disk cache
+        if: steps.resolve_baseline.outcome == 'success'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'consumer/BUILD.bazel') }}-consumer-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel', 'consumer/BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate library and consumer app with Bazel
+        id: build
+        if: steps.resolve_baseline.outcome == 'success'
+        continue-on-error: true
+        run: bazel build //:math //consumer:consumer_app --disk_cache="$HOME/.cache/bazel-disk"
+
+      - name: ABICheck compare --used-by (non-gating, artifact only)
+        id: compare
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          used-by: bazel-bin/consumer/consumer_app
+          verify-runtime: 'true'
+          format: json
+          output-file: abicheck-consumer-scoped.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload consumer-scoped report artifact
+        if: always() && steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-consumer-scoped
+          path: abicheck-consumer-scoped.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Report consumer-scoped profile status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Consumer-scoped profile (P1-6, best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not resolve abi/math.abicheck.json from the PR base SHA.'
+            elif [ "${{ steps.build.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: `bazel build //:math //consumer:consumer_app` failed.'
+            elif [ "${{ steps.compare.outcome }}" != "success" ]; then
+              echo '⚠️ Build succeeded but the abicheck compare --used-by step failed -- see the job log above.'
+            else
+              echo '✅ Ran successfully -- see the `abicheck-consumer-scoped` artifact for the app-scoped report.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # l4-clang-plugin: the fourth leg of the L2/L4 profile matrix -- the
   # zero-extra-parse Clang plugin producer (ADR-038 Plugin injection,
   # `contrib/abicheck-clang-plugin` in abicheck/abicheck), instead of the

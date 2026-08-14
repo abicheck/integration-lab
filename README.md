@@ -440,15 +440,51 @@ required gate (the `scan` job's "Enforce gate" step) is unaffected
 either way; this job validates the aggregate CLI's plumbing, not this
 fixture's own ABI.
 
+## Consumer/app-scoped validation (architecture review P1-6)
+
+`consumer/` (`consumer/BUILD.bazel`) is a real, separately-built
+application binary (`consumer_app`) that dynamically links against
+`//:math` (via a `cc_import` wrapping its shared-library output) and
+calls only a subset of its public API — `Calculator::add()`, deliberately
+never `Calculator::multiply()` or `api_version()` (see `consumer/app.cc`'s
+own comment). It exists to exercise abicheck's `compare --used-by`/
+`--verify-runtime` app-scoping machinery against a *real* consumer's
+actual dynamic-symbol imports, not a hand-written or synthetic import
+list.
+
+`abicheck compare --used-by <consumer_app>` reads the consumer binary's
+own `.dynsym` undefined-symbol table to scope the comparison: a change to
+a function this consumer never calls (`::multiply`) is demoted to
+informational context (folded into the report's `full_verdict`/
+`full_summary`, kept for visibility but not driving the primary verdict),
+while a change to one it does call (`::add`) still drives the app-scoped
+verdict and exit code. `--verify-runtime` goes one step further and
+actually *runs* the consumer binary once against each library side
+(`LD_BIND_NOW=1`), recording a runtime-load-failure finding if the
+dynamic linker itself rejects the new library — the strongest evidence
+this repo's gate architecture can offer for "would this consumer
+actually still run", not just "does the reported symbol table look
+compatible".
+
+`abi-scan.yml`'s `consumer_scoped` job builds `//:math`
+`//consumer:consumer_app` and runs this comparison on every ABI-relevant
+PR, publishing an `abicheck-consumer-scoped` artifact and job summary.
+Deliberately non-gating (no "Enforce gate" step, same posture as
+`scan_strings`/`aggregate` above): this job validates the app-scoping
+*mechanism*, not this fixture's own ABI, and must never block a PR that
+never touched `consumer/`.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
 True)` target (`//:math`) with the full `depth: source` gate pipeline,
-plus a second, independent library (`//strings_lib:strings`, see
+a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
-CLI at a deliberately scoped-down `depth: headers`. It does not yet
-cover: `cc_shared_library`, a consumer binary/app-scoped validation, or a
-`MODULE.bazel.lock`. It DOES now have a machine-readable scenario matrix
+CLI at a deliberately scoped-down `depth: headers`, and a real consumer
+application (`//consumer:consumer_app`, see "Consumer/app-scoped
+validation" above) exercising `compare --used-by`/`--verify-runtime`. It
+does not yet cover: `cc_shared_library` or a `MODULE.bazel.lock`. It DOES
+now have a machine-readable scenario matrix
 with an expected/actual oracle per patch (fixtures/patches/scripts that
 apply a change to a clean fixture, run a scan, and assert on the JSON —
 rather than relying on long-lived PRs and human eyeballing of comments) --
@@ -523,10 +559,11 @@ desired detector improvement, not necessarily a bug), not "this repo is
 broken."
 
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario, a consumer-app-scoped
-scenario, and `MODULE.bazel.lock` pinning. `fixtures/`/`scenarios/`
-themselves are still single-library `v1`/`v2` compare fixtures — the
-multi-library *aggregate-plumbing* gap is covered separately by
-`strings_lib/`'s own CI wiring (see "Multi-library aggregate gate"
-above), not by a `scenarios.yml` entry. These are real follow-up work,
-not abandoned scope.
+silently dropped): a `cc_shared_library` scenario and `MODULE.bazel.lock`
+pinning. `fixtures/`/`scenarios/` themselves are still single-library
+`v1`/`v2` compare fixtures — the multi-library *aggregate-plumbing* gap
+is covered separately by `strings_lib/`'s own CI wiring (see
+"Multi-library aggregate gate" above) and the consumer/app-scoped gap by
+`consumer/`'s own CI wiring (see "Consumer/app-scoped validation" above),
+neither by a `scenarios.yml` entry. These are real follow-up work, not
+abandoned scope.
