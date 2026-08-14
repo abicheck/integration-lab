@@ -301,10 +301,24 @@ Each report matches findings by `(kind, symbol)` across the two reports
 script's own docstring), and flags: findings present in only one side,
 and old/new value text that differs on an otherwise-matched finding (which
 may be a genuine cross-backend type-spelling difference, e.g. CastXML's
-`char const*` vs. Clang's `char const *`, not necessarily a bug). Both
-reports post to the job summary; neither ever gates. A missing side (e.g.
+`char const*` vs. Clang's `char const *`, not necessarily a bug). A
+scan-mode finding never carries old/new at all, so a pairing where either
+side is scan-shaped (the L4 pair) matches by `(kind, symbol)` only, with
+an explicit note rather than a false "value mismatch". Both reports post
+to the job summary; neither ever gates. A missing side (e.g.
 `l4_clang_plugin` skipped on this runner) degrades to a labeled "skipped"
 section rather than failing.
+
+**Compiler consistency for the L4 pair:** `l4-clang-plugin` must be
+built with Clang (the plugin injects via `-Xclang`), so `l4-clang-replay`'s
+own candidate is *also* rebuilt with `CC=clang-18`/`CXX=clang++-18` right
+before that leg runs (after the required gate and both L2 legs have
+already consumed the original gcc-built binary) — otherwise
+compiler-dependent symbols/DWARF/type representations could read as a
+producer-only divergence even when the two producers genuinely agree,
+defeating the point of isolating the producer axis. Best-effort like the
+plugin job's own Clang install: a failure here just skips the
+`l4-clang-replay` diagnostic for that run.
 
 ## Known limitations / follow-ups
 

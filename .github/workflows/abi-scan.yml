@@ -361,6 +361,60 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # Codex review, fresh evidence: the l4-clang-replay leg below is
+      # compared against l4-clang-plugin (the "Render Replay-vs-Plugin (L4)
+      # conformance report" step further down) to isolate the *producer*
+      # axis (portable replay vs. zero-extra-parse plugin) -- but until
+      # this fix, replay always scanned the SAME `bazel-bin/libmath.so`
+      # the required gate above built (the runner's default gcc, no CC
+      # override), while l4_clang_plugin's own job unconditionally rebuilds
+      # //:math with CC=clang-18/CXX=clang++-18 (the plugin only injects
+      # via -Xclang, so it needs Clang). Two differently-compiled
+      # binaries meant compiler-dependent symbols/DWARF/type
+      # representations could appear as producer-only divergence even when
+      # the two producers genuinely agree, so the conformance report could
+      # never actually isolate the producer axis it claims to. Rebuilding
+      # here (after the required gate and both L2 legs have already
+      # consumed the original gcc-built binary, so neither is affected)
+      # makes l4-clang-replay's own candidate clang-18-compiled too,
+      # matching l4-clang-plugin's toolchain -- eliminating the confound
+      # for exactly the one pairing it applies to. Best-effort like the
+      # plugin job's own install (continue-on-error): an apt hiccup or a
+      # runner image LLVM-version bump degrades to "replay diagnostic
+      # skipped this run", never a required-gate failure, since every step
+      # from here through l4_clang_replay only ever gates on its own
+      # predecessor's outcome, never on the required gate above.
+      #
+      # Residual, deliberately not chased further: the Bazel evidence pack
+      # (`steps.bazel_pack`, built from an aquery captured against the
+      # ORIGINAL gcc build) is reused unchanged rather than re-captured
+      # against this clang-18 rebuild -- its own recorded compile actions
+      # (source/flags/target graph) still describe the gcc invocation. This
+      # doesn't reintroduce the confound Codex flagged (that was about the
+      # *compiled binary's* symbols/DWARF/layout, which this fix does
+      # address), only a narrower, separate question of whether the L3/L4
+      # evidence pack's own recorded compiler identity matches; re-deriving
+      # it too would mean re-running the cquery/aquery/evidence-pack chain
+      # a second time for one non-gating diagnostic leg, which was judged
+      # not worth the added job time for this pass.
+      - name: Install Clang for the L4 replay leg (matches l4-clang-plugin's toolchain)
+        id: install_l4_replay_clang
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18
+
+      - name: Rebuild candidate shared library with Bazel (clang-18, for L4 replay)
+        id: l4_replay_build
+        if: steps.install_l4_replay_clang.outcome == 'success'
+        continue-on-error: true
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
+
       # l4-clang-replay: same shape as the required-gate scan above
       # (depth: source, --sources . replay producer, same committed
       # baseline and Bazel evidence pack) but with the Clang header
@@ -372,7 +426,7 @@ jobs:
       # overrides in one matrix (see this repo's own architecture notes).
       - name: L4 diagnostic · Clang replay (non-gating, artifact only)
         id: l4_clang_replay
-        if: always() && steps.relevance.outputs.relevant == 'true'
+        if: always() && steps.l4_replay_build.outcome == 'success'
         continue-on-error: true
         uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
         with:
