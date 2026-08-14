@@ -327,6 +327,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # CastXML-vs-Clang backend conformance report (architecture review
+      # P1-3): both L2 diagnostics above compare the SAME committed
+      # baseline against the SAME candidate library/header, differing only
+      # in which header-AST frontend parsed the candidate's public header
+      # -- so any difference between their two `changes` lists is either a
+      # real cross-backend divergence in what one frontend saw vs. the
+      # other, or a known type-spelling variance (see the script's own
+      # docstring for why value differences are reported separately from
+      # kind+symbol matching). Both steps above already ran regardless of
+      # each other's outcome (independent continue-on-error), so this can
+      # run even if one of them failed to produce a report -- the script
+      # degrades to a labeled "skipped" section rather than erroring.
+      - name: Render CastXML-vs-Clang (L2) conformance report
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/render_conformance_report.py \
+            --left abicheck-l2-castxml.json --left-label "L2 · CastXML" \
+            --right abicheck-l2-clang.json --right-label "L2 · Clang" \
+            --report-key l2-castxml-vs-clang \
+            -o "$RUNNER_TEMP/conformance-l2.md"
+          cat "$RUNNER_TEMP/conformance-l2.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload L2 conformance report artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-conformance-l2
+          path: ${{ runner.temp }}/conformance-l2.md
+          if-no-files-found: ignore
+          retention-days: 30
+
       # l4-clang-replay: same shape as the required-gate scan above
       # (depth: source, --sources . replay producer, same committed
       # baseline and Bazel evidence pack) but with the Clang header
@@ -715,6 +749,67 @@ jobs:
               echo '✅ Ran successfully -- see the `abicheck-l4-clang-plugin` artifact for the report.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Replay-vs-plugin (L4) producer conformance report (architecture review
+  # P1-2): l4-clang-replay (this job's `scan` sibling, the portable-replay
+  # L4 source-fact producer) and l4-clang-plugin (the `l4_clang_plugin` job
+  # above, the zero-extra-parse Clang plugin producer) both analyze the
+  # SAME candidate library/header/baseline through two independent L4
+  # evidence-collection paths -- any divergence between them is either a
+  # real gap in one producer or a genuine collection-completeness
+  # difference the review's own evidence-tier matrix exists to surface.
+  # `needs: [scan, l4_clang_plugin]` + `if: always()`: l4_clang_plugin is
+  # documented best-effort (its own final step never fails the job even
+  # when every stage inside it was skipped), and `scan` itself can fail
+  # its own required gate on a real ABI break -- neither case should
+  # prevent this informational report from still running and reporting
+  # what it can (the script itself degrades gracefully to a labeled
+  # "skipped" section when one side's artifact never materialized, e.g. a
+  # PR with no ABI-relevant changes where both upstream jobs skip their
+  # own scan steps and upload nothing).
+  conformance:
+    needs: [scan, l4_clang_plugin]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Download l4-clang-replay artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: abicheck-l4-clang-replay
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Download l4-clang-plugin artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: abicheck-l4-clang-plugin
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Render Replay-vs-Plugin (L4) conformance report
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/render_conformance_report.py \
+            --left "${{ runner.temp }}/artifacts/abicheck-l4-clang-replay.json" --left-label "L4 · Clang replay" \
+            --right "${{ runner.temp }}/artifacts/abicheck-l4-clang-plugin.json" --right-label "L4 · Clang plugin" \
+            --report-key l4-replay-vs-plugin \
+            -o "${{ runner.temp }}/conformance-l4.md"
+          cat "${{ runner.temp }}/conformance-l4.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload L4 conformance report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-conformance-l4
+          path: ${{ runner.temp }}/conformance-l4.md
+          if-no-files-found: ignore
+          retention-days: 30
 
   # Non-blocking canary: the same scan, pinned to an exact commit on
   # abicheck/main instead of the last release, so this PR shows what the

@@ -280,6 +280,32 @@ real `bazel mod deps --lockfile_mode=update` run, which isn't available
 while authoring these files outside CI — tracked as a follow-up rather than
 hand-authored here.
 
+## Producer conformance reports
+
+The three non-gating L2/L4 profile diagnostics (`l2-castxml`, `l2-clang`,
+`l4-clang-replay`, plus the separate best-effort `l4-clang-plugin` job) all
+analyze the same candidate library/header/baseline through a different
+producer. `abi-scan.yml` now also renders two conformance reports
+comparing sibling producers pairwise, via `scripts/render_conformance_report.py`:
+
+- **L2 · CastXML vs. Clang** — do the two header-AST frontends agree on
+  this library's public surface? Rendered as a step in the `scan` job
+  (both artifacts are local there) and uploaded as `abicheck-conformance-l2`.
+- **L4 · Clang replay vs. Clang plugin** — do the two L4 source-fact
+  producers agree? Rendered in its own `conformance` job (`needs: [scan,
+  l4_clang_plugin]`, `if: always()`, since `l4_clang_plugin` is best-effort
+  and may not run) and uploaded as `abicheck-conformance-l4`.
+
+Each report matches findings by `(kind, symbol)` across the two reports
+(`compare`- and `scan`-mode report shapes are both handled — see the
+script's own docstring), and flags: findings present in only one side,
+and old/new value text that differs on an otherwise-matched finding (which
+may be a genuine cross-backend type-spelling difference, e.g. CastXML's
+`char const*` vs. Clang's `char const *`, not necessarily a bug). Both
+reports post to the job summary; neither ever gates. A missing side (e.g.
+`l4_clang_plugin` skipped on this runner) degrades to a labeled "skipped"
+section rather than failing.
+
 ## Known limitations / follow-ups
 
 This lab currently validates one `cc_library` + `cc_binary(linkshared =
