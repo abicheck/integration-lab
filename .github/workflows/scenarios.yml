@@ -56,7 +56,7 @@ jobs:
       - name: Install abicheck + PyYAML
         run: |
           pip install --quiet pyyaml
-          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b"
 
       - name: Run scenarios against the manifest oracle
         run: python3 scripts/run_scenario.py
