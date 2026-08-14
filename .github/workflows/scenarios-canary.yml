@@ -50,12 +50,15 @@ jobs:
   scenarios_canary:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           persist-credentials: false
 
       # Same system deps as scenarios.yml's own install step.
       - name: Install system dependencies for abicheck
+        id: install_deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq castxml gcc g++ clang
@@ -64,6 +67,7 @@ jobs:
       # abicheck/main's current HEAD, not a pinned release SHA -- this is
       # the whole point of this workflow.
       - name: Install abicheck (main HEAD) + PyYAML
+        id: install_abicheck
         run: |
           pip install --quiet pyyaml
           pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@main"
@@ -82,6 +86,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # Codex review, fresh evidence: `steps.run_scenarios.outcome` alone
+      # can't tell "a scenario/suppression assertion genuinely no longer
+      # holds" apart from "checkout/apt-get/pip install failed before
+      # run_scenario.py ever executed" -- when an earlier step without
+      # `continue-on-error` fails, every step after it (lacking its own
+      # `if: always()`) is skipped, including run_scenarios itself, and
+      # this step's own `if: always()` still runs and previously rendered
+      # the identical "assertion no longer holds" message for that case
+      # too. That's this workflow's primary diagnostic signal (drift vs.
+      # no drift), and mislabeling an apt mirror hiccup or a runner image
+      # change as "review before bumping the pin" is a false alarm this
+      # workflow exists specifically to avoid producing.
       - name: Report outcome
         if: always()
         shell: bash
@@ -89,7 +105,15 @@ jobs:
           {
             echo '### Scenario validation against abicheck/main (canary)'
             echo
-            if [ "${{ steps.run_scenarios.outcome }}" = "success" ]; then
+            if [ "${{ steps.checkout.outcome }}" != "success" ] ||
+               [ "${{ steps.install_deps.outcome }}" != "success" ] ||
+               [ "${{ steps.install_abicheck.outcome }}" != "success" ] ||
+               [ "${{ steps.run_scenarios.outcome }}" = "skipped" ]; then
+              echo '🛑 **Canary infrastructure failed before scenarios could run** -- checkout,'
+              echo 'system-dependency install, or the abicheck/main install step failed. This is'
+              echo 'not a detector-drift signal; see the step log above for which setup step'
+              echo 'failed and why (a runner/apt/pip hiccup, most likely).'
+            elif [ "${{ steps.run_scenarios.outcome }}" = "success" ]; then
               echo '✅ Every scenario/suppression assertion still holds against the current `abicheck/main` HEAD.'
             else
               echo '⚠️ **A scenario or suppression assertion no longer holds against `abicheck/main`.**'
