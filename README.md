@@ -304,8 +304,14 @@ may be a genuine cross-backend type-spelling difference, e.g. CastXML's
 `char const*` vs. Clang's `char const *`, not necessarily a bug). A
 scan-mode finding never carries old/new at all, so a pairing where either
 side is scan-shaped (the L4 pair) matches by `(kind, symbol)` only, with
-an explicit note rather than a false "value mismatch". Both reports post
-to the job summary; neither ever gates. A missing side (e.g.
+an explicit note rather than a false "value mismatch". A verdict outside
+abicheck's own conclusive set (`NO_CHANGE`/`COMPATIBLE`/
+`COMPATIBLE_WITH_RISK`/`API_BREAK`/`BREAKING` — e.g. `NOT_COMPARABLE`,
+`BUDGET_OVERFLOW`, an error) means that side's run didn't reach a real
+conclusion, so a matching (or even empty) findings list on both sides
+never reads as a green "fully agree" in that case — an incomplete or
+failed run is producer *silence*, not producer *agreement*. Both reports
+post to the job summary; neither ever gates. A missing side (e.g.
 `l4_clang_plugin` skipped on this runner) degrades to a labeled "skipped"
 section rather than failing.
 

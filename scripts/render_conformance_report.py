@@ -58,6 +58,22 @@ MARKER_TEMPLATE = "<!-- abicheck-lab-conformance-report:{key} -->"
 #: replay/plugin pair as disagreeing on every implementation-only change).
 _EQUIVALENT_CLEAN_VERDICTS = frozenset({"NO_CHANGE", "COMPATIBLE"})
 
+#: The only verdict strings that mean "this comparison actually completed
+#: and reached a real conclusion" -- abicheck's own compare-mode Verdict
+#: enum (change_registry_types.py). Anything else -- NOT_COMPARABLE,
+#: BUDGET_OVERFLOW, EVIDENCE_CONTRACT_ERROR, BUNDLE_INCOMPLETE (all real
+#: scan-mode verdict strings), this script's own "unavailable"/"unknown"
+#: fallbacks, or any future non-conclusive value -- means the run did not
+#: produce a real answer. Two sides matching on such a verdict (or an
+#: empty findings list on a side that errored out before emitting any) is
+#: not producer *agreement*, it's producer *silence*, and must not read as
+#: a green "fully agree" (Codex review, fresh evidence: two independent
+#: NOT_COMPARABLE/error runs with empty findings lists previously read as
+#: full agreement).
+_CONCLUSIVE_VERDICTS = frozenset(
+    {"NO_CHANGE", "COMPATIBLE", "COMPATIBLE_WITH_RISK", "API_BREAK", "BREAKING"}
+)
+
 
 def _load_report(path: Path | None) -> dict | None:
     """Return the parsed JSON report at *path*, or None if unavailable.
@@ -238,7 +254,20 @@ def build_report(
 
     left_verdict = _report_verdict(left)
     right_verdict = _report_verdict(right)
-    if _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict):
+    left_inconclusive = left_verdict not in _CONCLUSIVE_VERDICTS
+    right_inconclusive = right_verdict not in _CONCLUSIVE_VERDICTS
+    verdicts_inconclusive = left_inconclusive or right_inconclusive
+    if verdicts_inconclusive:
+        # Matching (or even differing) NOT_COMPARABLE/BUDGET_OVERFLOW/etc.
+        # is not agreement -- neither side reached a real conclusion, so
+        # "agree"/"disagree" both overclaim. See _CONCLUSIVE_VERDICTS.
+        verdict_line = (
+            f"⚠️ **At least one side did not reach a conclusive verdict**: "
+            f"`{left_verdict}` vs. `{right_verdict}` -- this is not producer "
+            "agreement or disagreement, it's an incomplete/failed run on at "
+            "least one side."
+        )
+    elif _normalize_verdict(left_verdict) == _normalize_verdict(right_verdict):
         verdict_line = f"✅ Verdicts agree: `{left_verdict}` vs. `{right_verdict}`."
     else:
         verdict_line = (
@@ -388,11 +417,18 @@ def build_report(
     # disagree" line above is self-contradictory (Codex review, fresh
     # evidence).
     findings_truncated = left_truncated or right_truncated
-    verdicts_agree = _normalize_verdict(left_verdict) == _normalize_verdict(
-        right_verdict
-    )
+    verdicts_agree = not verdicts_inconclusive and _normalize_verdict(
+        left_verdict
+    ) == _normalize_verdict(right_verdict)
     if not only_left and not only_right and not value_mismatches:
-        if findings_truncated:
+        if verdicts_inconclusive:
+            lines.append(
+                "⚠️ The visible findings match, but at least one side did not "
+                "reach a conclusive verdict (see above) -- an empty/matching "
+                "findings list from an incomplete or failed run is not "
+                "confirmed producer agreement."
+            )
+        elif findings_truncated:
             lines.append(
                 "ℹ️ The visible findings fully agree, but at least one side's "
                 "report was truncated (see warning above) -- full agreement "
