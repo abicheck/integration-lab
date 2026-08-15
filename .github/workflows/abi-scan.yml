@@ -732,28 +732,32 @@ jobs:
       # (see UPSTREAM_TO_ABICHECK.md and this PR's own description) -- not
       # `main` itself, so this step's behavior stays reproducible rather
       # than silently drifting with every upstream push.
-      - name: Install abicheck (for aggregate)
-        id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
-
+      #
       # Declares what this run actually expects, from the same relevance
       # signal `scan`/`scan_strings` computed for themselves -- not
       # retyped by hand, which is exactly the plan-vs-gate drift the
       # manifest file exists to prevent (AGENTS.md: "`--expect`... an
-      # inline id list retyped on the command line").
+      # inline id list retyped on the command line"). Built *before* the
+      # install below (Codex review, fresh evidence): it needs no network
+      # access and no `abicheck` on `PATH`, so computing it first is what
+      # lets the install/aggregate steps below condition their own
+      # `continue-on-error` on whether anything is actually expected --
+      # an ABI-irrelevant PR (nothing declared) must stay tolerant of a
+      # transient install/network failure exactly as it did before this
+      # gate existed, while an ABI-relevant PR (math expected) must not.
       # `strings` is deliberately NOT declared here, `required: false` or
-      # otherwise (Codex review, fresh evidence): `abicheck aggregate`'s
-      # coverage axis (what `required` controls) and its *gate* axis are
-      # separate -- a target's own `severity.exit_code`/legacy `exit_code`
-      # folds into the aggregate's overall exit code via `max()` whenever
-      # that target is *gated* at all, and a declared-but-not-required
-      # target still counts as gated the moment its report is discovered.
-      # Declaring `strings` as `required: false` would therefore still let
-      # a genuinely BREAKING `strings_lib` compare (its own report's real
-      # `exit_code`, independent of the Action's `fail-on-breaking: false`
-      # input, which only controls whether *that job's own step* fails, not
-      # the exit code embedded in the JSON report it uploads) fail this
-      # job -- directly contradicting `scan_strings`'s own deliberately
+      # otherwise: `abicheck aggregate`'s coverage axis (what `required`
+      # controls) and its *gate* axis are separate -- a target's own
+      # `severity.exit_code`/legacy `exit_code` folds into the aggregate's
+      # overall exit code via `max()` whenever that target is *gated* at
+      # all, and a declared-but-not-required target still counts as gated
+      # the moment its report is discovered. Declaring `strings` as
+      # `required: false` would therefore still let a genuinely BREAKING
+      # `strings_lib` compare (its own report's real `exit_code`,
+      # independent of the Action's `fail-on-breaking: false` input, which
+      # only controls whether *that job's own step* fails, not the exit
+      # code embedded in the JSON report it uploads) fail this job --
+      # directly contradicting `scan_strings`'s own deliberately
       # best-effort/non-blocking contract. Leaving it undeclared, combined
       # with `--on-unexpected-target warn` below, is what actually achieves
       # "surfaced, never gating".
@@ -772,7 +776,25 @@ jobs:
         env:
           SCAN_RELEVANT: ${{ needs.scan.outputs.relevant }}
 
+      # `continue-on-error` conditioned on the manifest, not unconditionally
+      # off: with nothing declared (an ABI-irrelevant PR), this step stays
+      # tolerant of a transient PyPI/GitHub install failure -- the same
+      # posture the whole job had before this gate existed -- and the
+      # `--discovered-only` fallback below runs regardless (finding nothing
+      # to aggregate if `abicheck` never installed, which is still a
+      # correct, informational "nothing to report" outcome for a PR that
+      # was never supposed to produce anything). With `math` declared, a
+      # failed install must fail this job -- there is no way to prove a
+      # required target's coverage without a working `abicheck`.
+      - name: Install abicheck (for aggregate)
+        id: install_abicheck
+        continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
+
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
+        # Same conditional posture as the install step immediately above,
+        # and for the identical reason.
+        continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
         shell: bash
         run: |
           set -euo pipefail
