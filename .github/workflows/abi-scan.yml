@@ -575,9 +575,6 @@ jobs:
   # source-replay machinery here, on purpose.
   scan_strings:
     runs-on: ubuntu-24.04
-    # See `scan`'s own identical `outputs:` comment above.
-    outputs:
-      relevant: ${{ steps.relevance.outputs.relevant }}
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
@@ -687,15 +684,20 @@ jobs:
   # `scan`'s own "Enforce gate" step below gates on -- so a missing `math`
   # report on an ABI-relevant PR is now a real, fail-closed coverage gap
   # (`aggregate`'s own coverage axis, exit 1), not silently absorbed.
-  # `strings` stays `required: false`: `scan_strings`'s own compare step is
-  # deliberately best-effort/non-blocking (see that job's own comment), and
-  # this gate must not turn that into a hard requirement it was never meant
-  # to be -- only its *presence in the manifest* changes (so its verdict is
-  # still surfaced, never silently unaccounted), not its gating weight. On a
-  # PR neither job judged relevant, the manifest has no entries and this
-  # step falls back to `--discovered-only`: nothing was expected, so nothing
-  # to gate -- purely informational, as before. See README.md's "Multi-
-  # library aggregate gate" section.
+  # `strings` is deliberately never declared in the manifest at all (Codex
+  # review, fresh evidence -- see the "Build expected-target manifest" step
+  # below for the full reasoning): `abicheck aggregate`'s coverage axis
+  # (what `required` controls) and its *gate* axis are independent, and a
+  # declared-but-not-required target's own report still folds into the
+  # gate the moment it's discovered -- so `required: false` alone would
+  # still let a genuinely BREAKING `strings_lib` compare fail this job,
+  # contradicting `scan_strings`'s own deliberately best-effort/non-blocking
+  # contract. `--on-unexpected-target warn` is what actually decouples
+  # "surfaced in the summary" from "gates this job" for it. On a PR `scan`
+  # didn't judge relevant, the manifest has no entries and this step falls
+  # back to `--discovered-only`: nothing was expected, so nothing to gate
+  # -- purely informational, as before. See README.md's "Multi-library
+  # aggregate gate" section.
   aggregate:
     needs: [scan, scan_strings]
     if: always()
@@ -739,6 +741,22 @@ jobs:
       # retyped by hand, which is exactly the plan-vs-gate drift the
       # manifest file exists to prevent (AGENTS.md: "`--expect`... an
       # inline id list retyped on the command line").
+      # `strings` is deliberately NOT declared here, `required: false` or
+      # otherwise (Codex review, fresh evidence): `abicheck aggregate`'s
+      # coverage axis (what `required` controls) and its *gate* axis are
+      # separate -- a target's own `severity.exit_code`/legacy `exit_code`
+      # folds into the aggregate's overall exit code via `max()` whenever
+      # that target is *gated* at all, and a declared-but-not-required
+      # target still counts as gated the moment its report is discovered.
+      # Declaring `strings` as `required: false` would therefore still let
+      # a genuinely BREAKING `strings_lib` compare (its own report's real
+      # `exit_code`, independent of the Action's `fail-on-breaking: false`
+      # input, which only controls whether *that job's own step* fails, not
+      # the exit code embedded in the JSON report it uploads) fail this
+      # job -- directly contradicting `scan_strings`'s own deliberately
+      # best-effort/non-blocking contract. Leaving it undeclared, combined
+      # with `--on-unexpected-target warn` below, is what actually achieves
+      # "surfaced, never gating".
       - name: Build expected-target manifest
         id: manifest
         shell: bash
@@ -748,15 +766,11 @@ jobs:
           if [[ "${SCAN_RELEVANT:-}" == "true" ]]; then
             targets=$(jq -c '. + [{"id":"math","required":true}]' <<<"$targets")
           fi
-          if [[ "${SCAN_STRINGS_RELEVANT:-}" == "true" ]]; then
-            targets=$(jq -c '. + [{"id":"strings","required":false}]' <<<"$targets")
-          fi
           jq -n --argjson targets "$targets" '{targets: $targets}' \
             > "$RUNNER_TEMP/aggregate-manifest.json"
           echo "count=$(jq 'length' <<<"$targets")" >> "$GITHUB_OUTPUT"
         env:
           SCAN_RELEVANT: ${{ needs.scan.outputs.relevant }}
-          SCAN_STRINGS_RELEVANT: ${{ needs.scan_strings.outputs.relevant }}
 
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
         shell: bash
@@ -764,12 +778,19 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/reports"
           if [[ "${{ steps.manifest.outputs.count }}" -gt 0 ]]; then
+            # --on-unexpected-target warn: `strings` (undeclared, per the
+            # comment above) is reported when its own report is discovered,
+            # but never folded into this job's gate -- 'include' (the CLI
+            # default) would fold its own compare exit code into the
+            # aggregate's overall exit code, which is exactly the coupling
+            # this step must not introduce.
             abicheck aggregate "$RUNNER_TEMP/reports" \
               --manifest "$RUNNER_TEMP/aggregate-manifest.json" \
+              --on-unexpected-target warn \
               --format json \
               -o "$RUNNER_TEMP/aggregate-report.json"
           else
-            echo 'Neither math nor strings was judged ABI-relevant for this PR -- nothing declared, falling back to --discovered-only (informational).'
+            echo 'math was not judged ABI-relevant for this PR -- nothing declared, falling back to --discovered-only (informational).'
             abicheck aggregate "$RUNNER_TEMP/reports" \
               --discovered-only \
               --format json \

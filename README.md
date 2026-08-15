@@ -432,14 +432,24 @@ aggregate` against a **declared, fail-closed expected-target manifest**
 (a "Build expected-target manifest" step, not a hand-retyped `--expect`
 list): `math` is declared `required: true` whenever `scan` itself judged
 this PR ABI-relevant (`needs.scan.outputs.relevant`, the same signal
-`scan`'s own "Enforce gate" step below gates on), `strings` is declared
-but `required: false` (mirroring `scan_strings`'s own deliberately
-best-effort/non-blocking compare step). A `math` report silently missing
-on an ABI-relevant PR — an `upload-artifact` hiccup, or `scan`'s compare
-step failing before it could write a report — is now a real `aggregate`
-coverage-axis failure (exit 1) that fails the job, not a `--discovered-
-only` non-signal absorbed into "whatever showed up counts as complete".
-Only on a PR neither job judged ABI-relevant does the manifest end up
+`scan`'s own "Enforce gate" step below gates on). A `math` report
+silently missing on an ABI-relevant PR — an `upload-artifact` hiccup, or
+`scan`'s compare step failing before it could write a report — is now a
+real `aggregate` coverage-axis failure (exit 1) that fails the job, not a
+`--discovered-only` non-signal absorbed into "whatever showed up counts
+as complete".
+
+`strings` is deliberately **not** declared in the manifest at all —
+`abicheck aggregate`'s coverage axis (what `required` controls) and its
+*gate* axis are independent: a declared-but-not-required target's own
+report still folds into the overall gate the moment it's discovered, so
+`required: false` alone would still let a genuinely BREAKING
+`strings_lib` compare fail this job, contradicting `scan_strings`'s own
+deliberately best-effort/non-blocking compare step. `--on-unexpected-
+target warn` is what actually decouples "surfaced in the job summary"
+from "gates this job" for an undeclared target's report.
+
+Only on a PR `scan` didn't judge ABI-relevant does the manifest end up
 empty, and the step falls back to `--discovered-only` — nothing was
 expected, so nothing to gate, purely informational as before. `:math`'s
 own required gate (the `scan` job's "Enforce gate" step) is unaffected
