@@ -1,0 +1,283 @@
+name: Validate fresh abicheck main
+
+on:
+  pull_request: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-fresh-abicheck-main-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  ABICHECK_SHA: 5b529896eff680203230ec1a635c669ee3334d6e
+
+jobs:
+  fresh-main:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve trusted baseline and changed files
+        run: |
+          set -euo pipefail
+          echo "upstream=$ABICHECK_SHA"
+          git show \
+            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
+            > "$RUNNER_TEMP/math.base.abicheck.json"
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Build candidate and target-scoped Bazel evidence
+        run: |
+          set -euo pipefail
+          bazel build //:math
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/bazel-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/bazel-aquery.json"
+          bazel query 'buildfiles(deps(//:math))' \
+            > "$RUNNER_TEMP/bazel-buildfiles.txt"
+
+      - name: Install exact fresh upstream
+        run: >-
+          python3 -m pip install --quiet
+          "abicheck @ git+https://github.com/abicheck/abicheck.git@$ABICHECK_SHA"
+
+      - name: Verify hard-cleaned CLI surface and behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from abicheck.cli import main
+
+          compare = main.commands["compare"]
+          flags = {
+              flag
+              for param in compare.params
+              for flag in getattr(param, "opts", ())
+          }
+          retired = {
+              "--verify-runtime",
+              "--gcc-path",
+              "--contract-evaluation",
+              "--policy-file",
+              "--secondary-format",
+              "--secondary-output",
+              "--old-ast-frontend",
+              "--new-ast-frontend",
+              "--include-dependencies",
+          }
+          live = {
+              "--compiler",
+              "--contract",
+              "--policy",
+              "--write",
+              "--ast-frontend",
+              "--include-system-declarations",
+              "--use-cases",
+          }
+          unexpected = sorted(retired & flags)
+          missing = sorted(live - flags)
+          print("registered compare flags:", sorted(flags))
+          if unexpected:
+              raise SystemExit(f"retired flags still registered: {unexpected}")
+          if missing:
+              raise SystemExit(f"replacement flags not registered: {missing}")
+          PY
+
+          abicheck compare \
+            abi/math.abicheck.json abi/math.abicheck.json \
+            --contract auto \
+            --policy strict_abi \
+            --format json \
+            -o "$RUNNER_TEMP/self-compare.json"
+
+          set +e
+          abicheck compare \
+            abi/math.abicheck.json abi/math.abicheck.json \
+            --verify-runtime \
+            > "$RUNNER_TEMP/retired-flag.out" 2>&1
+          rc=$?
+          set -e
+          if [[ $rc -ne 64 ]] || ! grep -Fq 'No such option: --verify-runtime' "$RUNNER_TEMP/retired-flag.out"; then
+            echo "removed --verify-runtime rejection is wrong (rc=$rc)" >&2
+            cat "$RUNNER_TEMP/retired-flag.out" >&2
+            exit 1
+          fi
+
+      - name: Build combined Bazel evidence pack
+        id: evidence
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
+          echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
+
+      - name: Fresh-main scan against trusted baseline
+        id: scan
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          public-header-dir: include
+          sources: .
+          build-info: ${{ steps.evidence.outputs.pack_dir }}
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          budget: 10m
+          policy: strict_abi
+          format: json
+          output-file: fresh-main-scan.json
+          fail-on-breaking: true
+          fail-on-api-break: true
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Fresh-main compare with assurance gate
+        id: compare
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          sources: .
+          build-info: ${{ steps.evidence.outputs.pack_dir }}
+          depth: source
+          policy: strict_abi
+          format: json
+          output-file: fresh-main-compare.json
+          extra-args: '--require-complete-analysis'
+          fail-on-breaking: true
+          fail-on-api-break: true
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Check independent source-depth coverage contract
+        id: coverage
+        if: always() && hashFiles('fresh-main-scan.json') != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_coverage_contract.py fresh-main-scan.json \
+            -o "$RUNNER_TEMP/fresh-main-coverage.json" \
+            --requested-depth source \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --buildfiles "$RUNNER_TEMP/bazel-buildfiles.txt" \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json"
+
+      - name: Inspect reports and enforce result
+        if: always()
+        shell: bash
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          SCAN_VERDICT: ${{ steps.scan.outputs.verdict }}
+          SCAN_EXIT: ${{ steps.scan.outputs.exit-code }}
+          COMPARE_OUTCOME: ${{ steps.compare.outcome }}
+          COMPARE_VERDICT: ${{ steps.compare.outputs.verdict }}
+          COMPARE_EXIT: ${{ steps.compare.outputs.exit-code }}
+          COVERAGE_OUTCOME: ${{ steps.coverage.outcome }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def load(path):
+              path = Path(path)
+              if not path.is_file():
+                  print(f"MISSING: {path}")
+                  return None
+              data = json.loads(path.read_text(encoding="utf-8"))
+              assurance = data.get("analysis_assurance")
+              if assurance is None and isinstance(data.get("diff"), dict):
+                  assurance = data["diff"].get("analysis_assurance")
+              print(f"\n=== {path} ===")
+              print("verdict:", data.get("verdict"))
+              print("exit_code:", data.get("exit_code"))
+              print("analysis_assurance:", assurance)
+              return data
+
+          scan = load("fresh-main-scan.json")
+          compare = load("fresh-main-compare.json")
+          coverage_path = Path(os.environ["RUNNER_TEMP"]) / "fresh-main-coverage.json"
+          coverage = load(coverage_path) if coverage_path.is_file() else None
+
+          for key in (
+              "SCAN_OUTCOME", "SCAN_VERDICT", "SCAN_EXIT",
+              "COMPARE_OUTCOME", "COMPARE_VERDICT", "COMPARE_EXIT",
+              "COVERAGE_OUTCOME",
+          ):
+              print(f"{key}={os.environ.get(key)!r}")
+
+          errors = []
+          if os.environ.get("SCAN_OUTCOME") != "success" or scan is None:
+              errors.append("fresh-main scan failed or produced no report")
+          if os.environ.get("COMPARE_OUTCOME") != "success" or compare is None:
+              errors.append("fresh-main compare/assurance failed or produced no report")
+          if os.environ.get("COVERAGE_OUTCOME") != "success" or coverage is None:
+              errors.append("independent source-depth coverage contract failed")
+
+          unsafe = {"BREAKING", "API_BREAK", "NOT_COMPARABLE", "ERROR"}
+          if scan and scan.get("verdict") in unsafe:
+              errors.append(f"unsafe scan verdict: {scan.get('verdict')}")
+          if compare and compare.get("verdict") in unsafe:
+              errors.append(f"unsafe compare verdict: {compare.get('verdict')}")
+
+          if compare:
+              assurance = compare.get("analysis_assurance")
+              if not isinstance(assurance, dict):
+                  errors.append("compare report has no analysis_assurance")
+              else:
+                  if assurance.get("requested_depth") != "source":
+                      errors.append(
+                          "requested depth was not recorded as source: "
+                          f"{assurance.get('requested_depth')!r}"
+                      )
+                  if assurance.get("status") != "complete":
+                      errors.append(
+                          "analysis assurance is not complete: "
+                          f"{assurance.get('status')!r}"
+                      )
+
+          if errors:
+              print("\nVALIDATION FAILED")
+              for item in errors:
+                  print(" -", item)
+              raise SystemExit(1)
+          print("\nVALIDATION PASSED")
+          PY
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fresh-abicheck-main-validation
+          path: |
+            fresh-main-scan.json
+            fresh-main-compare.json
+            ${{ runner.temp }}/self-compare.json
+            ${{ runner.temp }}/fresh-main-coverage.json
+            ${{ runner.temp }}/bazel-evidence-summary.json
+          if-no-files-found: warn
+          retention-days: 30
