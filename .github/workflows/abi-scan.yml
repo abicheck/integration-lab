@@ -714,9 +714,25 @@ jobs:
           path: ${{ runner.temp }}/reports
           merge-multiple: true
 
+      # Codex review, fresh evidence: `--manifest` (used below) does not
+      # exist at this workflow's own composite-Action pin (`891bd9d`,
+      # predating the CLI cleanup that added it) -- `abicheck aggregate
+      # --help` at that revision still exposes the retired `--expect`/
+      # `--optional` interface, so reusing that pin here would make this
+      # step fail on an unrecognized-option usage error rather than run the
+      # new fail-closed check. This install is a plain `pip install` of the
+      # `abicheck` Python package for the `aggregate` CLI alone -- unlike
+      # the composite-Action `uses:` pins elsewhere in this workflow, it
+      # never touches Bazel/castxml/the source-evidence pipeline this file's
+      # own P0.3 dump/scan-parity gap blocks a full repin on, so bumping it
+      # independently is safe. Pinned to `5b52989`, the exact `abicheck/main`
+      # revision this repo's own upstream audit already validated end to end
+      # (see UPSTREAM_TO_ABICHECK.md and this PR's own description) -- not
+      # `main` itself, so this step's behavior stays reproducible rather
+      # than silently drifting with every upstream push.
       - name: Install abicheck (for aggregate)
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
 
       # Declares what this run actually expects, from the same relevance
       # signal `scan`/`scan_strings` computed for themselves -- not
