@@ -1,4 +1,32 @@
 {
+  "ast_compile_args": [],
+  "ast_cplusplus_macro": null,
+  "ast_fallback_reason": null,
+  "ast_producer": "castxml",
+  "ast_resolved_standard": null,
+  "ast_sysroot": null,
+  "ast_toolchain": {
+    "abi_dialect": "gnu",
+    "castxml_bundled_clang_version": "20.1",
+    "castxml_version": "0.7.0",
+    "compiler_mtime_ns": "1784923527000000000",
+    "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
+    "compiler_selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/g++",
+    "compiler_sha256": "89e094803d827f36b7f535d62e68e2ad7f6d81bafe4857f1a9b8213e130ed34e",
+    "compiler_size": "1964712",
+    "compiler_target_triple": "x86_64-conda-linux-gnu",
+    "compiler_version": "g++ (conda-forge gcc 14.3.0-20) 14.3.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "mtime_ns": "1772089430000000000",
+    "producer": "castxml",
+    "realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/castxml",
+    "selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/castxml",
+    "sha256": "6d233e87fea856e8f76cdb69d687a73025771f35cd9f83a3f978d607c5153a0d",
+    "size": "271544",
+    "target_triple": "x86_64-conda-linux-gnu",
+    "version": "castxml version 0.7.0\nCastXML project maintained and supported by Kitware (kitware.com).\nclang version 20.1.8 (https://github.com/conda-forge/clangdev-feedstock 4bb8e6c8a8e30a94c55be92d093c63f0d8fa92ae)\nTarget: x86_64-conda-linux-gnu\nThread model: posix\nInstalledDir:"
+  },
+  "ast_toolchain_supported": true,
+  "ast_toolchain_unsupported_reasons": [],
   "build_context_defines": [],
   "build_mode": null,
   "build_source": {
@@ -106,6 +134,7 @@
       ],
       "link_units": [
         {
+          "directory": "",
           "id": "link://bazel-out/k8-fastbuild/bin/libmath.so",
           "inputs": [
             "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o"
@@ -608,22 +637,37 @@
       "build_source_pack_version": 1,
       "coverage": [
         {
-          "confidence": "high",
-          "detail": "bazel, 1 compile units, 32 targets",
+          "compile_units": null,
+          "confidence": "unknown",
+          "detail": "",
           "layer": "L3_build",
-          "status": "present"
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "present",
+          "transitive_targets": null
         },
         {
+          "compile_units": null,
           "confidence": "high",
           "detail": "scope=target, 1/1 TUs parsed, 3/6 symbols matched, 6/6 accounted, 3 unmatched, cache 0/1 hit (0%), Ns",
           "layer": "L4_source_abi",
-          "status": "present"
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "present",
+          "transitive_targets": null
         },
         {
+          "compile_units": null,
           "confidence": "reduced",
           "detail": "",
           "layer": "L5_source_graph",
-          "status": "present"
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "present",
+          "transitive_targets": null
         }
       ],
       "extractors": [
@@ -645,6 +689,34 @@
           "detail": "0 type edges from 1 compile unit(s), Ns, jobs=1",
           "inputs": [],
           "name": "type_graph:clang",
+          "status": "partial",
+          "version": ""
+        },
+        {
+          "detail": "0 override edges from 1 compile unit(s), Ns, jobs=1",
+          "inputs": [],
+          "name": "override_graph:clang",
+          "status": "partial",
+          "version": ""
+        },
+        {
+          "detail": "0 instantiation(s), 0 edges from 1 compile unit(s), Ns, jobs=1",
+          "inputs": [],
+          "name": "template_graph:clang",
+          "status": "partial",
+          "version": ""
+        },
+        {
+          "detail": "0 MACRO_CONTROLS_DECL, 0 DECL_USES_MACRO edge(s) from 1 compile unit(s), Ns, jobs=1",
+          "inputs": [],
+          "name": "macro_graph:clang",
+          "status": "partial",
+          "version": ""
+        },
+        {
+          "detail": "0 registration/address-of edge(s), 0 CALLBACK_MAY_INVOKE edge(s) from 1 compile unit(s), Ns, jobs=1",
+          "inputs": [],
+          "name": "callback_graph:clang",
           "status": "partial",
           "version": ""
         },
@@ -688,9 +760,10 @@
           "compiler_version": "18.1.3",
           "name": "abicheck-clang-canonical",
           "producer": "abicheck-cc-clang-extractor",
-          "producer_version": "0.7",
+          "producer_version": "0.13",
           "version": 1
         },
+        "fact_set_inconsistent": false,
         "include_graph_used": false,
         "matched_symbols": 3,
         "non_public_symbols_classified": 3,
@@ -956,7 +1029,7 @@
       "coverage": {
         "binary_symbol_mappings": 3,
         "call_edges": {
-          "collected": false,
+          "collected": true,
           "count": 0
         },
         "compile_units": 1,
@@ -980,7 +1053,7 @@
           "count": 2
         },
         "node_kinds": {
-          "binary_symbol": 3,
+          "binary_symbol": 6,
           "build_option": 3,
           "compile_unit": 1,
           "debug_type": 1,
@@ -993,7 +1066,7 @@
           "target": 32
         },
         "reference_edges": {
-          "collected": false,
+          "collected": true,
           "count": 0
         },
         "source_decls": 4,
@@ -1003,311 +1076,743 @@
           "count": 4
         }
       },
-      "degraded_passes": {
-        "call_graph": true,
-        "type_graph": true
-      },
+      "degraded_passes": {},
       "edges": [
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://src/math.cc",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target:////:math"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "target:////:math_api",
           "edge": "TARGET_DEPENDS_ON",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target:////:math"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "header://include/abicheck_lab/math.h",
           "edge": "TARGET_HAS_PUBLIC_HEADER",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target:////:math_api"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "target://@bazel_tools//tools/cpp:link_extra_libs",
           "edge": "TARGET_DEPENDS_ON",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@bazel_tools//tools/cpp:link_extra_lib"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/bazel_tools/tools/def_parser/no_op.bat",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@bazel_tools//tools/def_parser:def_parser"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/bazel_tools/tools/cpp/build_interface_so",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@bazel_tools//tools/cpp:interface_library_builder"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/bazel_tools/tools/cpp/link_dynamic_library.sh",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@bazel_tools//tools/cpp:link_dynamic_library"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:compiler_deps"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:compiler_deps"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:compiler_deps"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:compiler_deps"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc_wrapper"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:deps_scanner_wrapper"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
           "edge": "TARGET_HAS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:validate_static_library"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://src/math.cc",
           "edge": "COMPILE_UNIT_BUILDS_SOURCE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "build_option://-fno-omit-frame-pointer",
           "edge": "COMPILE_UNIT_USES_OPTION",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "build_option://-std=c++17",
           "edge": "COMPILE_UNIT_USES_OPTION",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "build_option://-fPIC",
           "edge": "COMPILE_UNIT_USES_OPTION",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "edge": "COMPILE_UNIT_EMITS_OBJECT",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "link://bazel-out/k8-fastbuild/bin/libmath.so",
           "edge": "TARGET_HAS_LINK_UNIT",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "target:////:math"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "edge": "LINK_UNIT_HAS_INPUT",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
+          "occurrences": [],
           "provenance": "build_evidence",
+          "resolved": {},
           "src": "link://bazel-out/k8-fastbuild/bin/libmath.so"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "decl://_ZN12abicheck_lab10CalculatorC1Ev",
           "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "decl://_ZNK12abicheck_lab10Calculator3addEii",
           "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "binary_symbol://_ZNK12abicheck_lab10Calculator3addEii",
           "edge": "SOURCE_DECL_MAPS_TO_SYMBOL",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "decl://_ZNK12abicheck_lab10Calculator3addEii"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "decl://_ZNK12abicheck_lab10Calculator8multiplyEii",
           "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "binary_symbol://_ZNK12abicheck_lab10Calculator8multiplyEii",
           "edge": "SOURCE_DECL_MAPS_TO_SYMBOL",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "decl://_ZNK12abicheck_lab10Calculator8multiplyEii"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "decl://_ZN12abicheck_lab11api_versionEv",
           "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "binary_symbol://_ZN12abicheck_lab11api_versionEv",
           "edge": "SOURCE_DECL_MAPS_TO_SYMBOL",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "decl://_ZN12abicheck_lab11api_versionEv"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "type://abicheck_lab::Calculator",
           "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
           "dst": "debug_type://sha256:8ec4118107a2b9391abdd184af9e114fdd87d50dc3307121460c9de7c2535241",
           "edge": "SOURCE_TYPE_MAPS_TO_DEBUG_TYPE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "source_abi"
+            }
+          ],
+          "occurrences": [],
           "provenance": "source_abi",
+          "resolved": {},
           "src": "type://abicheck_lab::Calculator"
         },
         {
           "attrs": {
+            "resolution": "unresolved",
             "role": "alias"
           },
           "confidence": "reduced",
+          "conflicts": [],
           "dst": "type://__int128",
           "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            },
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "clang-ast-inline",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
           "src": "type://__int128_t"
         },
         {
           "attrs": {
+            "resolution": "unresolved",
             "role": "alias"
           },
           "confidence": "reduced",
+          "conflicts": [],
           "dst": "type://unsigned __int128",
           "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            },
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "clang-ast-inline",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
           "src": "type://__uint128_t"
         },
         {
           "attrs": {
+            "resolution": "unresolved",
             "role": "alias"
           },
           "confidence": "reduced",
+          "conflicts": [],
           "dst": "type://__NSConstantString_tag",
           "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            },
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "clang-ast-inline",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
           "src": "type://__NSConstantString"
         },
         {
           "attrs": {
+            "resolution": "unresolved",
             "role": "alias"
           },
           "confidence": "reduced",
+          "conflicts": [],
           "dst": "type://__va_list_tag",
           "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            },
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "clang-ast-inline",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
           "src": "type://__builtin_va_list"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "source://src/math.cc",
           "edge": "COMPILE_UNIT_INCLUDES_FILE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "include_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "include_graph",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
           "dst": "header://include/abicheck_lab/math.h",
           "edge": "COMPILE_UNIT_INCLUDES_FILE",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "include_graph"
+            }
+          ],
+          "occurrences": [],
           "provenance": "include_graph",
+          "resolved": {},
           "src": "cu://src/math.cc#cfg:88541b70e091"
         }
       ],
       "external_graph_refs": [],
       "extractor_passes": {
-        "include_graph": true
+        "call_graph": true,
+        "callback_graph": true,
+        "include_graph": true,
+        "macro_graph": true,
+        "override_graph": true,
+        "template_graph": true,
+        "type_graph": true,
+        "type_graph:DECL_HAS_TYPE:default_template_arg": true,
+        "type_graph:DECL_HAS_TYPE:param": true,
+        "type_graph:DECL_HAS_TYPE:return": true,
+        "type_graph:DECL_HAS_TYPE:template_param": true,
+        "type_graph:DECL_HAS_TYPE:var": true,
+        "type_graph:DECL_REFERENCES_DECL:ref": true,
+        "type_graph:TYPE_HAS_FIELD_TYPE:alias": true,
+        "type_graph:TYPE_HAS_FIELD_TYPE:default_template_arg": true,
+        "type_graph:TYPE_HAS_FIELD_TYPE:enum_underlying": true,
+        "type_graph:TYPE_HAS_FIELD_TYPE:field": true,
+        "type_graph:TYPE_HAS_FIELD_TYPE:template_param": true,
+        "type_graph:TYPE_INHERITS:base": true,
+        "virtual_dispatch_graph": true
       },
       "indexes": {
         "by_binary_symbol": {
@@ -1426,18 +1931,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "shared_library",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target:////:math",
           "kind": "target",
           "label": "math",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "shared_library",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://src/math.cc",
           "kind": "source",
           "label": "src/math.cc",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1446,18 +1977,44 @@
             "visibility": "public"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "static_library",
+                "visibility": "public"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target:////:math_api",
           "kind": "target",
           "label": "math_api",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "static_library",
+            "visibility": "public"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "header://include/abicheck_lab/math.h",
           "kind": "header",
           "label": "include/abicheck_lab/math.h",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1466,10 +2023,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@platforms//host:host",
           "kind": "target",
           "label": "host",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1478,10 +2052,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "static_library",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:malloc",
           "kind": "target",
           "label": "malloc",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "static_library",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1490,10 +2081,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "static_library",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:link_extra_lib",
           "kind": "target",
           "label": "link_extra_lib",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "static_library",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1502,10 +2110,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools:host_platform",
           "kind": "target",
           "label": "host_platform",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1514,10 +2139,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools:host_platform#cfg:2",
           "kind": "target",
           "label": "host_platform",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1526,18 +2168,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/def_parser:def_parser",
           "kind": "target",
           "label": "def_parser",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/bazel_tools/tools/def_parser/no_op.bat",
           "kind": "source",
           "label": "external/bazel_tools/tools/def_parser/no_op.bat",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1546,10 +2214,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:toolchain_type",
           "kind": "target",
           "label": "toolchain_type",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1558,10 +2243,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:current_cc_toolchain",
           "kind": "target",
           "label": "current_cc_toolchain",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1570,10 +2272,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc-compiler-k8",
           "kind": "target",
           "label": "cc-compiler-k8",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1582,10 +2301,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:empty",
           "kind": "target",
           "label": "empty",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1594,10 +2330,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@platforms//os:linux",
           "kind": "target",
           "label": "linux",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1606,18 +2359,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:interface_library_builder",
           "kind": "target",
           "label": "interface_library_builder",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/bazel_tools/tools/cpp/build_interface_so",
           "kind": "source",
           "label": "external/bazel_tools/tools/cpp/build_interface_so",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1626,10 +2405,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:local",
           "kind": "target",
           "label": "local",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1638,18 +2434,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:link_dynamic_library",
           "kind": "target",
           "label": "link_dynamic_library",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/bazel_tools/tools/cpp/link_dynamic_library.sh",
           "kind": "source",
           "label": "external/bazel_tools/tools/cpp/link_dynamic_library.sh",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1658,10 +2480,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/build_defs/build_info:cc_build_info",
           "kind": "target",
           "label": "cc_build_info",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1670,10 +2509,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools:host_platform#cfg:3",
           "kind": "target",
           "label": "host_platform",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1682,10 +2538,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@platforms//cpu:x86_64",
           "kind": "target",
           "label": "x86_64",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1694,42 +2567,95 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:compiler_deps",
           "kind": "target",
           "label": "compiler_deps",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1738,10 +2664,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:link_extra_libs",
           "kind": "target",
           "label": "link_extra_libs",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1750,10 +2693,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//src/conditions:host_windows",
           "kind": "target",
           "label": "host_windows",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1762,18 +2722,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:cc_wrapper",
           "kind": "target",
           "label": "cc_wrapper",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1782,10 +2768,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@platforms//os:os",
           "kind": "target",
           "label": "os",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1794,18 +2797,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:deps_scanner_wrapper",
           "kind": "target",
           "label": "deps_scanner_wrapper",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1814,10 +2843,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "static_library",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:empty_lib",
           "kind": "target",
           "label": "empty_lib",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "static_library",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1826,10 +2872,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@platforms//cpu:cpu",
           "kind": "target",
           "label": "cpu",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1838,10 +2901,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//src/conditions:host_windows_x64_constraint",
           "kind": "target",
           "label": "host_windows_x64_constraint",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1850,18 +2930,44 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@rules_cc~~cc_configure_extension~local_config_cc//:validate_static_library",
           "kind": "target",
           "label": "validate_static_library",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1870,10 +2976,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//src/conditions:host_windows_arm64_constraint",
           "kind": "target",
           "label": "host_windows_arm64_constraint",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1882,10 +3005,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@bazel_tools//tools/cpp:host_xcodes",
           "kind": "target",
           "label": "host_xcodes",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1894,10 +3034,27 @@
             "visibility": "unknown"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "build_system": "bazel",
+                "kind": "unknown",
+                "visibility": "unknown"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "target://@@bazel_tools~xcode_configure_extension~local_config_xcode//:host_xcodes",
           "kind": "target",
           "label": "host_xcodes",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "build_system": "bazel",
+            "kind": "unknown",
+            "visibility": "unknown"
+          }
         },
         {
           "attrs": {
@@ -1906,48 +3063,113 @@
             "target_id": "target:////:math"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "language": "CXX",
+                "standard": "c++17",
+                "target_id": "target:////:math"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "cu://src/math.cc#cfg:88541b70e091",
           "kind": "compile_unit",
           "label": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "language": "CXX",
+            "standard": "c++17",
+            "target_id": "target:////:math"
+          }
         },
         {
           "attrs": {
             "abi_relevant": true
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "abi_relevant": true
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "build_option://-fno-omit-frame-pointer",
           "kind": "build_option",
           "label": "-fno-omit-frame-pointer",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "abi_relevant": true
+          }
         },
         {
           "attrs": {
             "abi_relevant": true
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "abi_relevant": true
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "build_option://-std=c++17",
           "kind": "build_option",
           "label": "-std=c++17",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "abi_relevant": true
+          }
         },
         {
           "attrs": {
             "abi_relevant": true
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "abi_relevant": true
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "build_option://-fPIC",
           "kind": "build_option",
           "label": "-fPIC",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "abi_relevant": true
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "kind": "object_file",
           "label": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {}
         },
         {
           "attrs": {
@@ -1956,88 +3178,268 @@
             "target_id": "target:////:math"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "kind": "shared_library",
+                "soname": "",
+                "target_id": "target:////:math"
+              },
+              "confidence": "high",
+              "producer": "build_evidence"
+            }
+          ],
           "id": "link://bazel-out/k8-fastbuild/bin/libmath.so",
           "kind": "link_unit",
           "label": "bazel-out/k8-fastbuild/bin/libmath.so",
-          "provenance": "build_evidence"
+          "provenance": "build_evidence",
+          "resolved": {
+            "kind": "shared_library",
+            "soname": "",
+            "target_id": "target:////:math"
+          }
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "binary_symbol://_ZN12abicheck_lab11api_versionEv",
           "kind": "binary_symbol",
           "label": "_ZN12abicheck_lab11api_versionEv",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "binary_symbol://_ZNK12abicheck_lab10Calculator3addEii",
           "kind": "binary_symbol",
           "label": "_ZNK12abicheck_lab10Calculator3addEii",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "binary_symbol://_ZNK12abicheck_lab10Calculator8multiplyEii",
           "kind": "binary_symbol",
           "label": "_ZNK12abicheck_lab10Calculator8multiplyEii",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "id": "binary_symbol://__bss_start",
+          "kind": "binary_symbol",
+          "label": "__bss_start",
+          "provenance": "source_abi",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "id": "binary_symbol://_edata",
+          "kind": "binary_symbol",
+          "label": "_edata",
+          "provenance": "source_abi",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
+          "id": "binary_symbol://_end",
+          "kind": "binary_symbol",
+          "label": "_end",
+          "provenance": "source_abi",
+          "resolved": {}
         },
         {
           "attrs": {
+            "consumer_compiled_body": false,
             "decl_kind": "function",
             "visibility": "public_header"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "consumer_compiled_body": false,
+                "decl_kind": "function",
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "decl://_ZN12abicheck_lab10CalculatorC1Ev",
           "kind": "source_decl",
           "label": "abicheck_lab::Calculator::Calculator",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "consumer_compiled_body": false,
+            "decl_kind": "function",
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {
             "origin": "PUBLIC_HEADER"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "origin": "PUBLIC_HEADER"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
           "kind": "header",
           "label": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "origin": "PUBLIC_HEADER"
+          }
         },
         {
           "attrs": {
+            "consumer_compiled_body": false,
             "decl_kind": "function",
             "visibility": "public_header"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "consumer_compiled_body": false,
+                "decl_kind": "function",
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "decl://_ZNK12abicheck_lab10Calculator3addEii",
           "kind": "source_decl",
           "label": "abicheck_lab::Calculator::add",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "consumer_compiled_body": false,
+            "decl_kind": "function",
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {
+            "consumer_compiled_body": false,
             "decl_kind": "function",
             "visibility": "public_header"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "consumer_compiled_body": false,
+                "decl_kind": "function",
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "decl://_ZNK12abicheck_lab10Calculator8multiplyEii",
           "kind": "source_decl",
           "label": "abicheck_lab::Calculator::multiply",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "consumer_compiled_body": false,
+            "decl_kind": "function",
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {
+            "consumer_compiled_body": false,
             "decl_kind": "function",
             "visibility": "public_header"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "consumer_compiled_body": false,
+                "decl_kind": "function",
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "decl://_ZN12abicheck_lab11api_versionEv",
           "kind": "source_decl",
           "label": "abicheck_lab::api_version",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "consumer_compiled_body": false,
+            "decl_kind": "function",
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {
@@ -2045,91 +3447,187 @@
             "visibility": "public_header"
           },
           "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "decl_kind": "record",
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "source_abi"
+            }
+          ],
           "id": "type://abicheck_lab::Calculator",
           "kind": "record_type",
           "label": "abicheck_lab::Calculator",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {
+            "decl_kind": "record",
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "source_abi"
+            }
+          ],
           "id": "debug_type://sha256:8ec4118107a2b9391abdd184af9e114fdd87d50dc3307121460c9de7c2535241",
           "kind": "debug_type",
           "label": "sha256:8ec4118107a2b9391abdd184af9e114fdd87d50dc3307121460c9de7c2535241",
-          "provenance": "source_abi"
+          "provenance": "source_abi",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__int128_t",
           "kind": "record_type",
           "label": "__int128_t",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__int128",
           "kind": "record_type",
           "label": "__int128",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__uint128_t",
           "kind": "record_type",
           "label": "__uint128_t",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://unsigned __int128",
           "kind": "record_type",
           "label": "unsigned __int128",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__NSConstantString",
           "kind": "record_type",
           "label": "__NSConstantString",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__NSConstantString_tag",
           "kind": "record_type",
           "label": "__NSConstantString_tag",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__builtin_va_list",
           "kind": "record_type",
           "label": "__builtin_va_list",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         },
         {
           "attrs": {},
           "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "clang-ast-inline"
+            }
+          ],
           "id": "type://__va_list_tag",
           "kind": "record_type",
           "label": "__va_list_tag",
-          "provenance": "clang-ast-inline"
+          "provenance": "clang-ast-inline",
+          "resolved": {}
         }
       ],
-      "schema_version": 1
+      "schema_version": 2
     }
   },
   "build_source_pack": {
     "coverage_summary": {
       "L3_build": {
-        "confidence": "high",
+        "confidence": "unknown",
         "status": "present"
       },
       "L4_source_abi": {
@@ -2144,9 +3642,67 @@
     "path_hint": ".",
     "schema_version": 1
   },
+  "castxml_var_access_facts_reliable": true,
+  "clang_deprecation_facts_reliable": true,
+  "clang_field_initializer_facts_reliable": true,
+  "clang_restrict_facts_reliable": true,
+  "clang_va_list_facts_reliable": true,
+  "clang_vtable_facts_reliable": true,
   "conditional_fields": {},
   "constants": {},
+  "contract": {
+    "profile_fields": {
+      "abi_dialect": "gnu",
+      "compiler_family": "gnu",
+      "compiler_version": "[\"castxml\", \"castxml version 0.7.0\\nCastXML project maintained and supported by Kitware (kitware.com).\\nclang version 20.1.8 (https://github.com/conda-forge/clangdev-feedstock 4bb8e6c8a8e30a94c55be92d093c63f0d8fa92ae)\\nTarget: x86_64-conda-linux-gnu\\nThread model: posix\\nInstalledDir:\", \"g++ (conda-forge gcc 14.3.0-20) 14.3.0\\nCopyright (C) 2024 Free Software Foundation, Inc.\\nThis is free software; see the source for copying conditions.  There is NO\\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\"]",
+      "endianness": "",
+      "frontend_context_kind": "",
+      "header_sequence": "[\"<single-header>\"]",
+      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\", \"1:ext:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", \"2:hdrs:[[\\\"math.h\\\", \\\"include/abicheck_lab/math.h\\\"]]\", \"3:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\", \"4:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\"]",
+      "language_standard": "c++",
+      "macro_ops": "[]",
+      "pass_through_flags": "[]",
+      "pointer_width": "",
+      "target_triple": ""
+    },
+    "profile_fingerprint": "sha256:a79021a8ea538dc3d58bb91df8f721c9e594c59784f02e890a484042ee664d14",
+    "scope_fields": {
+      "headers": "[\"<single-header>\"]",
+      "public_header_dirs": "[\"<single-header-dir>\"]",
+      "translation_units": "[]"
+    },
+    "scope_fingerprint": "sha256:1e615eb4f27cfc91b1ec847701fe3487bc1f2bc1fee34a7dea89561ecc02ee37"
+  },
   "dependency_info": null,
+  "dependency_scope": "filtered",
+  "dump_provenance": {
+    "ast_fallback_reason": null,
+    "ast_toolchain": {
+      "abi_dialect": "gnu",
+      "castxml_bundled_clang_version": "20.1",
+      "castxml_version": "0.7.0",
+      "compiler_mtime_ns": "1784923527000000000",
+      "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
+      "compiler_selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/g++",
+      "compiler_sha256": "89e094803d827f36b7f535d62e68e2ad7f6d81bafe4857f1a9b8213e130ed34e",
+      "compiler_size": "1964712",
+      "compiler_target_triple": "x86_64-conda-linux-gnu",
+      "compiler_version": "g++ (conda-forge gcc 14.3.0-20) 14.3.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+      "mtime_ns": "1772089430000000000",
+      "producer": "castxml",
+      "realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/castxml",
+      "selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/castxml",
+      "sha256": "6d233e87fea856e8f76cdb69d687a73025771f35cd9f83a3f978d607c5153a0d",
+      "size": "271544",
+      "target_triple": "x86_64-conda-linux-gnu",
+      "version": "castxml version 0.7.0\nCastXML project maintained and supported by Kitware (kitware.com).\nclang version 20.1.8 (https://github.com/conda-forge/clangdev-feedstock 4bb8e6c8a8e30a94c55be92d093c63f0d8fa92ae)\nTarget: x86_64-conda-linux-gnu\nThread model: posix\nInstalledDir:"
+    },
+    "degraded": false,
+    "effective_depth": "source",
+    "frontend": "auto",
+    "requested_depth": "source",
+    "source_scope": "target"
+  },
   "dwarf": {
     "base_types": {},
     "enums": {},
@@ -2173,6 +3729,8 @@
     },
     "value_abi_traits": {}
   },
+  "dwarf_layout_coherence": null,
+  "dwarf_layout_coherence_mismatches": [],
   "elf": {
     "abi_flags": [],
     "bind_now": true,
@@ -2322,14 +3880,19 @@
   },
   "elf_only_mode": false,
   "enums": [],
+  "fact_provenance": {},
   "from_headers": true,
+  "frontend_context_kind": null,
   "functions": [
     {
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
       "elf_visibility": "default",
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": null,
@@ -2337,6 +3900,7 @@
       "is_hidden_friend": false,
       "is_inline": false,
       "is_noexcept": false,
+      "is_override": null,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
@@ -2358,8 +3922,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": false,
@@ -2367,12 +3934,13 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": null,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
       "is_virtual": false,
       "is_volatile": false,
-      "mangled": "__abicheck_ctor__Calculator()",
+      "mangled": "__abicheck_ctor__abicheck_lab::Calculator()",
       "name": "Calculator",
       "origin": "public_header",
       "params": [],
@@ -2388,8 +3956,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
       "elf_visibility": "default",
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": true,
       "is_deleted": false,
       "is_explicit": false,
@@ -2397,6 +3968,7 @@
       "is_hidden_friend": false,
       "is_inline": false,
       "is_noexcept": false,
+      "is_override": false,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
@@ -2437,8 +4009,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
       "elf_visibility": "default",
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": true,
       "is_deleted": false,
       "is_explicit": false,
@@ -2446,6 +4021,7 @@
       "is_hidden_friend": false,
       "is_inline": false,
       "is_noexcept": false,
+      "is_override": false,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
@@ -2486,8 +4062,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": false,
@@ -2495,12 +4074,13 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": null,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
       "is_virtual": false,
       "is_volatile": false,
-      "mangled": "__abicheck_ctor__Calculator(const Calculator&)",
+      "mangled": "__abicheck_ctor__abicheck_lab::Calculator(const Calculator&)",
       "name": "Calculator",
       "origin": "public_header",
       "params": [
@@ -2526,8 +4106,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": null,
@@ -2535,6 +4118,7 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": false,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
@@ -2566,8 +4150,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": false,
@@ -2575,12 +4162,13 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": null,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
       "is_virtual": false,
       "is_volatile": false,
-      "mangled": "__abicheck_ctor__Calculator(Calculator&&)",
+      "mangled": "__abicheck_ctor__abicheck_lab::Calculator(Calculator&&)",
       "name": "Calculator",
       "origin": "public_header",
       "params": [
@@ -2606,8 +4194,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": null,
@@ -2615,6 +4206,7 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": false,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
@@ -2646,8 +4238,11 @@
       "access": "public",
       "contract_attributes": [],
       "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
       "elf_visibility": null,
       "exception_spec": "",
+      "hidden_friend_owner": null,
       "is_const": false,
       "is_deleted": false,
       "is_explicit": null,
@@ -2655,13 +4250,14 @@
       "is_hidden_friend": false,
       "is_inline": true,
       "is_noexcept": false,
+      "is_override": false,
       "is_pure_virtual": false,
       "is_static": false,
       "is_variadic": false,
       "is_virtual": false,
       "is_volatile": false,
-      "mangled": "Calculator",
-      "name": "Calculator",
+      "mangled": "~abicheck_lab::Calculator",
+      "name": "~Calculator",
       "origin": "public_header",
       "params": [],
       "ref_qualifier": "",
@@ -2674,8 +4270,9 @@
     }
   ],
   "git_tag": null,
+  "header_cv_facts_reliable": true,
   "kabi": null,
-  "language_profile": null,
+  "language_profile": "cpp",
   "library": "libmath.so",
   "macho": null,
   "numpy_capi": {
@@ -2688,19 +4285,22 @@
   "platform": "elf",
   "python_api": null,
   "python_ext": null,
-  "schema_version": 8,
+  "schema_version": 25,
   "scope_fallback": null,
   "source_path": "bazel-out/k8-fastbuild/bin/libmath.so",
   "sycl": null,
   "typedefs": {},
+  "typedefs_qualified": {},
   "types": [
     {
       "alignment_bits": 8,
       "base_offsets": {},
       "bases": [],
       "data_size_bits": null,
+      "deprecated": null,
       "fields": [],
       "has_anonymous_aggregate_fields": false,
+      "is_abstract": false,
       "is_final": false,
       "is_opaque": false,
       "is_standard_layout": null,

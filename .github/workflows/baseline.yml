@@ -82,7 +82,7 @@ jobs:
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d28c0bf28796b3c6daca9584ad6dd44b54f044f7"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -92,11 +92,13 @@ jobs:
             --cquery "$RUNNER_TEMP/bazel-cquery.json" \
             --aquery "$RUNNER_TEMP/bazel-aquery.json" \
             --workspace "$(pwd)" \
-            --output "$RUNNER_TEMP/bazel-evidence-pack"
+            --output "$RUNNER_TEMP/bazel-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
       - name: Collect source-aware ABI baseline
-        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
@@ -132,7 +134,8 @@ jobs:
             "$RUNNER_TEMP/math.raw.abicheck.json" \
             -o "$RUNNER_TEMP/baseline-coverage-contract.json" \
             --requested-depth source \
-            --no-require-public-header-provenance
+            --no-require-public-header-provenance \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json"
 
       - name: Normalize baseline (strip volatile provenance/timing metadata)
         run: |
@@ -153,7 +156,7 @@ jobs:
       # this committed baseline for no reason connected to what this
       # fixture actually validates.
       - name: Collect strings_lib ABI baseline (headers depth)
-        uses: abicheck/abicheck@d28c0bf28796b3c6daca9584ad6dd44b54f044f7 # v0.5.0
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
         with:
           mode: dump
           new-library: bazel-bin/strings_lib/libstrings.so

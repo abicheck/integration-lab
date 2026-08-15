@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Render a short, canonical PR-comment body from an ABICheck `scan` JSON report.
+"""DEPRECATED: latest abicheck/main renders scan sticky comments natively.
+
+Render a short, canonical PR-comment body from an ABICheck `scan` JSON report.
 
 Why this exists: abicheck's built-in sticky PR-comment renderer
 (`pr-comment: true`) only activates for `mode: compare` (see

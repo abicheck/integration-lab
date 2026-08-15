@@ -1,0 +1,707 @@
+# What should move from `abicheck-bazel-lab` into `abicheck`
+
+**Lab revision reviewed:** `napetrov/abicheck-bazel-lab@d15f999c036711ac0f1f6d4399632ffabbff8eb9`  
+**Lab migration target:** `abicheck/abicheck@6dadbe82141e64c7fe3d12b363e2ee2c78b4264b` (`main`, 2026-08-14)
+
+The lab is now more than an example repository. It contains working reference implementations for Bazel target discovery, source-fact collection, coverage assurance, producer conformance, trusted baselines, multi-target aggregation, consumer-scoped checking, scenario oracles, compiler matrices, and performance measurement.
+
+The intended product boundary is:
+
+- the lab declares small targets, profiles, fixtures, and expected outcomes;
+- `abicheck` owns collection, normalization, comparability, evaluation, reporting, and CI gating;
+- normal users must not copy several hundred lines of workflow and lab-specific Python to get the reliable behavior demonstrated here.
+
+## Already available in the migrated `abicheck/main`
+
+These lab workarounds are now upstream and should be consumed rather than extended locally:
+
+1. Native sticky PR comments for single-artifact `scan --against` reports.
+2. Supplemental Bazel `cquery` during zero-config `--sources` collection.
+3. Backend-independent `canonical_finding_id` and `finding_id:` suppression selectors.
+4. `NEW_TARGET` / `allow-new-target` baseline lifecycle handling.
+5. Prebuilt Clang-plugin artifact inputs with SHA-256 verification and safer Intel LLVM handling.
+
+The migration therefore enables native `scan` comments, removes the custom poster, replaces the old scanner pins, and removes the duplicate PR canary. The remaining items below are the capabilities still demonstrated only—or more completely—in the lab.
+
+---
+
+# P0: correctness, security, and fail-closed behavior
+
+## P0.1 Cross-producer constructor/destructor identity reconciliation
+
+### Lab evidence
+
+An unchanged constructor may be represented by CastXML as a synthetic key such as:
+
+```text
+__abicheck_ctor__Calculator()
+```
+
+while direct Clang uses a different declaration identity. A CastXML baseline compared with a Clang candidate has produced a Clang-only `func_removed` and a false `BREAKING` verdict.
+
+`canonical_finding_id` is too late to solve this: it identifies an already-created finding, while the false finding is created during old/new declaration matching.
+
+### Required upstream behavior
+
+Add an ambiguity-safe constructor/destructor reconciliation tier after exact-key and real-mangled-name matching:
+
+- qualified owner type;
+- constructor versus destructor kind;
+- canonical parameter types;
+- copy/move/converting-constructor distinction;
+- CV/ref/variadic/template identity where applicable;
+- exactly-one-candidate rule;
+- explicit match provenance;
+- both sides marked consumed, preventing removal-plus-addition duplication.
+
+Do not use broad display-name matching to merge distinct real mangled symbols.
+
+### Acceptance criteria
+
+An unchanged default constructor produces no removal in CastXML, direct-Clang, replay, or plugin profiles. A genuinely removed overload still reports a break. Ambiguous overload sets remain unmatched rather than guessed.
+
+---
+
+## P0.2 Explicit Bazel root-target scoping
+
+### Lab evidence
+
+The lab must run target-scoped queries itself:
+
+```text
+bazel cquery --output=jsonproto 'deps(//:math)'
+bazel aquery ... 'deps(//:math)'
+```
+
+Using `deps(//...)` pulled unrelated fixture TUs into the `//:math` evidence pack. Changed-scope replay then selected irrelevant units and reduced source/export coverage.
+
+Latest main now runs both `cquery` and `aquery`, but still has no requested-root-target input and still queries the whole workspace.
+
+### Required upstream surface
+
+Normalize these interfaces into one typed request:
+
+```yaml
+build_system: bazel
+build_targets:
+  - //:math
+```
+
+Support it in:
+
+- `dump` and `scan`;
+- the root GitHub Action;
+- `collect-facts`;
+- `check-target` / `check-project`;
+- `.abicheck.yml` and run-plan cells;
+- Python/service API.
+
+Report requested roots separately from their transitive closure:
+
+```json
+{
+  "root_targets_requested": ["//:math"],
+  "root_targets_resolved": ["//:math"],
+  "transitive_target_count": 31,
+  "compile_unit_count": 1,
+  "link_unit_count": 1
+}
+```
+
+Unknown roots must fail clearly instead of silently falling back to `//...`. Root identity must participate in profile/comparability fingerprints.
+
+### Acceptance criteria
+
+Changing an independent fixture target does not alter selected TUs, graph nodes, export coverage, or the `//:math` snapshot.
+
+### Lab code removable afterward
+
+- manual `cquery` / `aquery` workflow steps;
+- `scripts/build_bazel_evidence_pack.py` for normal scans;
+- lab-side Bazel evidence-summary parsing.
+
+---
+
+## P0.3 Apply L3 build context to L2 public-header parsing
+
+### Lab evidence
+
+A run can have complete L3 evidence—compiler, standard, macros, include order and compile units—while the public header is still parsed independently. The report then says build context exists but also emits header-parse-context drift.
+
+This can describe the wrong API, not merely lower confidence. Macro-conditioned declarations and include-order-dependent configuration are common examples.
+
+### Required upstream behavior
+
+Resolve and persist a structured header parse context:
+
+```json
+{
+  "source": "build_evidence",
+  "root_target": "//:math",
+  "compiler": {"family": "clang", "version": "18.1.3"},
+  "language_standard": "c++17",
+  "target_triple": "x86_64-unknown-linux-gnu",
+  "defines": [],
+  "undefines": [],
+  "include_paths": [],
+  "forced_includes": [],
+  "abi_flags": [],
+  "fingerprint": "sha256:..."
+}
+```
+
+Resolution rules:
+
+1. restrict compile units to requested root targets;
+2. identify units that include each public header;
+3. canonicalize compile contexts;
+4. parse once when contexts are equivalent;
+5. build a multi-context manifest or return `NOT_COMPARABLE` when materially different contexts exist;
+6. never select an arbitrary first TU;
+7. compare context fingerprints before interpreting header differences.
+
+### Acceptance criteria
+
+Supplying complete target evidence removes generic context drift because the context was actually applied. Changes in `-D`, `-U`, include order, `-std`, sysroot, compiler, standard library, or target triple produce explicit profile/build-context outcomes instead of phantom API changes.
+
+---
+
+## P0.4 First-class analysis assurance contract
+
+### Lab evidence
+
+The lab added `scripts/check_coverage_contract.py` because `depth: source` historically meant “attempt source collection,” not “prove source analysis was complete.” A run could return `COMPATIBLE` with zero resolved targets or no relevant parsed TUs.
+
+The external checker is useful but reconstructs some semantics from counters and prose, and can still overclaim completeness when header context drift, reduced graph confidence, or fact-set incompatibility remains.
+
+### Required report model
+
+Compatibility verdict, assurance status, and gate decision must be separate:
+
+```json
+{
+  "compatibility_verdict": "COMPATIBLE",
+  "analysis_assurance": {
+    "status": "complete",
+    "requested_depth": "source",
+    "effective_depth": "source",
+    "root_targets": {
+      "expected": ["//:math"],
+      "resolved": ["//:math"]
+    },
+    "translation_units": {
+      "selected": 1,
+      "parsed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    "exports": {
+      "total": 6,
+      "source_linked": 3,
+      "classified_internal": 3,
+      "unaccounted": 0
+    },
+    "header_context": {"status": "applied"},
+    "fact_set": {"status": "comparable"},
+    "source_graph": {"status": "complete", "degraded_passes": []}
+  },
+  "gate": {"decision": "pass"}
+}
+```
+
+Assurance states should include:
+
+```text
+complete
+partial
+failed
+not_comparable
+not_requested
+```
+
+A CI policy must be able to require `complete` independently of whether the compatibility verdict is green.
+
+### Required Action/service outputs
+
+At minimum:
+
+```text
+compatibility-verdict
+analysis-status
+policy-gate-decision
+coverage-status
+root-targets-resolved
+compile-units-parsed
+unaccounted-exports
+report-path
+report-digest
+```
+
+### Acceptance criteria
+
+No external script or regex over human-readable detail is needed to enforce requested analysis depth. A green compatibility result with partial analysis is visibly and machine-readably distinct from a complete green result.
+
+### Lab code removable afterward
+
+- `scripts/check_coverage_contract.py` as an independent semantic gate;
+- custom coverage parsing in comment/report helpers.
+
+---
+
+## P0.5 Safe runtime verification boundary
+
+### Lab evidence
+
+Executing a historical consumer with analyzed shared libraries through `LD_LIBRARY_PATH` loads constructors and other load-time code from artifacts under analysis. That is unsafe in ordinary PR CI and currently requires disabling `verify-runtime`.
+
+### Required upstream design
+
+Choose one clear contract:
+
+1. keep runtime verification disabled/deprecated in the normal process; or
+2. provide an isolated runner with an explicit trust boundary.
+
+A real isolated mode requires, at minimum:
+
+- disposable container or VM;
+- no repository/cloud credentials;
+- no writable host workspace;
+- network disabled by default;
+- read-only input mounts;
+- CPU/memory/time/process limits;
+- syscall/filesystem restrictions;
+- explicit opt-in and clear report provenance;
+- unsupported-platform behavior reported as `not_available`, never silently skipped.
+
+Static `--used-by` analysis remains the safe default.
+
+### Acceptance criteria
+
+A normal `abicheck` invocation cannot execute analyzed code accidentally. Enabling runtime verification either selects a documented sandbox backend or fails before execution.
+
+---
+
+## P0.6 Fail-closed expected-check aggregation
+
+### Lab evidence
+
+The lab aggregate job discovers whatever report artifacts happen to exist. A required target/profile that produces no report can therefore disappear from aggregation while the aggregate remains green.
+
+### Required upstream behavior
+
+Aggregation must consume a declared run plan, not only discovered files:
+
+```yaml
+checks:
+  - id: math-l4-replay
+    target: math
+    profile: l4-replay
+    required: true
+  - id: math-l4-plugin
+    target: math
+    profile: l4-plugin
+    required: false
+```
+
+For every expected cell, aggregate must classify:
+
+```text
+completed
+new_target
+not_applicable
+missing_required
+missing_advisory
+failed_to_analyze
+not_comparable
+```
+
+Required missing reports fail closed. Advisory missing reports remain visible. The aggregate report must include expected, completed, skipped, missing, and failed counts.
+
+### Acceptance criteria
+
+Deleting or failing a required per-target report makes the aggregate gate fail even when all discovered reports are green.
+
+---
+
+## P0.7 Profile-specific baselines and comparability
+
+### Lab evidence
+
+The lab runs several materially different profiles but stores one baseline per library. That mixes product changes with compiler, language standard, AST frontend, source-fact producer, fact-set version, and build flags.
+
+### Required upstream model
+
+A baseline identity is:
+
+```text
+product state × platform × compile profile × evidence profile × contract profile
+```
+
+A profile fingerprint must include at least:
+
+- compiler family/version/executable identity;
+- target triple and data model;
+- C/C++ standard;
+- standard library;
+- defines/undefines;
+- ordered include paths and forced includes;
+- ABI-affecting flags;
+- AST frontend;
+- source-fact producer and fact-set version;
+- requested root targets;
+- public-header/contract roots;
+- requested/effective depth.
+
+Comparisons across incompatible profiles should return `NOT_COMPARABLE`, not convert scanner/profile drift into compatibility findings.
+
+Recommended storage shape:
+
+```text
+baselines/
+  math/
+    gcc17-cxx17-castxml-l2/
+    clang18-cxx17-clang-l2/
+    clang18-cxx17-replay-l4/
+    clang18-cxx17-plugin-l4/
+```
+
+Cross-profile analysis belongs to producer conformance, not product compatibility.
+
+### Acceptance criteria
+
+Every compatibility comparison uses the same profile on both sides. Profile mismatches are explicit and cannot silently pass or produce ordinary ABI break findings.
+
+---
+
+# P1: productization of proven lab integrations
+
+## P1.1 Bazel declared-output rules/aspect
+
+The lab’s `tools/abicheck/facts.bzl` solves a real Bazel correctness issue: plugin facts written as an undeclared compile side effect disappear on cache hits and are invisible to sandbox/remote execution.
+
+Upstream a supported Bazel integration—either under `contrib/bazel` or as `rules_abicheck`—with:
+
+- a facts aspect over C/C++ targets;
+- declared tree-artifact output per TU;
+- output groups and a merged facts pack;
+- target/dependency propagation;
+- generated-header support;
+- exact compile variables from `cc_common`;
+- correct handling of public roots carried as `-isystem`;
+- compiler/plugin identity in the action key;
+- local/remote cache and sandbox tests;
+- no undeclared filesystem writes.
+
+Normal user flow should become approximately:
+
+```text
+bazel build //tools/abicheck:math_facts
+abicheck scan --build-info bazel-bin/tools/abicheck/math_facts ...
+```
+
+Lab code removable: `tools/abicheck/facts.bzl`, its wrapper BUILD targets, and custom plugin-facts collection workflow steps.
+
+---
+
+## P1.2 First-class producer conformance command
+
+The lab has two useful comparisons that are not ordinary ABI comparisons:
+
+- CastXML versus direct Clang;
+- replay versus compiler plugin.
+
+Add a command such as:
+
+```text
+abicheck conformance compare left.json right.json -o conformance.json
+```
+
+Match by `canonical_finding_id` and structured evidence identity, not raw prose. Classify:
+
+```text
+semantic_agreement
+textual_spelling_difference
+coverage_asymmetry
+producer_only_finding
+fact_set_mismatch
+probable_producer_bug
+not_comparable
+```
+
+Conformance must never masquerade as the library’s compatibility verdict. It is a producer-quality result with its own status and CI policy.
+
+Lab code removable: `scripts/render_conformance_report.py` and duplicated matching rules.
+
+---
+
+## P1.3 Per-check profile axes in `.abicheck.yml` and run plans
+
+The reusable project workflow must represent each target/profile cell without hand-written jobs. Per-check fields need to include:
+
+- target and build targets;
+- compile profile/toolchain binding;
+- requested depth;
+- AST frontend;
+- source-fact producer;
+- contract mode;
+- policy/suppressions;
+- required versus advisory;
+- baseline channel/profile/generation;
+- gate mode (`local`, `deferred`, `advisory`).
+
+The lab should ultimately express its matrix declaratively and invoke one reusable `check-project` workflow.
+
+---
+
+## P1.4 Canonical baseline serialization
+
+The lab’s schema-unaware baseline normalization once removed a required field. Upstream a canonical serializer instead of requiring JSON surgery:
+
+```text
+abicheck dump --canonical \
+  --provenance-output run-provenance.json \
+  -o baseline.abicheck.json
+```
+
+Semantic baseline should retain ABI/API facts, profile and contract fingerprints, producer/fact-set identity, normalized source locations, assurance summary, schema version, and semantic digest.
+
+Move timestamps, runner IDs, temporary paths, elapsed time, cache metrics, execroot paths, and host-specific details to a provenance sidecar.
+
+Acceptance criterion: two equivalent extractions produce the same semantic digest without external normalization.
+
+---
+
+## P1.5 Trusted baseline retrieval from the exact PR base
+
+The lab correctly reads a committed baseline with:
+
+```text
+git show <pull_request.base.sha>:<baseline-path>
+```
+
+so a PR cannot edit both the ABI and its own baseline and pass against the modified file.
+
+Upstream reusable workflows should provide this as a normal baseline source, including:
+
+- exact base SHA/ref in the report;
+- file/artifact digest verification;
+- explicit failure when the trusted baseline cannot be resolved;
+- fork-safe/read-only behavior;
+- compatibility with accepted-main and release-contract channels.
+
+---
+
+## P1.6 Target-aware changed-path relevance
+
+The lab avoids workflow-level `paths:` filters because a required workflow that never triggers remains pending. It always starts, computes relevance inside the job, uses `git diff --no-renames`, and narrows build-file relevance through Bazel’s actual load graph.
+
+Upstream reusable workflows should own this behavior and return a structured skip result while still completing the required check.
+
+Required cases:
+
+- relevant file renamed to an irrelevant path;
+- generated/public header changes;
+- BUILD/.bzl files inside and outside the target’s load graph;
+- target addition/removal;
+- source/config changes that affect one target but not another.
+
+---
+
+## P1.7 Historical consumer-scoped compatibility recipe
+
+The lab correctly builds the already-deployed consumer and old library from the PR base SHA. Rebuilding the consumer from PR head can hide a real break by linking it against the new mangled symbol.
+
+Add a reusable Action/workflow recipe for:
+
+```text
+old consumer + old library from trusted base
+candidate library from PR head
+static --used-by analysis
+optional isolated runtime verification
+```
+
+The report should state whether the consumer is historical or a bootstrap fallback. A HEAD-built fallback must never be presented as equivalent evidence.
+
+---
+
+## P1.8 Stable Action and service outputs
+
+The lab currently reads reports and step outcomes in custom scripts. Expose stable outputs for orchestration:
+
+```text
+compatibility-verdict
+analysis-status
+gate-decision
+baseline-outcome
+not-comparable-reason
+report-path
+report-digest
+profile-fingerprint
+scope-fingerprint
+root-targets-resolved
+suppressed-count
+```
+
+All front ends—CLI, Action, reusable workflows, Python API and service API—must normalize into one evaluation request and emit equivalent semantics.
+
+---
+
+# P2: validation, maintenance, and observability
+
+## P2.1 Manifest-driven end-to-end scenario oracle
+
+Upstream a compact scenario runner based on the lab’s manifest. An oracle should assert more than the top-level verdict:
+
+- required/forbidden finding kinds;
+- canonical finding IDs or stable symbol identities;
+- suppressed identities and remaining gating identities;
+- assurance status;
+- root targets and TU counts;
+- profile/comparability outcome;
+- unexpected findings;
+- report/schema validity.
+
+Add source-level scenarios for macro changes, inline/template body changes, private implementation changes, generated headers, unrelated Bazel targets, parse failures, graph degradation, fact-set mismatch, missing required reports, new targets, and stale suppressions.
+
+The scenario suite belongs in `abicheck` tests/examples; the lab remains an external canary.
+
+---
+
+## P2.2 Scheduled fresh-main and stale-suppression canary
+
+The lab’s scheduled scenario canary tests the pinned consumer integration against current `abicheck/main`. Productize the general pattern:
+
+- re-run saved oracles against a candidate scanner;
+- identify verdict drift separately from infrastructure failure;
+- audit suppression rules that matched zero findings;
+- classify desired detector improvement versus probable regression;
+- produce a scanner-upgrade report before pins/baseline generations move.
+
+---
+
+## P2.3 Performance and cache benchmarks
+
+The lab measures cold/warm Bazel and `abicheck` behavior. Upstream benchmarks should record:
+
+- exact scanner/toolchain SHA;
+- repeated median and p95;
+- variance;
+- wall time and peak RSS;
+- Bazel query/build time;
+- L2 extraction time;
+- L4 replay/plugin time;
+- compare/report time;
+- pack/snapshot size;
+- selected/parsed TUs;
+- cache hit ratio;
+- replay versus plugin.
+
+Use explicit regression thresholds and retain machine-readable history.
+
+---
+
+## P2.4 Compiler, standard, frontend, and producer matrix
+
+Turn the lab matrix into a reusable profile matrix rather than independent hand-written jobs. Each report must carry the resolved profile and compare only against its matching baseline.
+
+Minimum axes demonstrated by the lab:
+
+- GCC versus Clang;
+- C++17 versus C++20;
+- CastXML versus direct Clang;
+- replay versus plugin;
+- Intel LLVM/ICX experiments where supported.
+
+The matrix should distinguish compatibility failures from expected profile divergence and producer-conformance failures.
+
+---
+
+## P2.5 Repository and baseline-chain integrity
+
+The lab also demonstrates that the checker is only as trustworthy as its CI chain. Provide guidance/tests for:
+
+- protected default branch;
+- CODEOWNERS/rulesets for baselines, policies, suppressions and workflows;
+- minimal token permissions;
+- immutable exact Action pins;
+- baseline digest/attestation;
+- trusted-base retrieval;
+- no PR-controlled baseline self-approval;
+- no untrusted artifact execution;
+- report provenance and scanner SHA.
+
+---
+
+# Lab-to-product deletion map
+
+Once the corresponding upstream work lands and is validated, the following lab components should shrink or disappear:
+
+| Lab component | Upstream replacement |
+|---|---|
+| Manual Bazel `cquery` / `aquery` steps | Typed root-target-scoped Bazel collection |
+| `scripts/build_bazel_evidence_pack.py` | Built-in Bazel adapter/pack creation |
+| `scripts/check_coverage_contract.py` | `analysis_assurance` plus assurance gate |
+| `tools/abicheck/facts.bzl` | Supported `rules_abicheck`/contrib Bazel aspect |
+| `scripts/render_conformance_report.py` | `abicheck conformance compare` |
+| `scripts/render_scan_comment.py` | Native scan PR-comment renderer |
+| Custom sticky-comment GitHub Script | Native Action comment support |
+| Baseline JSON normalization script | Canonical serializer + provenance sidecar |
+| Discovered-only aggregate wiring | Run-plan-aware fail-closed aggregate |
+| Hand-written target/profile jobs | Declarative `.abicheck.yml` + `check-project` |
+| Historical-consumer worktree shell | Reusable consumer-scoped workflow |
+| Custom performance summary logic | Upstream benchmark schema/renderer |
+
+The lab should retain only small fixtures, profile declarations, expected outcomes, and external canary workflows.
+
+---
+
+# Recommended implementation order
+
+## Wave 1: correctness and security
+
+1. Cross-producer constructor/destructor matching.
+2. Explicit Bazel root-target scoping.
+3. Apply L3 build context to L2 parsing.
+4. Structured assurance contract and gate.
+5. Safe runtime-verification boundary.
+6. Expected-check fail-closed aggregation.
+7. Profile-specific baseline comparability.
+
+## Wave 2: product integration
+
+8. Per-check profile axes in configuration/run plans.
+9. Supported Bazel declared-output aspect/rules.
+10. Canonical baseline serializer.
+11. Trusted-base and historical-consumer reusable workflows.
+12. Stable Action/service outputs.
+13. First-class producer conformance.
+
+## Wave 3: validation and maintenance
+
+14. Upstream scenario oracle.
+15. Scanner-upgrade/stale-suppression canary.
+16. Performance regression suite.
+17. Reusable compiler/frontend/producer matrix.
+18. CI/baseline integrity guidance and checks.
+
+---
+
+# Definition of done
+
+The lab can be considered a thin, representative integration only when all of the following hold:
+
+1. An unchanged library produces semantically equivalent results in CastXML, direct-Clang, replay, and plugin profiles.
+2. No false synthetic-constructor removal remains.
+3. Requested Bazel roots—not `//...`—determine targets, TUs, graph, and coverage.
+4. Complete build evidence is actually applied to public-header parsing.
+5. Compatibility verdict, analysis assurance, and policy gate are separate structured results.
+6. Missing required per-target/profile reports fail aggregate CI.
+7. New targets produce `NEW_TARGET`, not an unreported skip.
+8. Analyzed binaries are never executed in ordinary PR CI.
+9. Baselines are profile-specific and cross-profile pairs are `NOT_COMPARABLE`.
+10. Producer comparisons use a conformance result, not a library compatibility verdict.
+11. Baseline serialization is deterministic without external JSON rewriting.
+12. A trusted baseline is resolved from immutable base/release state.
+13. Historical consumer analysis uses the deployed consumer, not a PR-head rebuild.
+14. The normal user workflow reduces to: build, run configured checks, aggregate, publish.
+15. The lab no longer owns duplicate implementations of product semantics.

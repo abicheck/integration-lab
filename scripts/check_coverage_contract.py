@@ -32,16 +32,29 @@ committed baseline (not guessed). Two shapes, both handled (see
 list; a `dump`-mode snapshot has the same shape nested at
 `build_source.manifest.coverage`, and no top-level `coverage` or `level`
 key at all. Either way, each entry is a `{layer, status, confidence?,
-detail, elapsed_s?}` object. `L3_build`/`L4_source_abi` don't carry
-structured counts for target/symbol matching -- only free-text `detail`
-strings, e.g. `"bazel, 1 compile units, 0 targets"` and `"scope=changed,
-0/0 TUs parsed, 0/6 symbols matched, 3/6 accounted, 6 unmatched, ..."`.
-This script regex-extracts those counts. That's inherently fragile against
-a detail-string format
-change upstream -- documented here, not hidden: if the pattern stops
-matching, this script fails closed (treats the requirement as unmet)
-rather than silently passing, since a coverage gate that can't read its
-own evidence must not default to trusting it.
+detail, elapsed_s?}` object.
+
+`L4_source_abi`'s `detail` still carries free-text counts on current
+abicheck (e.g. `"scope=changed, 0/0 TUs parsed, 0/6 symbols matched, 3/6
+accounted, 6 unmatched, ..."`), and this script still regex-extracts those
+-- fragile against a detail-string format change upstream, documented here
+rather than hidden: if the pattern stops matching, this script fails closed
+(treats the requirement as unmet) rather than silently passing.
+
+`L3_build`'s `detail` is a *different* story on this repo's own
+`--build-info` pre-built-pack path: current abicheck emits
+`{"status": "present", "detail": ""}` for it (verified against real CI
+reports from this repo's `scan` job -- the lab's own evidence pack is
+loaded via `--build-info`, which recomputes `L3_build`'s structured
+`status` correctly but does not always thread a matching human-readable
+`detail` string through), so there is nothing to regex-parse there any
+more. Compile-unit/target counts for `L3_build` come instead from
+`scripts/build_bazel_evidence_pack.py`'s own `--summary-output` JSON (see
+`--evidence-summary` below) -- the lab's *own* structured record of what
+`bazel cquery`/`aquery` actually resolved, produced independently of
+whatever abicheck's report happens to say. Only `L3_build.status` itself
+(a structured field, never `detail` prose) is read from the abicheck
+report to confirm the layer actually ran.
 
 ## The empty-changed-scope exemption
 
@@ -61,7 +74,6 @@ import json
 import re
 import sys
 
-L3_BUILD_RE = re.compile(r"(\d+)\s+compile\s+units?,\s+(\d+)\s+targets?")
 L4_SYMBOLS_RE = re.compile(r"(\d+)/(\d+)\s+symbols\s+matched")
 L4_ACCOUNTED_RE = re.compile(r"(\d+)/(\d+)\s+accounted")
 L4_TUS_RE = re.compile(r"(\d+)/(\d+)\s+TUs\s+parsed")
@@ -340,14 +352,69 @@ def _coverage_by_layer(report):
     return {c.get("layer"): c for c in coverage if isinstance(c, dict)}
 
 
-def _extract_l3(coverage):
+def _load_evidence_summary(path):
+    """Load `scripts/build_bazel_evidence_pack.py`'s `--summary-output` JSON.
+
+    Returns `(summary_dict, None)` on success, or `(None, error_str)` on any
+    problem -- no path given, unreadable file, malformed JSON, or a JSON
+    value missing the two required structured counts. Fail closed: a load
+    failure must never be read as "0 compile units / 0 targets" (which is
+    indistinguishable from a legitimately empty evidence pack) -- it must
+    surface as an explicit gate failure instead, same contract as every
+    other extractor in this file.
+    """
+    if not path:
+        return None, "no --evidence-summary supplied"
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return None, f"could not read evidence summary {path!r}: {exc}"
+    except json.JSONDecodeError as exc:
+        return None, f"evidence summary {path!r} is not valid JSON: {exc}"
+    if not isinstance(data, dict):
+        return None, f"evidence summary {path!r} is not a JSON object"
+    for key in ("compile_unit_count", "resolved_target_count"):
+        if key not in data or not isinstance(data[key], int):
+            return None, f"evidence summary {path!r} missing/invalid {key!r} field"
+    return data, None
+
+
+def _extract_l3(coverage, evidence_summary, evidence_summary_error):
+    """Return `(compile_units, bazel_targets, error)` for the L3_build layer.
+
+    Counts come from `scripts/build_bazel_evidence_pack.py`'s own
+    `--summary-output` JSON, never from the abicheck report's `detail`
+    string -- see this module's docstring for why. `resolved_target_count`
+    (not just the requested root target(s)) is used for `bazel_targets`,
+    matching the pre-existing semantics this replaces: the old detail
+    string's "N targets" counted every target Bazel's `cquery deps(...)`
+    resolved, transitive dependencies included, not just the root.
+
+    The abicheck report itself is consulted for exactly one thing here:
+    `L3_build.status`, a structured field, to confirm the layer actually
+    ran (`"present"`) rather than being skipped/not-collected -- never its
+    `detail` prose.
+    """
     entry = coverage.get("L3_build")
     if entry is None:
         return None, None, "L3_build coverage entry missing"
-    m = L3_BUILD_RE.search(entry.get("detail", ""))
-    if not m:
-        return None, None, f"could not parse L3_build detail: {entry.get('detail')!r}"
-    return int(m.group(1)), int(m.group(2)), None
+    status = entry.get("status")
+    if status != "present":
+        return None, None, (
+            f"L3_build status is {status!r}, not 'present' -- "
+            "build evidence was not collected"
+        )
+    if evidence_summary is None:
+        return None, None, (
+            "no structured Bazel evidence summary available to verify "
+            f"L3_build counts ({evidence_summary_error})"
+        )
+    return (
+        evidence_summary["compile_unit_count"],
+        evidence_summary["resolved_target_count"],
+        None,
+    )
 
 
 def _extract_l4(coverage):
@@ -455,7 +522,8 @@ def _has_public_header_provenance(coverage):
 
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
              require_public_header_provenance, min_export_match_ratio,
-             changed_files=None, loaded_buildfiles=None):
+             changed_files=None, loaded_buildfiles=None,
+             evidence_summary=None, evidence_summary_error=None):
     coverage = _coverage_by_layer(report)
     # `level.depth` only exists on a `scan`-mode report. `dump`-mode
     # snapshots (baseline.yml) have no `level` key at all -- absent, not
@@ -474,7 +542,9 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
             f"requested depth '{requested_depth}' but effective depth was '{effective_depth}'"
         )
 
-    compile_units, bazel_targets, l3_err = _extract_l3(coverage)
+    compile_units, bazel_targets, l3_err = _extract_l3(
+        coverage, evidence_summary, evidence_summary_error
+    )
     facts["compile_units"] = compile_units
     facts["bazel_targets"] = bazel_targets
     if l3_err:
@@ -616,6 +686,15 @@ def main():
         "original, fully conservative behavior -- any BUILD.bazel/.bzl "
         "change anywhere disqualifies.",
     )
+    parser.add_argument(
+        "--evidence-summary", default="",
+        help="Path to scripts/build_bazel_evidence_pack.py's --summary-output "
+        "JSON. Source of the L3_build compile-unit/target counts (the "
+        "abicheck report's own L3_build.detail is not parsed for this any "
+        "more -- see this module's docstring). Omitting it, or pointing at "
+        "a missing/malformed file, fails the L3_build check closed rather "
+        "than silently skipping the count requirements.",
+    )
     args = parser.parse_args()
 
     changed_files = None
@@ -631,6 +710,7 @@ def main():
             changed_files = None
 
     loaded_buildfiles = _loaded_buildfiles(args.buildfiles) if args.buildfiles else None
+    evidence_summary, evidence_summary_error = _load_evidence_summary(args.evidence_summary)
 
     try:
         with open(args.report, "r", encoding="utf-8") as fh:
@@ -657,6 +737,8 @@ def main():
         min_export_match_ratio=args.min_export_match_ratio,
         changed_files=changed_files,
         loaded_buildfiles=loaded_buildfiles,
+        evidence_summary=evidence_summary,
+        evidence_summary_error=evidence_summary_error,
     )
 
     with open(args.output, "w", encoding="utf-8") as fh:
