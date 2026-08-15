@@ -4,6 +4,7 @@
 // `depth: source`'s `scope=changed` replay for this PR, so the coverage
 // contract's export-to-source ratio check has real translation units to
 // verify against instead of being unenforceable for this diff.
+// Fresh-main validation marker: exercises current abicheck/main end to end.
 namespace abicheck_lab {
 
 int Calculator::add(int left, int right) const { return left + right; }
