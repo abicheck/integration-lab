@@ -250,6 +250,18 @@ No external script or regex over human-readable detail is needed to enforce requ
 
 ## P0.5 Safe runtime verification boundary
 
+**Status: resolved upstream, option 1.** `--verify-runtime` and the
+`abicheck.runtime_probe` module it depended on are removed outright from
+`abicheck/main` (it had already been reduced to a documented,
+always-no-op safety stub -- `attempted=False` unconditionally -- before
+removal); the `verify-runtime` inputs on the composite Action,
+`actions/check-target`, and the `check-single`/`check-project` reusable
+workflows are gone with it. This lab no longer passes `verify-runtime` to
+any Action invocation; `consumer_scoped` (`abi-scan.yml`) relies on
+static `--used-by` alone, per "Consumer/app-scoped validation" in
+`README.md`. The section below is kept as the historical record of the
+lab evidence and the two options this doc originally posed.
+
 ### Lab evidence
 
 Executing a historical consumer with analyzed shared libraries through `LD_LIBRARY_PATH` loads constructors and other load-time code from artifacts under analysis. That is unsafe in ordinary PR CI and currently requires disabling `verify-runtime`.
@@ -282,6 +294,23 @@ A normal `abicheck` invocation cannot execute analyzed code accidentally. Enabli
 ---
 
 ## P0.6 Fail-closed expected-check aggregation
+
+**Status: resolved upstream (`abicheck aggregate --manifest`/`--run-plan`),
+now wired up on the lab side too.** Upstream's per-CLI-cleanup changelog
+(`--expect`/`--optional`/`--report-prefix` removed) replaced the inline
+flag list with `--manifest PATH` (`{"targets": [{"id", "required"}]}`) or
+`--run-plan PATH` (projected from `abicheck project plan`) as the one way
+to declare an expected-target set, with `--discovered-only` remaining the
+explicit opt-out for "no declared set, just report what showed up" — the
+`completed`/`missing_required`/`missing_advisory`/... classification this
+section originally asked for is `ExpectedTargets`'s own coverage axis
+(`abicheck/aggregate.py`). `abi-scan.yml`'s `aggregate` job now builds a
+`--manifest` declaring `math` `required: true` whenever `scan` judged the
+PR ABI-relevant and `strings` `required: false` (mirroring
+`scan_strings`'s own best-effort posture), instead of always running
+`--discovered-only` — see README.md's "Multi-library aggregate gate"
+section for the up-to-date description. The rest of this section is kept
+as the historical record of the lab evidence that motivated the ask.
 
 ### Lab evidence
 

@@ -428,17 +428,23 @@ own full source-evidence pipeline a second time.
 `abi-scan.yml`'s `aggregate` job downloads both `abi-report-math.json`
 (a copy of the required `scan` job's own canonical report) and
 `abi-report-strings.json` (from `scan_strings`) and runs `abicheck
-aggregate --discovered-only`, publishing a small target/verdict table to
-the job summary. Deliberately **not** a required gate itself, and
-deliberately `--discovered-only` rather than `--expect math,strings`:
-both upstream jobs already skip their own scan/compare step entirely on
-an ABI-irrelevant PR (no report uploaded at all), and a hard `--expect`
-would fail this job's own coverage gate on every such PR for a target
-that was never supposed to run this time — exactly the kind of
-non-signal a real coverage gate should never produce. `:math`'s own
-required gate (the `scan` job's "Enforce gate" step) is unaffected
-either way; this job validates the aggregate CLI's plumbing, not this
-fixture's own ABI.
+aggregate` against a **declared, fail-closed expected-target manifest**
+(a "Build expected-target manifest" step, not a hand-retyped `--expect`
+list): `math` is declared `required: true` whenever `scan` itself judged
+this PR ABI-relevant (`needs.scan.outputs.relevant`, the same signal
+`scan`'s own "Enforce gate" step below gates on), `strings` is declared
+but `required: false` (mirroring `scan_strings`'s own deliberately
+best-effort/non-blocking compare step). A `math` report silently missing
+on an ABI-relevant PR — an `upload-artifact` hiccup, or `scan`'s compare
+step failing before it could write a report — is now a real `aggregate`
+coverage-axis failure (exit 1) that fails the job, not a `--discovered-
+only` non-signal absorbed into "whatever showed up counts as complete".
+Only on a PR neither job judged ABI-relevant does the manifest end up
+empty, and the step falls back to `--discovered-only` — nothing was
+expected, so nothing to gate, purely informational as before. `:math`'s
+own required gate (the `scan` job's "Enforce gate" step) is unaffected
+either way; this job additionally validates that the aggregate CLI's own
+plumbing produced the report `scan` was actually supposed to produce.
 
 ## Consumer/app-scoped validation (architecture review P1-6)
 
@@ -447,10 +453,9 @@ application binary (`consumer_app`) that dynamically links against
 `//:math` (via a `cc_import` wrapping its shared-library output) and
 calls only a subset of its public API — `Calculator::add()`, deliberately
 never `Calculator::multiply()` or `api_version()` (see `consumer/app.cc`'s
-own comment). It exists to exercise abicheck's `compare --used-by`/
-`--verify-runtime` app-scoping machinery against a *real* consumer's
-actual dynamic-symbol imports, not a hand-written or synthetic import
-list.
+own comment). It exists to exercise abicheck's `compare --used-by`
+app-scoping machinery against a *real* consumer's actual dynamic-symbol
+imports, not a hand-written or synthetic import list.
 
 `abicheck compare --used-by <consumer_app>` reads the consumer binary's
 own `.dynsym` undefined-symbol table to scope the comparison: a change to
@@ -458,13 +463,16 @@ a function this consumer never calls (`::multiply`) is demoted to
 informational context (folded into the report's `full_verdict`/
 `full_summary`, kept for visibility but not driving the primary verdict),
 while a change to one it does call (`::add`) still drives the app-scoped
-verdict and exit code. `--verify-runtime` goes one step further and
-actually *runs* the consumer binary once against each library side
-(`LD_BIND_NOW=1`), recording a runtime-load-failure finding if the
-dynamic linker itself rejects the new library — the strongest evidence
-this repo's gate architecture can offer for "would this consumer
-actually still run", not just "does the reported symbol table look
-compatible".
+verdict and exit code. This is the strongest evidence this repo's gate
+architecture asks of the analyzed artifacts without ever executing them.
+**`--verify-runtime`** — a probe that additionally ran the consumer binary
+once against each library side (`LD_BIND_NOW=1`) and recorded a
+runtime-load-failure finding if the dynamic linker rejected the new
+library — is **removed from upstream abicheck** (it had already been
+reduced to a documented, always-no-op safety stub before removal; see
+upstream's `--verify-runtime` execution-probe removal and its
+`security_trust_boundary_hardening` changelog entries) and is no longer
+passed by this repo's workflows or composite-Action invocations.
 
 `abi-scan.yml`'s `consumer_scoped` job runs this comparison on every
 ABI-relevant PR, publishing an `abicheck-consumer-scoped` artifact and
@@ -484,16 +492,13 @@ site still compiles against unchanged): a HEAD-rebuilt consumer imports
 the *new* mangled symbol and would report full coverage even though the
 real, already-shipped binary imports the *old* symbol and would fail to
 load. Building the historical `consumer_app` from base SHA answers the
-real question. The historical `libmath.so` is used as `old-library` for
-the same run, for a second reason: abicheck's runtime probe backing
-`--verify-runtime` silently no-ops unless *both* sides are real binary
-paths (`isinstance(old_lib, Path)`) — the persisted `abi/math.abicheck.json`
-JSON snapshot doesn't satisfy that, so without this, `--verify-runtime`
-was doing nothing. The PR that first introduces `consumer/` has no
-historical copy to build against at its own base SHA — that bootstrap
-case degrades to a HEAD-rebuilt fallback with an explicit caveat in the
-job summary, not a hard failure; every PR after this one merges gets the
-real historical-binary comparison.
+real question, and the historical `libmath.so` is used as `old-library`
+for the same run so both sides of the comparison come from one
+consistent, already-shipped build. The PR that first introduces
+`consumer/` has no historical copy to build against at its own base SHA
+— that bootstrap case degrades to a HEAD-rebuilt fallback with an
+explicit caveat in the job summary, not a hard failure; every PR after
+this one merges gets the real historical-binary comparison.
 
 ## GCC/Clang × C++ standard profile matrix (architecture review P1-7)
 
@@ -559,7 +564,7 @@ a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
 CLI at a deliberately scoped-down `depth: headers`, and a real consumer
 application (`//consumer:consumer_app`, see "Consumer/app-scoped
-validation" above) exercising `compare --used-by`/`--verify-runtime`. It
+validation" above) exercising `compare --used-by`. It
 does not yet cover: `cc_shared_library` or a `MODULE.bazel.lock`. It DOES
 now have a machine-readable scenario matrix
 with an expected/actual oracle per patch (fixtures/patches/scripts that
