@@ -29,6 +29,14 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-24.04
+    # Exposed so the `aggregate` job can build a real expected-target
+    # manifest instead of `--discovered-only`: `math` is only actually
+    # supposed to report when this PR is ABI-relevant in the first place
+    # (see "Skip if nothing ABI-relevant changed" below) -- without this
+    # output, aggregate has no way to distinguish "math legitimately never
+    # ran" from "math was supposed to report and silently didn't".
+    outputs:
+      relevant: ${{ steps.relevance.outputs.relevant }}
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
@@ -662,16 +670,34 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Architecture review P1-5: `abicheck aggregate` exercised across a real
-  # multi-target report set (math + strings), proving the aggregate CLI's
-  # own plumbing works in this repo's actual CI shape -- not itself a
-  # required gate (see scan_strings's own comment for why). `--discovered-
-  # only` rather than `--expect math,strings`: both upstream jobs already
-  # skip their own scan/compare step on an ABI-irrelevant PR (no report
-  # uploaded at all), and a hard `--expect` would then fail this job's own
-  # coverage gate on every such PR for a target that was never supposed to
-  # run -- exactly the kind of non-signal this job exists to avoid. See
-  # README.md's "Multi-library aggregate gate" section.
+  # Architecture review P1-5, hardened per the P0 follow-up in
+  # UPSTREAM_TO_ABICHECK.md's "P0.6 Fail-closed expected-check aggregation":
+  # `abicheck aggregate` now gates against a *declared* expected-target
+  # manifest instead of `--discovered-only`. `--discovered-only` treats
+  # whatever reports happen to be present as the complete expected set --
+  # which means a report silently dropped (an upload-artifact hiccup, or
+  # `scan`'s own compare step failing before it could upload) is
+  # indistinguishable from "that target was never supposed to run this
+  # time", and the step passes either way. The manifest built below fixes
+  # that by declaring `math` `required: true` whenever `scan` itself judged
+  # this PR ABI-relevant (`needs.scan.outputs.relevant`) -- the same signal
+  # `scan`'s own "Enforce gate" step below gates on -- so a missing `math`
+  # report on an ABI-relevant PR is now a real, fail-closed coverage gap
+  # (`aggregate`'s own coverage axis, exit 1), not silently absorbed.
+  # `strings` is deliberately never declared in the manifest at all (Codex
+  # review, fresh evidence -- see the "Build expected-target manifest" step
+  # below for the full reasoning): `abicheck aggregate`'s coverage axis
+  # (what `required` controls) and its *gate* axis are independent, and a
+  # declared-but-not-required target's own report still folds into the
+  # gate the moment it's discovered -- so `required: false` alone would
+  # still let a genuinely BREAKING `strings_lib` compare fail this job,
+  # contradicting `scan_strings`'s own deliberately best-effort/non-blocking
+  # contract. `--on-unexpected-target warn` is what actually decouples
+  # "surfaced in the summary" from "gates this job" for it. On a PR `scan`
+  # didn't judge relevant, the manifest has no entries and this step falls
+  # back to `--discovered-only`: nothing was expected, so nothing to gate
+  # -- purely informational, as before. See README.md's "Multi-library
+  # aggregate gate" section.
   aggregate:
     needs: [scan, scan_strings]
     if: always()
@@ -682,6 +708,7 @@ jobs:
           persist-credentials: false
 
       - name: Download per-target reports
+        id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
@@ -689,23 +716,108 @@ jobs:
           path: ${{ runner.temp }}/reports
           merge-multiple: true
 
+      # Codex review, fresh evidence: `--manifest` (used below) does not
+      # exist at this workflow's own composite-Action pin (`891bd9d`,
+      # predating the CLI cleanup that added it) -- `abicheck aggregate
+      # --help` at that revision still exposes the retired `--expect`/
+      # `--optional` interface, so reusing that pin here would make this
+      # step fail on an unrecognized-option usage error rather than run the
+      # new fail-closed check. This install is a plain `pip install` of the
+      # `abicheck` Python package for the `aggregate` CLI alone -- unlike
+      # the composite-Action `uses:` pins elsewhere in this workflow, it
+      # never touches Bazel/castxml/the source-evidence pipeline this file's
+      # own P0.3 dump/scan-parity gap blocks a full repin on, so bumping it
+      # independently is safe. Pinned to `5b52989`, the exact `abicheck/main`
+      # revision this repo's own upstream audit already validated end to end
+      # (see UPSTREAM_TO_ABICHECK.md and this PR's own description) -- not
+      # `main` itself, so this step's behavior stays reproducible rather
+      # than silently drifting with every upstream push.
+      #
+      # Declares what this run actually expects, from the same relevance
+      # signal `scan`/`scan_strings` computed for themselves -- not
+      # retyped by hand, which is exactly the plan-vs-gate drift the
+      # manifest file exists to prevent (AGENTS.md: "`--expect`... an
+      # inline id list retyped on the command line"). Built *before* the
+      # install below (Codex review, fresh evidence): it needs no network
+      # access and no `abicheck` on `PATH`, so computing it first is what
+      # lets the install/aggregate steps below condition their own
+      # `continue-on-error` on whether anything is actually expected --
+      # an ABI-irrelevant PR (nothing declared) must stay tolerant of a
+      # transient install/network failure exactly as it did before this
+      # gate existed, while an ABI-relevant PR (math expected) must not.
+      # `strings` is deliberately NOT declared here, `required: false` or
+      # otherwise: `abicheck aggregate`'s coverage axis (what `required`
+      # controls) and its *gate* axis are separate -- a target's own
+      # `severity.exit_code`/legacy `exit_code` folds into the aggregate's
+      # overall exit code via `max()` whenever that target is *gated* at
+      # all, and a declared-but-not-required target still counts as gated
+      # the moment its report is discovered. Declaring `strings` as
+      # `required: false` would therefore still let a genuinely BREAKING
+      # `strings_lib` compare (its own report's real `exit_code`,
+      # independent of the Action's `fail-on-breaking: false` input, which
+      # only controls whether *that job's own step* fails, not the exit
+      # code embedded in the JSON report it uploads) fail this job --
+      # directly contradicting `scan_strings`'s own deliberately
+      # best-effort/non-blocking contract. Leaving it undeclared, combined
+      # with `--on-unexpected-target warn` below, is what actually achieves
+      # "surfaced, never gating".
+      - name: Build expected-target manifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          targets='[]'
+          if [[ "${SCAN_RELEVANT:-}" == "true" ]]; then
+            targets=$(jq -c '. + [{"id":"math","required":true}]' <<<"$targets")
+          fi
+          jq -n --argjson targets "$targets" '{targets: $targets}' \
+            > "$RUNNER_TEMP/aggregate-manifest.json"
+          echo "count=$(jq 'length' <<<"$targets")" >> "$GITHUB_OUTPUT"
+        env:
+          SCAN_RELEVANT: ${{ needs.scan.outputs.relevant }}
+
+      # `continue-on-error` conditioned on the manifest, not unconditionally
+      # off: with nothing declared (an ABI-irrelevant PR), this step stays
+      # tolerant of a transient PyPI/GitHub install failure -- the same
+      # posture the whole job had before this gate existed -- and the
+      # `--discovered-only` fallback below runs regardless (finding nothing
+      # to aggregate if `abicheck` never installed, which is still a
+      # correct, informational "nothing to report" outcome for a PR that
+      # was never supposed to produce anything). With `math` declared, a
+      # failed install must fail this job -- there is no way to prove a
+      # required target's coverage without a working `abicheck`.
       - name: Install abicheck (for aggregate)
         id: install_abicheck
-        continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
 
-      - name: Aggregate per-target reports (discovered-only, informational)
-        if: steps.install_abicheck.outcome == 'success'
-        continue-on-error: true
+      - name: Aggregate per-target reports (fail-closed against the declared run-plan)
+        # Same conditional posture as the install step immediately above,
+        # and for the identical reason.
+        continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/reports"
-          abicheck aggregate "$RUNNER_TEMP/reports" \
-            --discovered-only \
-            --format json \
-            -o "$RUNNER_TEMP/aggregate-report.json" \
-            || true
+          if [[ "${{ steps.manifest.outputs.count }}" -gt 0 ]]; then
+            # --on-unexpected-target warn: `strings` (undeclared, per the
+            # comment above) is reported when its own report is discovered,
+            # but never folded into this job's gate -- 'include' (the CLI
+            # default) would fold its own compare exit code into the
+            # aggregate's overall exit code, which is exactly the coupling
+            # this step must not introduce.
+            abicheck aggregate "$RUNNER_TEMP/reports" \
+              --manifest "$RUNNER_TEMP/aggregate-manifest.json" \
+              --on-unexpected-target warn \
+              --format json \
+              -o "$RUNNER_TEMP/aggregate-report.json"
+          else
+            echo 'math was not judged ABI-relevant for this PR -- nothing declared, falling back to --discovered-only (informational).'
+            abicheck aggregate "$RUNNER_TEMP/reports" \
+              --discovered-only \
+              --format json \
+              -o "$RUNNER_TEMP/aggregate-report.json"
+          fi
           python3 scripts/render_aggregate_summary.py "$RUNNER_TEMP/aggregate-report.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -726,15 +838,22 @@ jobs:
   # binary's ACTUAL dynamic-symbol imports (not a hand-written list) to
   # scope the comparison: a change to a function this consumer never calls
   # is demoted to informational context while a change to one it does call
-  # still drives the app-scoped verdict. `--verify-runtime` additionally
-  # runs the real consumer binary once against each library side
-  # (LD_BIND_NOW=1) and records a runtime-load-failure finding if the
-  # dynamic linker itself rejects the new library -- the strongest evidence
-  # this repo's gate architecture can offer for "would this consumer
-  # actually still run". Deliberately non-gating (continue-on-error
-  # throughout, no "Enforce gate" step): this job validates the app-scoping
-  # *mechanism*, not this fixture's own ABI, and must never block a PR that
-  # never touched consumer/.
+  # still drives the app-scoped verdict. This is the *only* consumer-scoping
+  # evidence this job uses: `--verify-runtime` -- a probe that additionally
+  # ran the real consumer binary once against each library side and recorded
+  # a runtime-load-failure finding -- was removed from upstream abicheck
+  # entirely (it had already been reduced to a documented no-op that never
+  # executed anything, `attempted=False` always; see abicheck's
+  # `20260814_120000_claude_cli_hard_cleanup` changelog entry and
+  # `20260814_security_trust_boundary_hardening`). Passing `verify-runtime`
+  # to the composite Action is now a hard usage error rather than an inert
+  # flag, so this job passes nothing for it -- `--used-by` alone answers the
+  # "would this consumer's own import table still resolve" question from the
+  # binaries' own import/export tables, without ever executing an analyzed
+  # artifact. Deliberately non-gating (continue-on-error throughout, no
+  # "Enforce gate" step): this job validates the app-scoping *mechanism*, not
+  # this fixture's own ABI, and must never block a PR that never touched
+  # consumer/.
   #
   # Codex review, fresh evidence: the `used-by` binary and the `old-library`
   # evidence below are BOTH deliberately built from the PR's BASE SHA (a
@@ -748,13 +867,11 @@ jobs:
   # the NEW mangled symbol and the diagnostic would report full coverage
   # even though the REAL, already-shipped binary imports the OLD symbol and
   # would fail to load. Building the historical consumer_app (and the
-  # historical libmath.so, so `--verify-runtime` has a real old-side binary
-  # to execute -- it silently no-ops given a JSON snapshot, since abicheck's
-  # own runtime probe requires `isinstance(old_lib, Path)`) from base SHA
-  # instead answers the real question this diagnostic exists to ask.
-  # Base SHA won't have consumer/ at all for the one PR that introduces it
-  # (this one) -- that bootstrap case degrades to the HEAD-rebuilt fallback
-  # with an explicit caveat in the job summary, not a hard failure.
+  # historical libmath.so) from base SHA instead answers the real question
+  # this diagnostic exists to ask. Base SHA won't have consumer/ at all for
+  # the one PR that introduces it (this one) -- that bootstrap case degrades
+  # to the HEAD-rebuilt fallback with an explicit caveat in the job summary,
+  # not a hard failure.
   consumer_scoped:
     runs-on: ubuntu-24.04
     steps:
@@ -864,7 +981,6 @@ jobs:
             ${{ steps.build_base_consumer.outputs.available == 'true'
                 && format('{0}/base-worktree/bazel-bin/consumer/consumer_app', runner.temp)
                 || 'bazel-bin/consumer/consumer_app' }}
-          verify-runtime: 'false'
           format: json
           output-file: abicheck-consumer-scoped.json
           fail-on-breaking: false

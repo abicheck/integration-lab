@@ -124,6 +124,52 @@ Changing an independent fixture target does not alter selected TUs, graph nodes,
 
 ## P0.3 Apply L3 build context to L2 public-header parsing
 
+**Root cause traced to a specific, already-acknowledged gap upstream
+(2026-08-15 follow-up audit).** Confirmed against `abicheck/abicheck`
+directly, not by re-running the reported symptom alone: the L3→L2 fold
+this section asks for *already exists and already works* — it is
+`abicheck/service_input_resolution.py`'s `_seeded_compile_context()`
+(P0.3, wired via `derive_l2_compile_context`/`resolve_header_compile_context`
+in `abicheck/buildsource/l2_seed.py` and `header_compile_context.py`), and
+`resolve_side_snapshot()` (the function that calls it) is used by *both*
+`service_compare_pipeline.py`'s `resolve_compare_request` (the path
+`compare`'s implicit-dump side takes) **and** `service_dump_pipeline.py`'s
+`run_dump_request`. The gap is narrower and more specific than "the fold
+doesn't exist": **the native `abicheck dump` CLI command never calls
+`run_dump_request`/builds a `DumpRequest` at all.** `abicheck/cli.py`'s
+`dump_cmd` (the ELF path) calls `cli_dump_helpers.perform_elf_dump()`
+directly — a separate, older code path that builds its `CompileContext`
+only from explicit `--ast-frontend`/`--compiler*`/`--sysroot`/`--nostdinc`
+flags and never calls `resolve_side_snapshot`/`_seeded_compile_context`/
+`derive_l2_compile_context` at all (confirmed by reading
+`cli_dump_helpers.py` directly: no reference to any of those three
+functions anywhere in the file). This is exactly what this lab's own
+audit observed: a fresh `dump --sources ... --build-info ... --depth
+source` snapshot's `parsed_with_build_context: false`/
+`language_standard: ""` even with real L3 evidence supplied and embedded
+into the snapshot — the evidence is collected and stored, but never
+routed to the L2 header-AST invocation, because that invocation runs
+through a code path the L3→L2 fold was never wired into. `compare`'s own
+*implicit* dump of a live binary operand does not have this gap (it goes
+through `resolve_compare_request` → `resolve_side_snapshot`), which is
+why the lab's own report showed a real discrepancy between `dump`-produced
+baselines and `scan`'s live-binary comparison path specifically.
+
+Upstream's own `abicheck/AGENTS.md` already names this precise migration
+as deferred, independently of this lab's audit — see its "Known gaps"
+entry: *"the native `dump` CLI does not build a `DumpRequest` yet — see
+G33's Phase 5 note for what that migration needs first"*. This lab's
+audit is the first concrete end-to-end reproduction of the consequence
+(a stale/context-free `dump` baseline that a context-aware `scan` then
+reports `NOT_COMPARABLE` against for a project with otherwise-complete
+evidence), which is worth keeping attached to that entry rather than
+treated as a newly-discovered, independent gap. Not attempted as a fix in
+this lab audit pass: migrating `dump_cmd`/`perform_elf_dump` (currently
+at 1914 of `cli_dump_helpers.py`'s 2000-line hard cap — real headroom is
+tight) to route through `run_dump_request` is a genuine architecture
+change on the upstream side, not something this lab repository can fix
+from its own workflow files.
+
 ### Lab evidence
 
 A run can have complete L3 evidence—compiler, standard, macros, include order and compile units—while the public header is still parsed independently. The report then says build context exists but also emits header-parse-context drift.
@@ -250,6 +296,18 @@ No external script or regex over human-readable detail is needed to enforce requ
 
 ## P0.5 Safe runtime verification boundary
 
+**Status: resolved upstream, option 1.** `--verify-runtime` and the
+`abicheck.runtime_probe` module it depended on are removed outright from
+`abicheck/main` (it had already been reduced to a documented,
+always-no-op safety stub -- `attempted=False` unconditionally -- before
+removal); the `verify-runtime` inputs on the composite Action,
+`actions/check-target`, and the `check-single`/`check-project` reusable
+workflows are gone with it. This lab no longer passes `verify-runtime` to
+any Action invocation; `consumer_scoped` (`abi-scan.yml`) relies on
+static `--used-by` alone, per "Consumer/app-scoped validation" in
+`README.md`. The section below is kept as the historical record of the
+lab evidence and the two options this doc originally posed.
+
 ### Lab evidence
 
 Executing a historical consumer with analyzed shared libraries through `LD_LIBRARY_PATH` loads constructors and other load-time code from artifacts under analysis. That is unsafe in ordinary PR CI and currently requires disabling `verify-runtime`.
@@ -282,6 +340,31 @@ A normal `abicheck` invocation cannot execute analyzed code accidentally. Enabli
 ---
 
 ## P0.6 Fail-closed expected-check aggregation
+
+**Status: resolved upstream (`abicheck aggregate --manifest`/`--run-plan`),
+now wired up on the lab side too.** Upstream's per-CLI-cleanup changelog
+(`--expect`/`--optional`/`--report-prefix` removed) replaced the inline
+flag list with `--manifest PATH` (`{"targets": [{"id", "required"}]}`) or
+`--run-plan PATH` (projected from `abicheck project plan`) as the one way
+to declare an expected-target set, with `--discovered-only` remaining the
+explicit opt-out for "no declared set, just report what showed up" — the
+`completed`/`missing_required`/`missing_advisory`/... classification this
+section originally asked for is `ExpectedTargets`'s own coverage axis
+(`abicheck/aggregate.py`). `abi-scan.yml`'s `aggregate` job now builds a
+`--manifest` declaring `math` `required: true` whenever `scan` judged the
+PR ABI-relevant, instead of always running `--discovered-only`. `strings`
+is deliberately left undeclared rather than given `required: false`: an
+earlier revision of this fix did mark it `required: false` and a review
+round caught that the coverage axis (`required`) and the gate axis are
+independent in `abicheck aggregate` — a declared-but-not-required
+target's own report still folds into the overall exit code once
+discovered, which would have let a genuinely BREAKING `strings_lib`
+compare fail this job despite `scan_strings`'s own best-effort posture.
+`--on-unexpected-target warn` on the undeclared report is what actually
+achieves "surfaced, never gating" — see README.md's "Multi-library
+aggregate gate" section for the up-to-date description. The rest of this
+section is kept as the historical record of the lab evidence that
+motivated the ask.
 
 ### Lab evidence
 
