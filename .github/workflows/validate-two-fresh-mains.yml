@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ABICHECK_SHA: 410caf5861b1e3417a39462aeea606bc7c4409ad
+  ABICHECK_SHA: 84cf3d4adc556218192b6a1246a52eacdb5e71aa
 
 jobs:
   fresh-to-fresh:
@@ -87,7 +87,7 @@ jobs:
 
       - name: Fresh dump BASE
         id: dump_base
-        uses: abicheck/abicheck@410caf5861b1e3417a39462aeea606bc7c4409ad
+        uses: abicheck/abicheck@84cf3d4adc556218192b6a1246a52eacdb5e71aa
         with:
           mode: dump
           new-library: ${{ runner.temp }}/base-tree/bazel-bin/libmath.so
@@ -104,7 +104,7 @@ jobs:
 
       - name: Fresh dump HEAD
         id: dump_head
-        uses: abicheck/abicheck@410caf5861b1e3417a39462aeea606bc7c4409ad
+        uses: abicheck/abicheck@84cf3d4adc556218192b6a1246a52eacdb5e71aa
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
@@ -122,7 +122,7 @@ jobs:
       - name: Compare fresh dump BASE to fresh dump HEAD
         id: compare_fresh
         continue-on-error: true
-        uses: abicheck/abicheck@410caf5861b1e3417a39462aeea606bc7c4409ad
+        uses: abicheck/abicheck@84cf3d4adc556218192b6a1246a52eacdb5e71aa
         with:
           mode: compare
           old-library: ${{ runner.temp }}/fresh-base.abi.json
@@ -141,7 +141,7 @@ jobs:
       - name: Scan HEAD against fresh dump BASE
         id: scan_fresh
         continue-on-error: true
-        uses: abicheck/abicheck@410caf5861b1e3417a39462aeea606bc7c4409ad
+        uses: abicheck/abicheck@84cf3d4adc556218192b6a1246a52eacdb5e71aa
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -167,7 +167,7 @@ jobs:
       - name: Scan HEAD against committed baseline
         id: scan_committed
         continue-on-error: true
-        uses: abicheck/abicheck@410caf5861b1e3417a39462aeea606bc7c4409ad
+        uses: abicheck/abicheck@84cf3d4adc556218192b6a1246a52eacdb5e71aa
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
