@@ -34,7 +34,7 @@
 # toolchain_matrix-shaped jobs are later phases, not yet built).
 
 dimensions:
-  evidence_depth: [binary, headers, source, n/a]
+  evidence_depth: [binary, headers, build, source, n/a]
   header_frontend: [castxml, clang, n/a]
   toolchain: [gcc-cxx17, gcc-cxx20, clang-cxx17, clang-cxx20, pinned-default, n/a]
   scope:
@@ -124,8 +124,13 @@ capabilities:
     workflow: abi-scan.yml
     job: consumer_scoped
     dimensions:
-      evidence_depth: source
-      header_frontend: n/a
+      # Codex review, PR #15: the "ABICheck compare --used-by" step passes
+      # new-header/ast-frontend: clang with none of depth:source's own
+      # inputs (sources/build-info) -- a plain binary+header comparison,
+      # same shape as scan_strings above, not the required gate's
+      # depth:source pipeline. Verified directly against the workflow file.
+      evidence_depth: headers
+      header_frontend: clang
       toolchain: n/a
       scope: consumer_scoped
       target_shape: cc_binary_linkshared
@@ -141,8 +146,12 @@ capabilities:
     workflow: abi-scan.yml
     job: toolchain_matrix
     dimensions:
-      evidence_depth: source
-      header_frontend: n/a
+      # Codex review, PR #15: the "ABICheck compare" step here passes
+      # new-header/ast-frontend: clang with none of depth:source's own
+      # inputs -- a plain binary+header comparison, not source-depth.
+      # Verified directly against the workflow file.
+      evidence_depth: headers
+      header_frontend: clang
       toolchain: gcc-cxx17
       scope: single_library
       target_shape: cc_binary_linkshared
@@ -161,8 +170,12 @@ capabilities:
     workflow: abi-scan.yml
     job: toolchain_matrix
     dimensions:
-      evidence_depth: source
-      header_frontend: n/a
+      # Codex review, PR #15: the "ABICheck compare" step here passes
+      # new-header/ast-frontend: clang with none of depth:source's own
+      # inputs -- a plain binary+header comparison, not source-depth.
+      # Verified directly against the workflow file.
+      evidence_depth: headers
+      header_frontend: clang
       toolchain: gcc-cxx20
       scope: single_library
       target_shape: cc_binary_linkshared
@@ -181,8 +194,12 @@ capabilities:
     workflow: abi-scan.yml
     job: toolchain_matrix
     dimensions:
-      evidence_depth: source
-      header_frontend: n/a
+      # Codex review, PR #15: the "ABICheck compare" step here passes
+      # new-header/ast-frontend: clang with none of depth:source's own
+      # inputs -- a plain binary+header comparison, not source-depth.
+      # Verified directly against the workflow file.
+      evidence_depth: headers
+      header_frontend: clang
       toolchain: clang-cxx17
       scope: single_library
       target_shape: cc_binary_linkshared
@@ -201,8 +218,12 @@ capabilities:
     workflow: abi-scan.yml
     job: toolchain_matrix
     dimensions:
-      evidence_depth: source
-      header_frontend: n/a
+      # Codex review, PR #15: the "ABICheck compare" step here passes
+      # new-header/ast-frontend: clang with none of depth:source's own
+      # inputs -- a plain binary+header comparison, not source-depth.
+      # Verified directly against the workflow file.
+      evidence_depth: headers
+      header_frontend: clang
       toolchain: clang-cxx20
       scope: single_library
       target_shape: cc_binary_linkshared
@@ -221,7 +242,15 @@ capabilities:
     workflow: abi-scan.yml
     job: l4_clang_plugin
     dimensions:
-      evidence_depth: source
+      # Verified against abicheck/abicheck's own --depth resolution
+      # (cli_compare_helpers._resolve_compare_collect_mode): this job's
+      # compare step passes --build-info but no --sources and no explicit
+      # --depth, which resolves to the "build" collect mode -- L3, not
+      # the "source" (L4) depth its own job name suggests. The plugin
+      # collects L4-shaped facts into the build-info pack (see README's
+      # "Declared-output source-fact collection"), but this particular
+      # compare invocation only asks abicheck to consume it at L3.
+      evidence_depth: build
       header_frontend: clang
       toolchain: n/a
       scope: producer_agreement
@@ -291,22 +320,40 @@ capabilities:
       target_shape: n/a
     note: *detection-correctness-note
 
-  - id: scenarios-canary
+  # Codex review, PR #15: scenarios-canary.yml runs the identical
+  # scripts/run_scenario.py oracle as scenarios.yml (just against
+  # abicheck/main instead of a pinned release), so it exercises the same
+  # castxml/clang split -- split into two entries for the same reason as
+  # detection-correctness-scenarios-* above, keeping gating: false.
+  - id: scenarios-canary-castxml
     status: non_gating_watch
     gating: false
     workflow: scenarios-canary.yml
     job: scenarios_canary
     dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
+      evidence_depth: headers
+      header_frontend: castxml
       toolchain: n/a
       scope: detection_correctness
       target_shape: n/a
-    note: >
+    note: &scenarios-canary-note >
       Scheduled canary re-running the same scenario oracle against
       abicheck main, previewing not-yet-stable features (e.g.
       --contract-evaluation, ADR-049) before they land in a pinned
       release. Non-blocking by design.
+
+  - id: scenarios-canary-clang
+    status: non_gating_watch
+    gating: false
+    workflow: scenarios-canary.yml
+    job: scenarios_canary
+    dimensions:
+      evidence_depth: headers
+      header_frontend: clang
+      toolchain: n/a
+      scope: detection_correctness
+      target_shape: n/a
+    note: *scenarios-canary-note
 
   # Known gaps -- deliberately no job/workflow (there is none to check).
   - id: cc-shared-library-target-shape

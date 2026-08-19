@@ -170,6 +170,20 @@ def check(matrix: dict[str, Any]) -> list[str]:
         if not isinstance(entry_dims, dict):
             errors.append(f"BAD_DIMENSIONS: '{entry_id}' dimensions must be a mapping")
             continue
+        # Codex review, PR #15: every declared top-level dimension must be
+        # present on every entry (using the 'n/a' enum value when a
+        # dimension genuinely doesn't apply) -- a *missing* key previously
+        # passed silently, letting an entry advertise an incomplete axis
+        # combination in what's supposed to be the exhaustive source of
+        # truth. Checked against the FULL dimension set, not just the keys
+        # the entry happens to declare.
+        missing = sorted(set(dimensions) - set(entry_dims))
+        if missing:
+            errors.append(
+                f"MISSING_DIMENSION: '{entry_id}' is missing "
+                f"{missing} -- every entry must state a value (or 'n/a') "
+                "for every declared dimension"
+            )
         for dim_name, dim_value in entry_dims.items():
             allowed_values = dimensions.get(dim_name)
             if allowed_values is None:
