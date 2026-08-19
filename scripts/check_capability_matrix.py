@@ -117,7 +117,12 @@ def check(matrix: dict[str, Any]) -> list[str]:
     referenced: set[tuple[str, str]] = set()
 
     for entry in capabilities:
-        entry_id = entry.get("id", "<missing id>")
+        entry_id = entry.get("id")
+        if not isinstance(entry_id, str) or not entry_id:
+            errors.append(
+                f"BAD_ID: entry has id={entry_id!r}, must be a non-empty string"
+            )
+            continue
         if entry_id in seen_ids:
             errors.append(f"DUPLICATE_ID: '{entry_id}' appears more than once")
         seen_ids.add(entry_id)

@@ -123,7 +123,7 @@ capabilities:
     dimensions:
       evidence_depth: source
       header_frontend: clang
-      toolchain: pinned-default
+      toolchain: clang-cxx17
       scope: producer_agreement
       target_shape: cc_binary_linkshared
     note: >
