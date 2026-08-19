@@ -605,6 +605,33 @@ read from base SHA, `abi/**` in `CODEOWNERS`) should already guarantee it
 structurally, but that's a claim, not yet a verified test. These are
 tracked as follow-up work rather than folded into this change.
 
+## Capability matrix
+
+The "does not yet cover" claims two paragraphs above (`cc_shared_library`,
+`MODULE.bazel.lock`) — and every axis this lab *does* cover (evidence
+depth, header frontend, toolchain, comparison scope) — used to live only
+as hand-typed prose here, with nothing to stop it drifting from the real
+CI jobs as those were added, renamed, or removed. `capabilities.yaml`
+(repo root) is now the declarative, machine-checked source of truth for
+that question: one entry per (axis combination) → (job that exercises it,
+or `status: gap` if none does), validated against the real
+`.github/workflows/*.yml` job names by `scripts/check_capability_matrix.py`
+(wired into `capability-matrix.yml`, path-triggered on either file
+changing) — the same "declarative table + one script that checks reality
+against it" pattern `scenarios/manifest.yaml` already uses for
+fixture-level detection correctness, generalized one level up to CI
+*coverage* itself. Two failure modes it catches that pure prose never
+could: a matrix entry pointing at a job that no longer exists, and a real
+job in `abi-scan.yml`/`scenarios.yml`/`scenarios-canary.yml` that no entry
+documents.
+
+Deliberately phase 1 of a larger plan, not the whole thing: this file and
+its validator exist today; generating this README's own limitations list
+from `capabilities.yaml` (so the two literally cannot disagree), a shared
+reusable-workflow leg replacing the boilerplate `abi-scan.yml`'s jobs
+currently duplicate, and driving `toolchain_matrix`'s own `strategy.matrix`
+from this file dynamically are later, separately-scoped follow-ups.
+
 ## Scenario validation (`scenarios.yml`)
 
 `abi-scan.yml`'s gate only ever exercises whatever a given PR's diff to
