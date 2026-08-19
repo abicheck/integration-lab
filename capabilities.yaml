@@ -86,7 +86,12 @@ capabilities:
     job: scan_strings
     dimensions:
       evidence_depth: headers
-      header_frontend: castxml
+      # Codex review, PR #15: scan_strings explicitly sets
+      # `ast-frontend: clang` (abi-scan.yml's scan_strings job) -- unlike
+      # `scan`'s own canonical depth:source step, which leaves
+      # --ast-frontend on abicheck's default (castxml). Verified directly
+      # against the workflow file, not assumed from the sibling entry above.
+      header_frontend: clang
       toolchain: pinned-default
       scope: single_library
       target_shape: cc_binary_linkshared
@@ -245,24 +250,46 @@ capabilities:
       -- degrades gracefully when either upstream job skipped). Never
       gates.
 
-  - id: detection-correctness-scenarios
+  # Codex review, PR #15: scenarios/manifest.yaml's own header comment is
+  # explicit that every scenario below uses the `expected: {castxml: V,
+  # clang: V}` profile-pair form specifically to regression-test that the
+  # two header backends agree -- a single n/a-frontend entry silently
+  # dropped that coverage. Split into one entry per profile, mirroring the
+  # toolchain-matrix-* split above for the same reason (one job, several
+  # independently-meaningful axis values). evidence_depth is `headers`,
+  # not n/a either -- run_scenario.py's own docstring: "binary + header
+  # depth only, deliberately not depth: source".
+  - id: detection-correctness-scenarios-castxml
     status: covered
     gating: true
     workflow: scenarios.yml
     job: scenarios
     dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
+      evidence_depth: headers
+      header_frontend: castxml
       toolchain: n/a
       scope: detection_correctness
       target_shape: n/a
-    note: >
+    note: &detection-correctness-note >
       Independent fixture pairs (fixtures/, oracle in
       scenarios/manifest.yaml) with a machine-readable expected verdict
       per header-frontend profile -- proves abicheck actually detects a
       real break and leaves a compatible change alone, which the gate on
       :math's own diff can never prove on its own. A verdict mismatch
       fails the job (scripts/run_scenario.py exits non-zero).
+
+  - id: detection-correctness-scenarios-clang
+    status: covered
+    gating: true
+    workflow: scenarios.yml
+    job: scenarios
+    dimensions:
+      evidence_depth: headers
+      header_frontend: clang
+      toolchain: n/a
+      scope: detection_correctness
+      target_shape: n/a
+    note: *detection-correctness-note
 
   - id: scenarios-canary
     status: non_gating_watch
