@@ -130,6 +130,20 @@ def check(matrix: dict[str, Any]) -> list[str]:
             )
             continue
 
+        # Codex review, PR #15: the matrix is advertised as the source of
+        # truth for whether a covered axis gates a PR or only reports --
+        # but nothing previously read `gating` at all, so deleting it (or
+        # setting it to a non-boolean) still passed. Required on every
+        # entry, gap/planned included: a not-yet-covered axis gates
+        # nothing either, so `gating: false` is the honest value there
+        # too, not an exemption from stating one.
+        gating = entry.get("gating")
+        if not isinstance(gating, bool):
+            errors.append(
+                f"BAD_GATING: '{entry_id}' has gating={gating!r}, "
+                "must be a boolean (true/false)"
+            )
+
         workflow = entry.get("workflow")
         job = entry.get("job")
 

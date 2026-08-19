@@ -79,6 +79,62 @@ capabilities:
       The required PR gate: full depth:source Bazel-evidence comparison of
       //:math against the committed baseline (abi/math.abicheck.json).
 
+  # Codex review, PR #15: the `scan` job doesn't run only the one gating
+  # comparison above -- it also runs three further, independently
+  # meaningful diagnostic profiles (all continue-on-error, artifact-only,
+  # never gating), each feeding the producer-agreement-report/conformance
+  # job's own comparisons. One entry per job hid these from the matrix.
+  - id: scan-l2-diagnostic-castxml
+    status: covered
+    gating: false
+    workflow: abi-scan.yml
+    job: scan
+    dimensions:
+      evidence_depth: headers
+      header_frontend: castxml
+      toolchain: pinned-default
+      scope: producer_agreement
+      target_shape: cc_binary_linkshared
+    note: &scan-l2-diagnostic-note >
+      "L2 diagnostic" step: the SAME committed baseline vs. the SAME
+      candidate library/header as the required gate, but a plain
+      binary+header comparison (no --sources/--build-info) -- one half of
+      the castxml-vs-clang producer-conformance pair the conformance job
+      renders. Never gates (continue-on-error, artifact only).
+
+  - id: scan-l2-diagnostic-clang
+    status: covered
+    gating: false
+    workflow: abi-scan.yml
+    job: scan
+    dimensions:
+      evidence_depth: headers
+      header_frontend: clang
+      toolchain: pinned-default
+      scope: producer_agreement
+      target_shape: cc_binary_linkshared
+    note: *scan-l2-diagnostic-note
+
+  - id: scan-l4-clang-replay
+    status: covered
+    gating: false
+    workflow: abi-scan.yml
+    job: scan
+    dimensions:
+      evidence_depth: source
+      header_frontend: clang
+      toolchain: pinned-default
+      scope: producer_agreement
+      target_shape: cc_binary_linkshared
+    note: >
+      "L4 diagnostic - Clang replay" step: same shape as the required
+      gate (depth:source, --sources ., same committed baseline and a
+      freshly-captured Bazel evidence pack) but with ast-frontend forced
+      to clang and no `--since` (always replays the full target, not
+      scope=changed) -- the other half of the L4 native-vs-clang-plugin
+      producer-conformance pair the conformance job renders against
+      l4_clang_plugin. Never gates.
+
   - id: strings-headers-scan
     status: covered
     gating: false
@@ -298,7 +354,11 @@ capabilities:
       header_frontend: castxml
       toolchain: n/a
       scope: detection_correctness
-      target_shape: n/a
+      # Codex review, PR #15: scenarios/manifest.yaml's own header
+      # comment states every fixture pair is built as
+      # cc_binary(linkshared = True) -- the same shape as every
+      # other real target in this repo.
+      target_shape: cc_binary_linkshared
     note: &detection-correctness-note >
       Independent fixture pairs (fixtures/, oracle in
       scenarios/manifest.yaml) with a machine-readable expected verdict
@@ -317,7 +377,11 @@ capabilities:
       header_frontend: clang
       toolchain: n/a
       scope: detection_correctness
-      target_shape: n/a
+      # Codex review, PR #15: scenarios/manifest.yaml's own header
+      # comment states every fixture pair is built as
+      # cc_binary(linkshared = True) -- the same shape as every
+      # other real target in this repo.
+      target_shape: cc_binary_linkshared
     note: *detection-correctness-note
 
   # Codex review, PR #15: scenarios-canary.yml runs the identical
@@ -335,7 +399,11 @@ capabilities:
       header_frontend: castxml
       toolchain: n/a
       scope: detection_correctness
-      target_shape: n/a
+      # Codex review, PR #15: scenarios/manifest.yaml's own header
+      # comment states every fixture pair is built as
+      # cc_binary(linkshared = True) -- the same shape as every
+      # other real target in this repo.
+      target_shape: cc_binary_linkshared
     note: &scenarios-canary-note >
       Scheduled canary re-running the same scenario oracle against
       abicheck main, previewing not-yet-stable features (e.g.
@@ -352,12 +420,17 @@ capabilities:
       header_frontend: clang
       toolchain: n/a
       scope: detection_correctness
-      target_shape: n/a
+      # Codex review, PR #15: scenarios/manifest.yaml's own header
+      # comment states every fixture pair is built as
+      # cc_binary(linkshared = True) -- the same shape as every
+      # other real target in this repo.
+      target_shape: cc_binary_linkshared
     note: *scenarios-canary-note
 
   # Known gaps -- deliberately no job/workflow (there is none to check).
   - id: cc-shared-library-target-shape
     status: gap
+    gating: false
     dimensions:
       evidence_depth: n/a
       header_frontend: n/a
@@ -371,6 +444,7 @@ capabilities:
 
   - id: module-bazel-lock-pinning
     status: gap
+    gating: false
     dimensions:
       evidence_depth: n/a
       header_frontend: n/a
