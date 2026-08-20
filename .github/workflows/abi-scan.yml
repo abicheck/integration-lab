@@ -38,15 +38,21 @@ jobs:
     outputs:
       relevant: ${{ steps.relevance.outputs.relevant }}
     steps:
-      # Checkout + skip-check: shared verbatim across 5 of this workflow's
-      # 7 jobs (Phase 3, .github/actions/skip-check/action.yml) -- see
-      # that action's own docstring for the --no-renames rationale and why
-      # this always runs unconditionally. `id: relevance` is kept on THIS
-      # (invoking) step deliberately: a composite action's outputs are
-      # exposed on the step that calls it, not on any step inside the
-      # action, so every existing `steps.relevance.outputs.relevant`
-      # reference below (and in every other job) keeps working unchanged
-      # as long as this id doesn't change.
+      # A local composite action's own action.yml must already be on disk
+      # before GitHub Actions can resolve `uses: ./...` to find it -- so
+      # checkout can't be folded into the composite action itself (see
+      # skip-check/action.yml's own docstring for the real CI failure that
+      # confirmed this). `id: relevance` is kept on the invoking step
+      # below deliberately: a composite action's outputs are exposed on
+      # the step that calls it, not on any step inside the action, so
+      # every existing `steps.relevance.outputs.relevant` reference below
+      # (and in every other job) keeps working unchanged as long as this
+      # id doesn't change.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         uses: ./.github/actions/skip-check
@@ -557,8 +563,14 @@ jobs:
     steps:
       # Phase 3 shared preamble -- see .github/actions/skip-check and
       # .github/actions/resolve-baseline's own docstrings, and the
-      # identical comment on the `scan` job above for why `id: relevance`/
-      # `id: resolve_baseline` are kept unchanged on these invoking steps.
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check, and `id: relevance`/
+      # `id: resolve_baseline` are kept unchanged on these invoking steps).
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         uses: ./.github/actions/skip-check
@@ -842,7 +854,13 @@ jobs:
     steps:
       # Phase 3 shared preamble -- see .github/actions/skip-check and
       # .github/actions/resolve-baseline's own docstrings, and the
-      # identical comment on the `scan` job above.
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check).
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         uses: ./.github/actions/skip-check
@@ -1018,7 +1036,13 @@ jobs:
     steps:
       # Phase 3 shared preamble -- see .github/actions/skip-check and
       # .github/actions/resolve-baseline's own docstrings, and the
-      # identical comment on the `scan` job above.
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check).
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         uses: ./.github/actions/skip-check
@@ -1144,9 +1168,15 @@ jobs:
     steps:
       # Phase 3 shared preamble -- see .github/actions/skip-check and
       # .github/actions/resolve-baseline's own docstrings, and the
-      # identical comment on the `scan` job above (no `id`/
-      # `continue-on-error` here, matching this job's pre-extraction
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check; no `id`/`continue-on-error` on the
+      # baseline-resolve step below, matching this job's pre-extraction
       # fail-closed baseline resolution).
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Skip if nothing ABI-relevant changed
         id: relevance
         uses: ./.github/actions/skip-check

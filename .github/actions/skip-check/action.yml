@@ -1,25 +1,36 @@
 name: Skip if nothing ABI-relevant changed
 description: >
-  Checks out the PR head commit (fetch-depth: 0, so downstream steps can
-  read arbitrary history) and decides, via scripts/paths_changed.py,
-  whether anything ABI-relevant changed between the PR's base and head
-  SHA. abi-scan.yml's `on:` block deliberately has no workflow-level
-  `paths:` filter (a required check must never sit at "Pending" forever
-  for a PR touching an unlisted path -- see that comment for the full
-  reasoning), so every job that needs this decision makes it here,
-  in-job, instead.
+  Decides, via scripts/paths_changed.py, whether anything ABI-relevant
+  changed between the PR's base and head SHA. abi-scan.yml's `on:` block
+  deliberately has no workflow-level `paths:` filter (a required check
+  must never sit at "Pending" forever for a PR touching an unlisted path
+  -- see that comment for the full reasoning), so every job that needs
+  this decision makes it here, in-job, instead.
+
+  Does NOT check out the repo itself -- a local composite action's own
+  `action.yml` must already be present on disk (via a checkout the
+  CALLING job already ran) before GitHub Actions can even resolve
+  `uses: ./.github/actions/skip-check` to find and run it, so folding
+  `actions/checkout` in here is a chicken-and-egg problem: the runner
+  can't discover this very file without having already checked out the
+  repo that contains it. Confirmed the hard way, not assumed --
+  `##[error]Can't find 'action.yml' ... Did you forget to run
+  actions/checkout before running your local action?` on every one of
+  the 5 jobs that called this composite action with checkout folded in
+  (real CI run, PR #16). Every caller keeps its own explicit
+  `actions/checkout` step immediately before this one.
 
   Phase 3 of the declarative capability-matrix plan (README's "Capability
-  matrix" section): this step -- checkout plus the skip-check itself --
-  was byte-identical (module the one step-summary write, now the
-  `write-step-summary` input) across 5 of abi-scan.yml's 7 jobs before
-  this extraction. Deliberately scoped to ONLY this pair of steps, not
-  the "Resolve trusted baseline"/"Set up Bazel disk cache" steps that
-  follow it in every job -- see resolve-baseline/action.yml for that one
-  and .github/AGENTS.md's Phase 3 note for why the cache-setup step
-  itself stays un-extracted (its cache-key `hashFiles()` input list
-  genuinely differs per job, so folding it in trades real duplication for
-  a wide, easy-to-misuse parameter surface instead).
+  matrix" section): this step's body was byte-identical (modulo the one
+  step-summary write, now the `write-step-summary` input) across 5 of
+  abi-scan.yml's 7 jobs before this extraction. Deliberately scoped to
+  ONLY this one step, not the "Resolve trusted baseline"/"Set up Bazel
+  disk cache" steps that follow it in every job -- see
+  resolve-baseline/action.yml for that one and README.md's "Capability
+  matrix" section for why the cache-setup step itself stays
+  un-extracted (its cache-key `hashFiles()` input list genuinely differs
+  per job, so folding it in trades real duplication for a wide,
+  easy-to-misuse parameter surface instead).
 
 inputs:
   write-step-summary:
@@ -40,11 +51,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-      with:
-        fetch-depth: 0
-        persist-credentials: false
-
     # Runs unconditionally (no `if:`) -- every caller needs a real
     # conclusion here regardless of whether anything ABI-relevant
     # changed, exactly matching the pre-extraction behavior.
