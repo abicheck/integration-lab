@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fail-closed check: every `gating: true` capabilities.yaml entry (in the
-selected scope) must have a `status: passed` receipt
-(scripts/capability_receipts.py) in the given receipts directory.
+selected scope) must have a receipt (scripts/capability_receipts.py) in
+the given receipts directory, and that receipt must not say
+`status: failed`.
 
 This is the read half of the phase-5 receipt mechanism -- see
 capability_receipts.py's module docstring for why a receipt exists at all
@@ -14,10 +15,14 @@ message:
      supposed to prove this silently never got that far" -- which is
      exactly the gap phase 1-4's job/workflow-existence check cannot
      close (see capability_receipts.py's docstring).
-  2. NOT_PASSED -- a receipt exists but says `status: skipped` or
-     `status: failed`. Reported with the receipt's own `detail` when
-     present, so a skip has a stated reason attached rather than reading
-     as an unexplained gap.
+  2. FAILED -- a receipt exists and says `status: failed`. Reported with
+     the receipt's own `detail` when present. `status: skipped` is
+     deliberately NOT an error here (Codex review, fresh evidence) -- see
+     the inline comment on that check for why: this repo's existing
+     gates already treat a legitimate skip (e.g. a README-only PR that
+     `skip-check` judges not ABI-relevant) as a clean, non-failing
+     outcome, and this validator must not be stricter than the gate it
+     validates.
   3. MALFORMED_RECEIPT -- a receipt file exists but doesn't parse against
      the schema (capability_receipts.read_receipt already raises for
      this; surfaced here rather than silently ignored, since a corrupted
@@ -97,12 +102,24 @@ def validate(matrix: dict[str, Any], receipts_dir: Path, only: set[str] | None) 
                 f"receipt was found under {receipts_dir}"
             )
             continue
-        if receipt["status"] != "passed":
+        if receipt["status"] == "failed":
             detail = f" ({receipt['detail']})" if receipt.get("detail") else ""
             errors.append(
-                f"NOT_PASSED: '{capability_id}' receipt says "
-                f"status={receipt['status']!r}{detail}"
+                f"FAILED: '{capability_id}' receipt says status='failed'{detail}"
             )
+        # status: skipped is deliberately NOT an error here (Codex review,
+        # fresh evidence): this repo's existing gates already treat a
+        # legitimate skip as a clean, non-failing outcome -- abi-scan.yml's
+        # own "Enforce gate" step only fails on steps.scan.outcome ==
+        # 'failure', never on skip-check judging a PR not ABI-relevant,
+        # and a README-only PR is SUPPOSED to sail through math-source-gate
+        # with nothing to prove. Rejecting `skipped` here would make this
+        # validator strictly stricter than the gate it's validating,
+        # failing every ABI-irrelevant PR that abi-scan.yml itself passes
+        # cleanly. A receipt still has to exist (MISSING_RECEIPT above
+        # still fires) and still has to say *why* it skipped (`detail`),
+        # so this stays meaningfully different from having no receipt at
+        # all -- it just isn't graded as a failure.
     return errors
 
 

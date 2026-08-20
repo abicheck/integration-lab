@@ -45,14 +45,14 @@ def test_missing_receipt_for_gating_capability_fails(tmp_path):
     assert "gating-b" in errors[0]
 
 
-def test_skipped_receipt_for_gating_capability_fails(tmp_path):
+def test_skipped_receipt_for_gating_capability_is_accepted(tmp_path):
+    # A legitimate skip (e.g. skip-check judged the PR not ABI-relevant)
+    # must not fail this validator -- abi-scan.yml's own "Enforce gate"
+    # step already treats a skip as clean, and this validator must not be
+    # stricter than the gate it validates (Codex review, fresh evidence).
     _write(tmp_path, "gating-a", "passed")
     _write(tmp_path, "gating-b", "skipped", detail="PR not ABI-relevant")
-    errors = validate(MATRIX, tmp_path, only=None)
-    assert len(errors) == 1
-    assert "NOT_PASSED" in errors[0]
-    assert "gating-b" in errors[0]
-    assert "PR not ABI-relevant" in errors[0]
+    assert validate(MATRIX, tmp_path, only=None) == []
 
 
 def test_failed_receipt_for_gating_capability_fails(tmp_path):
@@ -60,7 +60,7 @@ def test_failed_receipt_for_gating_capability_fails(tmp_path):
     _write(tmp_path, "gating-b", "failed")
     errors = validate(MATRIX, tmp_path, only=None)
     assert len(errors) == 1
-    assert "NOT_PASSED" in errors[0]
+    assert "FAILED" in errors[0]
 
 
 def test_non_gating_capability_never_required(tmp_path):

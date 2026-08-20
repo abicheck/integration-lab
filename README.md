@@ -712,15 +712,22 @@ entry describes and validated before anything downstream trusts it:
   "Enforce gate" step that already gates on `run_scenario.py`'s own exit
   code.
 
+`status: skipped` (e.g. `math-source-gate` on a PR `skip-check` judges not
+ABI-relevant) is deliberately accepted, not rejected, by the validator —
+this repo's existing gates already treat a legitimate skip as clean, and
+the receipt validator must not be stricter than the gate it's validating;
+only `status: failed` (or a missing/malformed receipt) fails validation.
+
 Deliberately scoped to today's 4 `gating: true` entries only, and
 deliberately minimal (status + provenance, no scanner ref, no
 effective-config digest, no semantic assertions on the underlying
 report's own findings) — a natural next phase for a fuller downstream
 conformance platform, not attempted here. `tests/` (run by
 `capability-matrix.yml`'s own `pytest tests/` step) covers the schema,
-both emitters' status derivation, and the validator's four failure modes
-(`MISSING_RECEIPT`, `NOT_PASSED`, `MALFORMED_RECEIPT`, an id filtered out
-of scope) directly, without needing Bazel/castxml to exercise them.
+both emitters' status derivation, and the validator's failure modes
+(`MISSING_RECEIPT`, `FAILED`, `MALFORMED_RECEIPT`, an id filtered out of
+scope, and that `skipped` is accepted) directly, without needing
+Bazel/castxml to exercise them.
 
 ## Scenario validation (`scenarios.yml`)
 

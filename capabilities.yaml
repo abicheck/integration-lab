@@ -208,9 +208,11 @@ capabilities:
       target_shape: n/a
     note: >
       Fail-closed check that math-source-gate and aggregate-multi-library
-      each wrote a status: passed receipt this run -- see
+      each wrote a receipt that isn't status: failed this run (a
+      legitimate status: skipped -- e.g. math-source-gate on a PR judged
+      not ABI-relevant -- is accepted; see
       scripts/capability_receipts.py's module docstring for the full
-      rationale. detection-correctness-scenarios-{castxml,clang}'s own
+      rationale). detection-correctness-scenarios-{castxml,clang}'s own
       receipts are validated inside scenarios.yml itself instead (a
       separate workflow run this job has no artifact access to).
 

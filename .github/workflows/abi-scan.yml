@@ -906,12 +906,17 @@ jobs:
   # scenarios-* ids live in the separate scenarios.yml workflow run and
   # validate their own receipts there, see that workflow's own
   # "Enforce gate (scenario oracle + capability receipts)" step) actually
-  # wrote a `status: passed` receipt this run. `needs: [scan, aggregate]` +
-  # `if: always()`: both upstream jobs already emit their own receipt
-  # unconditionally (always(), even on their own gate failure), so this
-  # job must run regardless of either one's outcome to actually read them
-  # -- skipping it on a red `scan`/`aggregate` would silently exempt
-  # exactly the runs where a missing/failed receipt matters most.
+  # wrote a receipt that isn't `status: failed` this run -- `status:
+  # skipped` (e.g. math-source-gate on a PR skip-check judged not
+  # ABI-relevant) is accepted, matching the "Enforce gate" step's own
+  # existing semantics (a skip is clean, not a failure); see
+  # scripts/validate_capability_receipts.py's module docstring.
+  # `needs: [scan, aggregate]` + `if: always()`: both upstream jobs
+  # already emit their own receipt unconditionally (always(), even on
+  # their own gate failure), so this job must run regardless of either
+  # one's outcome to actually read them -- skipping it on a red
+  # `scan`/`aggregate` would silently exempt exactly the runs where a
+  # missing/failed receipt matters most.
   verify_capability_receipts:
     needs: [scan, aggregate]
     if: always()

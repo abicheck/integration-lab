@@ -13,6 +13,15 @@ on:
       - 'scenarios/**'
       - 'suppressions/**'
       - 'scripts/run_scenario.py'
+      # Phase 5 (capability receipts): this job's own "Emit
+      # detection-correctness-scenarios capability receipts" and "Enforce
+      # gate" steps directly execute/import these three -- a PR touching
+      # only one of them (a broken emitter or validator) must still run
+      # this workflow to actually exercise it, not merge unexercised
+      # (Codex review, fresh evidence).
+      - 'scripts/emit_scenario_receipts.py'
+      - 'scripts/validate_capability_receipts.py'
+      - 'scripts/capability_receipts.py'
       - '.github/workflows/scenarios.yml'
       # Shared Bazel configuration that every fixture's build actually
       # goes through -- a rules_cc bump, a changed -std/link flag, or a
