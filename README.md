@@ -275,10 +275,22 @@ Both `abi-scan.yml` and `baseline.yml` cache Bazel's disk cache
 (`~/.cache/bazel-disk`) via `actions/cache`, keyed on
 `MODULE.bazel`/`.bazelversion`/`.bazelrc`/`BUILD.bazel`.
 
-**Not yet added:** a `MODULE.bazel.lock`. Generating one correctly needs a
-real `bazel mod deps --lockfile_mode=update` run, which isn't available
-while authoring these files outside CI — tracked as a follow-up rather than
-hand-authored here.
+`MODULE.bazel.lock` (committed, `module-bazel-lock-pinning` in
+`capabilities.yaml`) pins every Bazel Central Registry module this
+workspace transitively resolves — regenerated with a real
+`bazel mod deps --lockfile_mode=update` run, not hand-authored. `.bazelrc`'s
+`common --lockfile_mode=error` enforces it against every Bazel invocation
+in every job (build, query, cquery, aquery, mod), not just one — a
+`MODULE.bazel` change left unreflected in the committed lock fails
+closed with an explicit "run `bazel mod deps --lockfile_mode=update`"
+message rather than silently re-resolving whatever the registry
+currently serves. Verified directly: a deliberately mismatched
+`MODULE.bazel` (a downgraded `rules_cc` version not in the committed
+lock) fails `bazel build //:math` with exactly that message; reverting
+it builds cleanly again. To intentionally update the lock (e.g. after
+bumping a `bazel_dep` version), regenerate it explicitly and commit the
+result — a later `--lockfile_mode` flag on the command line overrides
+`.bazelrc`'s default.
 
 ## Producer conformance reports
 
@@ -631,7 +643,7 @@ not yet cover are generated from `capabilities.yaml` below (see
 "Capability matrix"), not hand-typed here, so the two cannot disagree:
 
 <!-- capability-matrix:gaps:start -->
-- **module-bazel-lock-pinning** (`gap`): README's "Known limitations": MODULE.bazel.lock (dependency pinning) is not part of any covered axis yet.
+_No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 <!-- capability-matrix:gaps:end -->
 
 This lab DOES
@@ -859,8 +871,7 @@ silently dropped): a `cc_shared_library` *detection-correctness scenario*
 (fixtures/`scenarios/manifest.yaml`'s own `v1`/`v2` compare pairs are
 still all `cc_binary(linkshared = True)`-shaped, unlike root
 `BUILD.bazel`'s standalone `//:math_shared` target above, which the
-capability matrix now covers) and `MODULE.bazel.lock`
-pinning. `fixtures/`/`scenarios/` themselves are still single-library
+capability matrix now covers). `fixtures/`/`scenarios/` themselves are still single-library
 `v1`/`v2` compare fixtures — the multi-library *aggregate-plumbing* gap
 is covered separately by `strings_lib/`'s own CI wiring (see
 "Multi-library aggregate gate" above) and the consumer/app-scoped gap by

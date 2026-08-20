@@ -124,7 +124,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -142,7 +142,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -160,7 +160,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -178,7 +178,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
         },
         {
           "attrs": {
@@ -312,16 +312,16 @@
         "by_file": {},
         "by_source_decl": {
           "decl://_ZN12abicheck_lab10CalculatorC1Ev": [
-            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
           ],
           "decl://_ZN12abicheck_lab11api_versionEv": [
-            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
           ],
           "decl://_ZNK12abicheck_lab10Calculator3addEii": [
-            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
           ],
           "decl://_ZNK12abicheck_lab10Calculator8multiplyEii": [
-            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
           ]
         },
         "by_target": {}
@@ -374,9 +374,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h",
+          "id": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
           "kind": "header",
-          "label": "/home/user/abicheck-bazel-lab/include/abicheck_lab/math.h",
+          "label": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
           "provenance": "header_ast_l2",
           "resolved": {}
         },

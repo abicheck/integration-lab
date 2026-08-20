@@ -856,8 +856,17 @@ jobs:
   # back to `--discovered-only`: nothing was expected, so nothing to gate
   # -- purely informational, as before. See README.md's "Multi-library
   # aggregate gate" section.
+  # scan_math_shared added to needs (Codex/CodeRabbit review, fresh
+  # evidence): its own abi-report-math-shared artifact matches the
+  # abi-report-* pattern the download step below globs -- without this
+  # job in `needs`, `aggregate` could start before scan_math_shared
+  # finished uploading, non-deterministically including or omitting its
+  # report in the discovered set for otherwise-identical runs. Same
+  # posture as `strings`: never declared in the manifest (so it's
+  # discovered-and-warned, not required/gating), just guaranteed to have
+  # actually finished before `aggregate` looks for its artifact.
   aggregate:
-    needs: [scan, scan_strings]
+    needs: [scan, scan_strings, scan_math_shared]
     if: always()
     runs-on: ubuntu-24.04
     steps:

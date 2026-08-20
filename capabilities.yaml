@@ -507,8 +507,10 @@ capabilities:
       mechanism itself, not an additional required check on :math.
 
   - id: module-bazel-lock-pinning
-    status: gap
-    gating: false
+    status: covered
+    gating: true
+    workflow: abi-scan.yml
+    job: scan
     dimensions:
       evidence_depth: n/a
       header_frontend: n/a
@@ -516,5 +518,18 @@ capabilities:
       scope: n/a
       target_shape: n/a
     note: >
-      README's "Known limitations": MODULE.bazel.lock (dependency
-      pinning) is not part of any covered axis yet.
+      Not a job-shaped axis like every other entry in this file --
+      `.bazelrc`'s `common --lockfile_mode=error` enforces MODULE.bazel.lock
+      against every Bazel invocation in every job that runs one (build,
+      query, cquery, aquery, mod), not just `scan`. Pointed at `scan`
+      here (`gating: true`, since it's this repo's own required gate and
+      the earliest Bazel invocation in the PR pipeline) as the
+      representative job check_capability_matrix.py's job/workflow model
+      needs one entry to name; a lockfile-drift failure surfaces there
+      first, on every PR, before any other job's own build runs.
+      Verified directly: `bazel build //:math --lockfile_mode=error`
+      fails closed with an explicit "run bazel mod deps
+      --lockfile_mode=update" message on a deliberately mismatched
+      MODULE.bazel (a downgraded rules_cc version not in the committed
+      lock), and passes cleanly when MODULE.bazel and MODULE.bazel.lock
+      agree.
