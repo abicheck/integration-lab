@@ -100,6 +100,23 @@ jobs:
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
 
+      # module-bazel-lock-pinning (capabilities.yaml): a dedicated,
+      # independently-observable step for the MODULE.bazel.lock check
+      # `.bazelrc`'s `common --lockfile_mode=error` already enforces on
+      # every Bazel invocation -- not folded into "Build candidate shared
+      # library" below so lockfile drift and an ordinary library build
+      # failure produce two distinct step outcomes (`steps.lockfile_check.
+      # outcome`, read by the receipt emitted further down) instead of one
+      # step whose failure could mean either. `bazel query //:math` is
+      # deliberately cheap (no compile/link actions) -- module resolution
+      # happens during Bazel's own loading phase, before any target is
+      # analyzed, so this fails on lock drift exactly as fast as the real
+      # build would, without paying for one.
+      - name: Verify MODULE.bazel.lock is in sync (lockfile_mode=error)
+        id: lockfile_check
+        if: steps.relevance.outputs.relevant == 'true'
+        run: bazel query //:math > /dev/null
+
       - name: Build candidate shared library with Bazel
         if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
@@ -606,6 +623,46 @@ jobs:
             --sha "${{ github.sha }}" \
             --detail "$detail"
 
+      # module-bazel-lock-pinning (capabilities.yaml): Codex review, fresh
+      # evidence -- marking this capability `gating: true` without ever
+      # emitting a receipt for it left a real gap in the one-receipt-per-
+      # gating-capability contract every other entry here satisfies (the
+      # scenario ids are gating: true too, but scenarios.yml's own
+      # separate validation step covers them -- this one had NO coverage
+      # anywhere). Derived straight from the dedicated `lockfile_check`
+      # step above, independent of whether the library build/scan
+      # themselves succeeded -- so a real lockfile drift reads distinctly
+      # from an ordinary scan failure in this receipt, even though both
+      # happen to fail the same job today.
+      - name: Emit module-bazel-lock-pinning capability receipt
+        if: always()
+        shell: bash
+        env:
+          RELEVANT: ${{ steps.relevance.outputs.relevant }}
+          LOCKFILE_OUTCOME: ${{ steps.lockfile_check.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEVANT" == "false" ]; then
+            status=skipped
+            detail='PR judged not ABI-relevant by skip-check'
+          elif [ "$RELEVANT" == "true" ] && [ "$LOCKFILE_OUTCOME" == "success" ]; then
+            status=passed
+            detail=''
+          else
+            status=failed
+            detail="relevant=$RELEVANT lockfile_check.outcome=$LOCKFILE_OUTCOME"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id module-bazel-lock-pinning \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job scan \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
       # -${{ github.run_attempt }} suffix (CodeRabbit review, fresh
       # evidence): `upload-artifact` names must be unique within a run,
       # and `github.run_id` is identical across a re-run's attempts --
@@ -614,8 +671,10 @@ jobs:
       # previous attempt's artifact of the same name, letting
       # verify_capability_receipts download a receipt that isn't from the
       # attempt actually being judged. The download step below matches
-      # this same suffixed pattern.
-      - name: Upload math-source-gate capability receipt
+      # this same suffixed pattern. Now carries BOTH math-source-gate's
+      # and module-bazel-lock-pinning's receipts (same $RUNNER_TEMP/
+      # capability-receipts directory).
+      - name: Upload scan job capability receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -1076,8 +1135,9 @@ jobs:
   # existing semantics (a skip is clean, not a failure); see
   # scripts/validate_capability_receipts.py's module docstring.
   # `needs: [scan, aggregate]` + `if: always()`: both upstream jobs
-  # already emit their own receipt unconditionally (always(), even on
-  # their own gate failure), so this job must run regardless of either
+  # already emit their own receipt(s) unconditionally (always(), even on
+  # their own gate failure -- `scan` emits two, math-source-gate and
+  # module-bazel-lock-pinning), so this job must run regardless of either
   # one's outcome to actually read them -- skipping it on a red
   # `scan`/`aggregate` would silently exempt exactly the runs where a
   # missing/failed receipt matters most.
@@ -1119,14 +1179,16 @@ jobs:
       # jobs, so the validator must accept them too (Codex review, fresh
       # evidence). Neither is blanket-tolerant: a `status: failed` receipt
       # on either id still fails this step regardless of --allow-skip.
-      - name: Validate math-source-gate / aggregate-multi-library receipts
+      - name: Validate math-source-gate / aggregate-multi-library / module-bazel-lock-pinning receipts
         run: |
           python3 scripts/validate_capability_receipts.py \
             --receipts-dir "${{ runner.temp }}/capability-receipts" \
             --capability-id math-source-gate \
             --capability-id aggregate-multi-library \
+            --capability-id module-bazel-lock-pinning \
             --allow-skip math-source-gate \
             --allow-skip aggregate-multi-library \
+            --allow-skip module-bazel-lock-pinning \
             --expect-run-id "${{ github.run_id }}" \
             --expect-run-attempt "${{ github.run_attempt }}" \
             --expect-sha "${{ github.sha }}"

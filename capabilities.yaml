@@ -207,11 +207,11 @@ capabilities:
       scope: n/a
       target_shape: n/a
     note: >
-      Fail-closed check that math-source-gate and aggregate-multi-library
-      each wrote a receipt that isn't status: failed this run (a
-      legitimate status: skipped -- e.g. math-source-gate on a PR judged
-      not ABI-relevant -- is accepted; see
-      scripts/capability_receipts.py's module docstring for the full
+      Fail-closed check that math-source-gate, aggregate-multi-library,
+      and module-bazel-lock-pinning each wrote a receipt that isn't
+      status: failed this run (a legitimate status: skipped -- e.g.
+      math-source-gate on a PR judged not ABI-relevant -- is accepted;
+      see scripts/capability_receipts.py's module docstring for the full
       rationale). detection-correctness-scenarios-{castxml,clang}'s own
       receipts are validated inside scenarios.yml itself instead (a
       separate workflow run this job has no artifact access to).
@@ -526,10 +526,16 @@ capabilities:
       the earliest Bazel invocation in the PR pipeline) as the
       representative job check_capability_matrix.py's job/workflow model
       needs one entry to name; a lockfile-drift failure surfaces there
-      first, on every PR, before any other job's own build runs.
-      Verified directly: `bazel build //:math --lockfile_mode=error`
-      fails closed with an explicit "run bazel mod deps
-      --lockfile_mode=update" message on a deliberately mismatched
-      MODULE.bazel (a downgraded rules_cc version not in the committed
-      lock), and passes cleanly when MODULE.bazel and MODULE.bazel.lock
-      agree.
+      first, on every PR, before any other job's own build runs. `scan`
+      emits a dedicated receipt for it (Codex review, fresh evidence:
+      marking this `gating: true` with no receipt anywhere left a real
+      gap in the one-receipt-per-gating-capability contract) derived
+      from its own `lockfile_check` step -- a cheap `bazel query //:math`
+      run before the real build, independent of whether the library
+      build/scan themselves succeed, so lockfile drift reads distinctly
+      from an ordinary scan failure. Verified directly: `bazel build
+      //:math --lockfile_mode=error` fails closed with an explicit "run
+      bazel mod deps --lockfile_mode=update" message on a deliberately
+      mismatched MODULE.bazel (a downgraded rules_cc version not in the
+      committed lock), and passes cleanly when MODULE.bazel and
+      MODULE.bazel.lock agree.
