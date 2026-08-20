@@ -574,8 +574,16 @@ a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
 CLI at a deliberately scoped-down `depth: headers`, and a real consumer
 application (`//consumer:consumer_app`, see "Consumer/app-scoped
-validation" above) exercising `compare --used-by`. It
-does not yet cover: `cc_shared_library` or a `MODULE.bazel.lock`. It DOES
+validation" above) exercising `compare --used-by`. The known axes it does
+not yet cover are generated from `capabilities.yaml` below (see
+"Capability matrix"), not hand-typed here, so the two cannot disagree:
+
+<!-- capability-matrix:gaps:start -->
+- **cc-shared-library-target-shape** (`gap`): README's "Known limitations": every fixture and the real :math target use cc_binary(linkshared = True); nothing exercises a genuine Bazel cc_shared_library target yet.
+- **module-bazel-lock-pinning** (`gap`): README's "Known limitations": MODULE.bazel.lock (dependency pinning) is not part of any covered axis yet.
+<!-- capability-matrix:gaps:end -->
+
+This lab DOES
 now have a machine-readable scenario matrix
 with an expected/actual oracle per patch (fixtures/patches/scripts that
 apply a change to a clean fixture, run a scan, and assert on the JSON —
@@ -607,11 +615,12 @@ tracked as follow-up work rather than folded into this change.
 
 ## Capability matrix
 
-The "does not yet cover" claims two paragraphs above (`cc_shared_library`,
-`MODULE.bazel.lock`) — and every axis this lab *does* cover (evidence
-depth, header frontend, toolchain, comparison scope) — used to live only
-as hand-typed prose here, with nothing to stop it drifting from the real
-CI jobs as those were added, renamed, or removed. `capabilities.yaml`
+The "does not yet cover" claims two paragraphs above (generated, not
+hand-typed — see `<!-- capability-matrix:gaps:start -->` there) — and every
+axis this lab *does* cover (evidence depth, header frontend, toolchain,
+comparison scope) — used to live only as hand-typed prose here, with
+nothing to stop it drifting from the real CI jobs as those were added,
+renamed, or removed. `capabilities.yaml`
 (repo root) is now the declarative, machine-checked source of truth for
 that question: one entry per (axis combination) → (job that exercises it,
 or `status: gap` if none does), validated against the real
@@ -625,12 +634,14 @@ could: a matrix entry pointing at a job that no longer exists, and a real
 job in `abi-scan.yml`/`scenarios.yml`/`scenarios-canary.yml` that no entry
 documents.
 
-Deliberately phase 1 of a larger plan, not the whole thing: this file and
-its validator exist today; generating this README's own limitations list
-from `capabilities.yaml` (so the two literally cannot disagree), a shared
-reusable-workflow leg replacing the boilerplate `abi-scan.yml`'s jobs
-currently duplicate, and driving `toolchain_matrix`'s own `strategy.matrix`
-from this file dynamically are later, separately-scoped follow-ups.
+Deliberately staged, not built all at once. Phase 1 (this file + its
+validator) and phase 2 (generating the "Known limitations" gap list above
+from this file — `scripts/gen_capability_gaps.py`, checked in CI the same
+way, so the two literally cannot disagree) are both done. Two later,
+separately-scoped follow-ups remain: a shared reusable-workflow leg
+replacing the boilerplate `abi-scan.yml`'s jobs currently duplicate, and
+driving `toolchain_matrix`'s own `strategy.matrix` from this file
+dynamically.
 
 ## Scenario validation (`scenarios.yml`)
 

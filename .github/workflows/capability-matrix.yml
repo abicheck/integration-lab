@@ -16,6 +16,8 @@ on:
     paths:
       - 'capabilities.yaml'
       - 'scripts/check_capability_matrix.py'
+      - 'scripts/gen_capability_gaps.py'
+      - 'README.md'
       - '.github/workflows/*.yml'
   workflow_dispatch:
 
@@ -39,3 +41,6 @@ jobs:
 
       - name: Check capabilities.yaml against the real workflow jobs
         run: python3 scripts/check_capability_matrix.py
+
+      - name: Check README.md's gap list against capabilities.yaml
+        run: python3 scripts/gen_capability_gaps.py --check
