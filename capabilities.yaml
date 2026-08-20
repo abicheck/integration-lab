@@ -28,10 +28,16 @@
 # CI *coverage axis* -> which job exercises it, not fixture -> verdict.
 #
 # See scripts/check_capability_matrix.py --help and README.md's
-# "Capability matrix" section for the phased plan this file is phase 1 of
-# (schema + validator now; README generation from this file, a shared
-# reusable-workflow leg, and dynamic matrix generation for
-# toolchain_matrix-shaped jobs are later phases, not yet built).
+# "Capability matrix" section for the phased plan this file started:
+# phase 1 (schema + validator), phase 2 (scripts/gen_capability_gaps.py --
+# README's own gap list generated from this file), and phase 4
+# (scripts/check_toolchain_matrix_sync.py -- each toolchain_matrix entry's
+# `matrix_leg` checked against abi-scan.yml's real strategy.matrix.include)
+# are all built; phase 3 (a shared reusable-workflow leg replacing
+# abi-scan.yml's duplicated job boilerplate) is partially done -- see
+# README.md's "Capability matrix" section and
+# .github/actions/skip-check|resolve-baseline for what's extracted and
+# why the Bazel-cache-setup step deliberately isn't (yet).
 
 dimensions:
   evidence_depth: [binary, headers, build, source, n/a]
@@ -201,6 +207,13 @@ capabilities:
     gating: false
     workflow: abi-scan.yml
     job: toolchain_matrix
+    # Phase 4 (dynamic toolchain_matrix generation): the actual compiler
+    # binaries/standard this leg runs abi-scan.yml's `toolchain_matrix`
+    # `strategy.matrix.include` with -- checked byte-for-byte against the
+    # real workflow file by scripts/check_toolchain_matrix_sync.py, so
+    # this can't silently drift from what CI actually runs the way the
+    # dimensions above could before phase 1's own validator existed.
+    matrix_leg: {cc: gcc, cxx: g++, std: c++17}
     dimensions:
       # Codex review, PR #15: the "ABICheck compare" step here passes
       # new-header/ast-frontend: clang with none of depth:source's own
@@ -225,6 +238,7 @@ capabilities:
     gating: false
     workflow: abi-scan.yml
     job: toolchain_matrix
+    matrix_leg: {cc: gcc, cxx: g++, std: c++20}
     dimensions:
       # Codex review, PR #15: the "ABICheck compare" step here passes
       # new-header/ast-frontend: clang with none of depth:source's own
@@ -249,6 +263,7 @@ capabilities:
     gating: false
     workflow: abi-scan.yml
     job: toolchain_matrix
+    matrix_leg: {cc: clang-18, cxx: clang++-18, std: c++17}
     dimensions:
       # Codex review, PR #15: the "ABICheck compare" step here passes
       # new-header/ast-frontend: clang with none of depth:source's own
@@ -273,6 +288,7 @@ capabilities:
     gating: false
     workflow: abi-scan.yml
     job: toolchain_matrix
+    matrix_leg: {cc: clang-18, cxx: clang++-18, std: c++20}
     dimensions:
       # Codex review, PR #15: the "ABICheck compare" step here passes
       # new-header/ast-frontend: clang with none of depth:source's own

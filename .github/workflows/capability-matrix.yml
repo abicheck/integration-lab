@@ -15,7 +15,15 @@ on:
   pull_request:
     paths:
       - 'capabilities.yaml'
-      - 'scripts/check_capability_matrix.py'
+      # Codex review, PR #16: check_toolchain_matrix_sync.py landed without
+      # being added here, so a PR touching only that script would have
+      # skipped this workflow entirely -- a broken checker could land
+      # unexercised. Globbed rather than listing each check_*.py/
+      # gen_*.py script individually so the next one doesn't repeat the
+      # same gap.
+      - 'scripts/check_*.py'
+      - 'scripts/gen_*.py'
+      - 'README.md'
       - '.github/workflows/*.yml'
   workflow_dispatch:
 
@@ -39,3 +47,9 @@ jobs:
 
       - name: Check capabilities.yaml against the real workflow jobs
         run: python3 scripts/check_capability_matrix.py
+
+      - name: Check README.md's gap list against capabilities.yaml
+        run: python3 scripts/gen_capability_gaps.py --check
+
+      - name: Check toolchain_matrix's compiler legs against capabilities.yaml
+        run: python3 scripts/check_toolchain_matrix_sync.py

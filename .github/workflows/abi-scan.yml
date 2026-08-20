@@ -38,60 +38,45 @@ jobs:
     outputs:
       relevant: ${{ steps.relevance.outputs.relevant }}
     steps:
+      # A local composite action's own action.yml must already be on disk
+      # before GitHub Actions can resolve `uses: ./...` to find it -- so
+      # checkout can't be folded into the composite action itself (see
+      # skip-check/action.yml's own docstring for the real CI failure that
+      # confirmed this). `id: relevance` is kept on the invoking step
+      # below deliberately: a composite action's outputs are exposed on
+      # the step that calls it, not on any step inside the action, so
+      # every existing `steps.relevance.outputs.relevant` reference below
+      # (and in every other job) keeps working unchanged as long as this
+      # id doesn't change.
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      # Runs unconditionally (no `if:`) so it always produces a real
-      # conclusion for this required check, whether or not anything
-      # ABI-relevant changed -- see the `on:` block above for why there's
-      # no workflow-level path filter to do this job instead.
-      #
-      # --no-renames: git's default rename detection makes `--name-only`
-      # emit *only* the new path of a renamed file, silently dropping the
-      # old one. Verified empirically: renaming a relevant path (e.g.
-      # include/abicheck_lab/math.h) to an irrelevant one (docs/math.md)
-      # without this flag reports only "docs/math.md" changed -- the
-      # public header's removal is invisible to paths_changed.py, so the
-      # PR is judged irrelevant and the scan that should have caught the
-      # ABI-breaking removal is skipped entirely (Codex review). With
-      # --no-renames, both the old and new paths are listed as separate
-      # entries, and the old path still matches the relevant-paths list.
       - name: Skip if nothing ABI-relevant changed
         id: relevance
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-renames --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/changed-files.txt"
-          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-            {
-              echo '### ABICheck source scan'
-              echo
-              echo 'No ABI-relevant paths changed (see `scripts/paths_changed.py`) -- scan skipped, gate satisfied trivially.'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+        uses: ./.github/actions/skip-check
+        with:
+          write-step-summary: 'true'
 
       # The candidate library is always built from the PR head (the
       # checkout above). The baseline it gets compared against must come
       # from the PR's exact base commit, read straight out of git history
       # rather than the working tree — otherwise a PR could rewrite
       # abi/math.abicheck.json in the same diff that breaks the ABI and
-      # have the gate "pass" against its own edited baseline.
+      # have the gate "pass" against its own edited baseline. Shared
+      # verbatim across all 5 baseline-resolving jobs (Phase 3,
+      # .github/actions/resolve-baseline/action.yml) -- no `id`/
+      # `continue-on-error` here, matching this job's original,
+      # deliberately fail-closed behavior (a baseline-resolution failure
+      # stops the required gate outright, unlike the 3 non-gating
+      # diagnostic jobs that tolerate it).
       - name: Resolve trusted baseline from PR base SHA
         if: steps.relevance.outputs.relevant == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show \
-            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
-            > "$RUNNER_TEMP/math.base.abicheck.json"
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math.abicheck.json
+          baseline-temp-filename: math.base.abicheck.json
 
       # actions/cache never re-saves an already-existing key (it can only
       # restore it) -- so a fixed key means the cache is frozen at whatever
@@ -576,6 +561,11 @@ jobs:
   scan_strings:
     runs-on: ubuntu-24.04
     steps:
+      # Phase 3 shared preamble -- see .github/actions/skip-check and
+      # .github/actions/resolve-baseline's own docstrings, and the
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check, and `id: relevance`/
+      # `id: resolve_baseline` are kept unchanged on these invoking steps).
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
@@ -583,29 +573,16 @@ jobs:
 
       - name: Skip if nothing ABI-relevant changed
         id: relevance
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-renames --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/changed-files.txt"
-          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/skip-check
 
       - name: Resolve trusted baseline from PR base SHA
         id: resolve_baseline
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show \
-            "${{ github.event.pull_request.base.sha }}:abi/strings.abicheck.json" \
-            > "$RUNNER_TEMP/strings.base.abicheck.json"
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/strings.abicheck.json
+          baseline-temp-filename: strings.base.abicheck.json
 
       - name: Set up Bazel disk cache
         if: steps.resolve_baseline.outcome == 'success'
@@ -875,6 +852,10 @@ jobs:
   consumer_scoped:
     runs-on: ubuntu-24.04
     steps:
+      # Phase 3 shared preamble -- see .github/actions/skip-check and
+      # .github/actions/resolve-baseline's own docstrings, and the
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check).
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
@@ -882,29 +863,16 @@ jobs:
 
       - name: Skip if nothing ABI-relevant changed
         id: relevance
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-renames --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/changed-files.txt"
-          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/skip-check
 
       - name: Resolve trusted baseline from PR base SHA
         id: resolve_baseline
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show \
-            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
-            > "$RUNNER_TEMP/math.base.abicheck.json"
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math.abicheck.json
+          baseline-temp-filename: math.base.abicheck.json
 
       - name: Set up Bazel disk cache
         if: steps.resolve_baseline.outcome == 'success'
@@ -1066,6 +1034,10 @@ jobs:
             std: c++20
     runs-on: ubuntu-24.04
     steps:
+      # Phase 3 shared preamble -- see .github/actions/skip-check and
+      # .github/actions/resolve-baseline's own docstrings, and the
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check).
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
@@ -1073,29 +1045,16 @@ jobs:
 
       - name: Skip if nothing ABI-relevant changed
         id: relevance
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-renames --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/changed-files.txt"
-          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/skip-check
 
       - name: Resolve trusted baseline from PR base SHA
         id: resolve_baseline
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show \
-            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
-            > "$RUNNER_TEMP/math.base.abicheck.json"
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math.abicheck.json
+          baseline-temp-filename: math.base.abicheck.json
 
       # Only the clang-18 legs need this installed -- gcc/g++ already ship
       # on the runner image. continue-on-error: an apt hiccup degrades
@@ -1207,6 +1166,12 @@ jobs:
     # default 6-hour limit, on every ABI-relevant PR.
     timeout-minutes: 30
     steps:
+      # Phase 3 shared preamble -- see .github/actions/skip-check and
+      # .github/actions/resolve-baseline's own docstrings, and the
+      # identical comment on the `scan` job above (checkout must stay
+      # here, not inside skip-check; no `id`/`continue-on-error` on the
+      # baseline-resolve step below, matching this job's pre-extraction
+      # fail-closed baseline resolution).
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
@@ -1214,27 +1179,14 @@ jobs:
 
       - name: Skip if nothing ABI-relevant changed
         id: relevance
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --no-renames --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/changed-files.txt"
-          if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
-            echo 'relevant=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'relevant=false' >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/skip-check
 
       - name: Resolve trusted baseline from PR base SHA
         if: steps.relevance.outputs.relevant == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show \
-            "${{ github.event.pull_request.base.sha }}:abi/math.abicheck.json" \
-            > "$RUNNER_TEMP/math.base.abicheck.json"
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math.abicheck.json
+          baseline-temp-filename: math.base.abicheck.json
 
       # Architecture review P1-1: this job used to have NO disk-cache step
       # here, unlike scan/canary above, because the plugin was injected via

@@ -58,11 +58,24 @@
 # stop checking that cquery/aquery actually produced anything) could make
 # the coverage contract pass on evidence that was never really collected.
 #
+# Phase 3 of the declarative capability-matrix plan pulled the
+# "Skip if nothing ABI-relevant changed" and "Resolve trusted baseline
+# from PR base SHA" steps out of abi-scan.yml into
+# .github/actions/skip-check and .github/actions/resolve-baseline --
+# the exact same trust boundary this file already protects for
+# abi-scan.yml itself, just relocated. Without protecting the new paths
+# too, a PR could alter resolve-baseline to read the PR's own head
+# baseline instead of its base SHA, or alter skip-check to always report
+# relevant=false, bypassing the gate with no owner review at all (Codex
+# review, PR #16).
+#
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
 abi/** @napetrov
 .github/workflows/baseline.yml @napetrov
 .github/workflows/abi-scan.yml @napetrov
+.github/actions/skip-check/** @napetrov
+.github/actions/resolve-baseline/** @napetrov
 scripts/normalize_baseline.py @napetrov
 scripts/check_coverage_contract.py @napetrov
 scripts/render_scan_comment.py @napetrov

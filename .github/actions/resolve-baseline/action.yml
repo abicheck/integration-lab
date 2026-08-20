@@ -1,0 +1,53 @@
+name: Resolve trusted baseline from PR base SHA
+description: >
+  Reads a committed baseline snapshot straight out of git history at the
+  PR's exact base commit (never from the working tree) and writes it to
+  a fixed `$RUNNER_TEMP` filename every downstream step in the calling
+  job already references by that literal path. A PR that edits the
+  baseline file in the same diff that breaks the ABI cannot pass by
+  comparing itself against its own edited baseline this way -- see
+  README's "Gate / PR-comment architecture" for the full reasoning.
+
+  Phase 3 of the declarative capability-matrix plan: this step's `run:`
+  body was byte-identical across all 5 jobs that resolve a baseline
+  (abi-scan.yml's `scan`/`l4_clang_plugin` and `scan_strings`/
+  `consumer_scoped`/`toolchain_matrix`), differing only in which baseline
+  file each job reads. Deliberately does NOT parameterize `id`/
+  `continue-on-error`/the calling `if:` condition -- those stay on the
+  step that invokes this action in each job, exactly as before this
+  extraction, since GitHub Actions exposes a composite action's outputs
+  (and honors continue-on-error) on the INVOKING step, not on any step
+  inside the action -- so every existing `steps.resolve_baseline.outcome`
+  reference downstream in scan_strings/consumer_scoped/toolchain_matrix
+  keeps working completely unchanged as long as the calling step keeps
+  the same `id: resolve_baseline`.
+
+inputs:
+  baseline-git-path:
+    description: >
+      Path to the baseline file inside the repo, resolved at the PR's
+      base SHA (e.g. `abi/math.abicheck.json`).
+    required: true
+  baseline-temp-filename:
+    description: >
+      Filename (not a path) to write the resolved baseline to under
+      RUNNER_TEMP, matching whatever literal runner-temp-relative path
+      every downstream step in the calling job already expects (e.g.
+      math.base.abicheck.json). Deliberately spelled without expression
+      brace syntax anywhere in this description -- GitHub's action-manifest
+      loader parses that syntax even inside description text, not just
+      inside runs.steps, and evaluating it here failed with "Unrecognized
+      named-value: 'runner'" on a real CI run (PR #16) since an input
+      description is not an expression-evaluation context at all.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve trusted baseline from PR base SHA
+      shell: bash
+      run: |
+        set -euo pipefail
+        git show \
+          "${{ github.event.pull_request.base.sha }}:${{ inputs.baseline-git-path }}" \
+          > "$RUNNER_TEMP/${{ inputs.baseline-temp-filename }}"

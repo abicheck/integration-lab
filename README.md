@@ -574,8 +574,16 @@ a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
 CLI at a deliberately scoped-down `depth: headers`, and a real consumer
 application (`//consumer:consumer_app`, see "Consumer/app-scoped
-validation" above) exercising `compare --used-by`. It
-does not yet cover: `cc_shared_library` or a `MODULE.bazel.lock`. It DOES
+validation" above) exercising `compare --used-by`. The known axes it does
+not yet cover are generated from `capabilities.yaml` below (see
+"Capability matrix"), not hand-typed here, so the two cannot disagree:
+
+<!-- capability-matrix:gaps:start -->
+- **cc-shared-library-target-shape** (`gap`): README's "Known limitations": every fixture and the real :math target use cc_binary(linkshared = True); nothing exercises a genuine Bazel cc_shared_library target yet.
+- **module-bazel-lock-pinning** (`gap`): README's "Known limitations": MODULE.bazel.lock (dependency pinning) is not part of any covered axis yet.
+<!-- capability-matrix:gaps:end -->
+
+This lab DOES
 now have a machine-readable scenario matrix
 with an expected/actual oracle per patch (fixtures/patches/scripts that
 apply a change to a clean fixture, run a scan, and assert on the JSON —
@@ -607,11 +615,12 @@ tracked as follow-up work rather than folded into this change.
 
 ## Capability matrix
 
-The "does not yet cover" claims two paragraphs above (`cc_shared_library`,
-`MODULE.bazel.lock`) — and every axis this lab *does* cover (evidence
-depth, header frontend, toolchain, comparison scope) — used to live only
-as hand-typed prose here, with nothing to stop it drifting from the real
-CI jobs as those were added, renamed, or removed. `capabilities.yaml`
+The "does not yet cover" claims two paragraphs above (generated, not
+hand-typed — see `scripts/gen_capability_gaps.py`'s marker comments there)
+— and every axis this lab *does* cover (evidence depth, header frontend, toolchain,
+comparison scope) — used to live only as hand-typed prose here, with
+nothing to stop it drifting from the real CI jobs as those were added,
+renamed, or removed. `capabilities.yaml`
 (repo root) is now the declarative, machine-checked source of truth for
 that question: one entry per (axis combination) → (job that exercises it,
 or `status: gap` if none does), validated against the real
@@ -625,12 +634,45 @@ could: a matrix entry pointing at a job that no longer exists, and a real
 job in `abi-scan.yml`/`scenarios.yml`/`scenarios-canary.yml` that no entry
 documents.
 
-Deliberately phase 1 of a larger plan, not the whole thing: this file and
-its validator exist today; generating this README's own limitations list
-from `capabilities.yaml` (so the two literally cannot disagree), a shared
-reusable-workflow leg replacing the boilerplate `abi-scan.yml`'s jobs
-currently duplicate, and driving `toolchain_matrix`'s own `strategy.matrix`
-from this file dynamically are later, separately-scoped follow-ups.
+Deliberately staged, not built all at once. Phase 1 (this file + its
+validator), phase 2 (generating the "Known limitations" gap list above
+from this file — `scripts/gen_capability_gaps.py`, checked in CI the same
+way, so the two literally cannot disagree), and phase 4 (each
+`toolchain_matrix` entry's `matrix_leg` — its real `cc`/`cxx`/`std` —
+checked against `abi-scan.yml`'s actual `strategy.matrix.include` by
+`scripts/check_toolchain_matrix_sync.py`, so a repointed compiler can't
+drift from what this file claims either) are done. Deliberately a
+consistency *check* rather than a live GitHub Actions dynamic matrix (a
+prior job emitting JSON consumed via `fromJson()`): that would restructure
+a real, already-working job in the workflow this repo protects most
+carefully, with no way to dry-run the result outside an actual Actions
+run — this gets the same "can't silently drift" property without that
+risk. Phase 3 (a shared reusable-workflow leg replacing the boilerplate
+`abi-scan.yml`'s jobs currently duplicate) is partially done: the
+checkout + "Skip if nothing ABI-relevant changed" pair, and the
+"Resolve trusted baseline from PR base SHA" step, are now
+`.github/actions/skip-check` and `.github/actions/resolve-baseline` —
+two composite actions, each called from all 5 jobs that need it
+(`scan`, `scan_strings`, `consumer_scoped`, `toolchain_matrix`,
+`l4_clang_plugin`) instead of five duplicated copies. Deliberately does
+NOT extract the "Set up Bazel disk cache" step that follows —
+see `.github/actions/skip-check/action.yml`'s own docstring for why: its
+cache-key `hashFiles()` input list genuinely differs per job (root
+`BUILD.bazel` alone for `scan`/`toolchain_matrix`, plus
+`strings_lib/BUILD.bazel` for `scan_strings`, plus `consumer/BUILD.bazel`
+for `consumer_scoped`, plus two `tools/abicheck/*` files for
+`l4_clang_plugin`), so folding it in would trade real duplication for a
+wide, easy-to-misuse parameter surface instead of a clean extraction.
+Verified structurally rather than via a live Actions run (not possible
+here): every step from "Set up Bazel disk cache" onward, in every one of
+the 5 touched jobs, parses as byte-for-byte identical before and after
+this extraction (`yaml.safe_load`-level diff), and every one of the ~30
+existing `steps.relevance.outputs.relevant`/10
+`steps.resolve_baseline.outcome` references elsewhere in those jobs was
+left completely untouched — the invoking step in each job keeps the same
+`id: relevance`/`id: resolve_baseline` it always had, since a composite
+action's outputs (and `continue-on-error`) are exposed on the step that
+calls it, not on any step inside the action itself.
 
 ## Scenario validation (`scenarios.yml`)
 

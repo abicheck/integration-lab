@@ -1,0 +1,86 @@
+name: Skip if nothing ABI-relevant changed
+description: >
+  Decides, via scripts/paths_changed.py, whether anything ABI-relevant
+  changed between the PR's base and head SHA. abi-scan.yml's `on:` block
+  deliberately has no workflow-level `paths:` filter (a required check
+  must never sit at "Pending" forever for a PR touching an unlisted path
+  -- see that comment for the full reasoning), so every job that needs
+  this decision makes it here, in-job, instead.
+
+  Does NOT check out the repo itself -- a local composite action's own
+  `action.yml` must already be present on disk (via a checkout the
+  CALLING job already ran) before GitHub Actions can even resolve
+  `uses: ./.github/actions/skip-check` to find and run it, so folding
+  `actions/checkout` in here is a chicken-and-egg problem: the runner
+  can't discover this very file without having already checked out the
+  repo that contains it. Confirmed the hard way, not assumed --
+  `##[error]Can't find 'action.yml' ... Did you forget to run
+  actions/checkout before running your local action?` on every one of
+  the 5 jobs that called this composite action with checkout folded in
+  (real CI run, PR #16). Every caller keeps its own explicit
+  `actions/checkout` step immediately before this one.
+
+  Phase 3 of the declarative capability-matrix plan (README's "Capability
+  matrix" section): this step's body was byte-identical (modulo the one
+  step-summary write, now the `write-step-summary` input) across 5 of
+  abi-scan.yml's 7 jobs before this extraction. Deliberately scoped to
+  ONLY this one step, not the "Resolve trusted baseline"/"Set up Bazel
+  disk cache" steps that follow it in every job -- see
+  resolve-baseline/action.yml for that one and README.md's "Capability
+  matrix" section for why the cache-setup step itself stays
+  un-extracted (its cache-key `hashFiles()` input list genuinely differs
+  per job, so folding it in trades real duplication for a wide,
+  easy-to-misuse parameter surface instead).
+
+inputs:
+  write-step-summary:
+    description: >
+      When 'true', write a job-summary note explaining the skip when
+      nothing ABI-relevant changed. Only the required `scan` job does
+      this today -- the other 4 jobs that use this action stay silent on
+      skip, since each already has its own "Report ... profile status"
+      step that covers this for its own diagnostic leg.
+    required: false
+    default: 'false'
+
+outputs:
+  relevant:
+    description: "'true' if an ABI-relevant path changed between base and head, else 'false'."
+    value: ${{ steps.relevance.outputs.relevant }}
+
+runs:
+  using: composite
+  steps:
+    # Runs unconditionally (no `if:`) -- every caller needs a real
+    # conclusion here regardless of whether anything ABI-relevant
+    # changed, exactly matching the pre-extraction behavior.
+    #
+    # --no-renames: git's default rename detection makes `--name-only`
+    # emit *only* the new path of a renamed file, silently dropping the
+    # old one -- see abi-scan.yml's own historical comment on this step
+    # (now here, since this is the one copy) for the concrete repro that
+    # motivated it (a public header renamed to a non-ABI path, e.g.
+    # `include/abicheck_lab/math.h` -> `docs/math.md`, would otherwise
+    # read as "docs/math.md changed" only, hiding the header's removal
+    # from paths_changed.py entirely).
+    - name: Skip if nothing ABI-relevant changed
+      id: relevance
+      shell: bash
+      run: |
+        set -euo pipefail
+        git diff --no-renames --name-only \
+          "${{ github.event.pull_request.base.sha }}" \
+          "${{ github.event.pull_request.head.sha }}" \
+          > "$RUNNER_TEMP/changed-files.txt"
+        if python3 scripts/paths_changed.py "$RUNNER_TEMP/changed-files.txt"; then
+          echo 'relevant=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'relevant=false' >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.write-step-summary }}" = "true" ]; then
+            {
+              echo '### ABICheck source scan'
+              echo
+              echo 'No ABI-relevant paths changed (see `scripts/paths_changed.py`) -- scan skipped, gate satisfied trivially.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
