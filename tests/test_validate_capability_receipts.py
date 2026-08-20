@@ -20,7 +20,16 @@ MATRIX = {
 }
 
 
-def _write(tmp_path, capability_id, status, job=None, run_id="run-1", sha="deadbeef", **kwargs):
+def _write(
+    tmp_path,
+    capability_id,
+    status,
+    job=None,
+    run_id="run-1",
+    run_attempt="1",
+    sha="deadbeef",
+    **kwargs,
+):
     write_receipt(
         tmp_path,
         build_receipt(
@@ -29,6 +38,7 @@ def _write(tmp_path, capability_id, status, job=None, run_id="run-1", sha="deadb
             workflow="w.yml",
             job=job or f"job-{capability_id.rsplit('-', 1)[-1]}",
             run_id=run_id,
+            run_attempt=run_attempt,
             sha=sha,
             **kwargs,
         ),
@@ -188,12 +198,39 @@ def test_receipt_missing_sha_rejected(tmp_path):
     assert "gating-a" in errors[0]
 
 
+def test_receipt_missing_run_attempt_rejected(tmp_path):
+    _write(tmp_path, "gating-a", "passed", run_attempt="")
+    _write(tmp_path, "gating-b", "passed")
+    errors = validate(MATRIX, tmp_path, only=None)
+    assert len(errors) == 1
+    assert "MISSING_PROVENANCE" in errors[0]
+    assert "gating-a" in errors[0]
+
+
 def test_stale_run_id_rejected_when_expected(tmp_path):
     _write(tmp_path, "gating-a", "passed", run_id="old-run")
     _write(tmp_path, "gating-b", "passed", run_id="old-run")
     errors = validate(MATRIX, tmp_path, only=None, expect_run_id="current-run")
     assert len(errors) == 2
     assert all("STALE_PROVENANCE" in e for e in errors)
+
+
+def test_stale_run_attempt_rejected_even_with_matching_run_id(tmp_path):
+    # A re-run keeps the same run_id but increments run_attempt -- a
+    # receipt from an earlier attempt of the identical run must still be
+    # rejected when the caller pins the current attempt (Codex review,
+    # fresh evidence).
+    _write(tmp_path, "gating-a", "passed", run_id="run-1", run_attempt="1")
+    _write(tmp_path, "gating-b", "passed", run_id="run-1", run_attempt="1")
+    errors = validate(
+        MATRIX,
+        tmp_path,
+        only=None,
+        expect_run_id="run-1",
+        expect_run_attempt="2",
+    )
+    assert len(errors) == 2
+    assert all("STALE_PROVENANCE" in e and "run_attempt" in e for e in errors)
 
 
 def test_stale_sha_rejected_when_expected(tmp_path):
@@ -204,10 +241,17 @@ def test_stale_sha_rejected_when_expected(tmp_path):
     assert all("STALE_PROVENANCE" in e for e in errors)
 
 
-def test_matching_run_id_and_sha_accepted(tmp_path):
-    _write(tmp_path, "gating-a", "passed", run_id="run-1", sha="deadbeef")
-    _write(tmp_path, "gating-b", "passed", run_id="run-1", sha="deadbeef")
-    errors = validate(MATRIX, tmp_path, only=None, expect_run_id="run-1", expect_sha="deadbeef")
+def test_matching_run_id_run_attempt_and_sha_accepted(tmp_path):
+    _write(tmp_path, "gating-a", "passed", run_id="run-1", run_attempt="1", sha="deadbeef")
+    _write(tmp_path, "gating-b", "passed", run_id="run-1", run_attempt="1", sha="deadbeef")
+    errors = validate(
+        MATRIX,
+        tmp_path,
+        only=None,
+        expect_run_id="run-1",
+        expect_run_attempt="1",
+        expect_sha="deadbeef",
+    )
     assert errors == []
 
 

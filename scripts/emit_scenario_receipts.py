@@ -20,7 +20,17 @@ A capability's status is:
     manifest currently declares no per-profile scenario at all for it --
     not a failure, just nothing to check yet);
   - "passed" if every result for that profile has passed == true;
-  - "failed" otherwise.
+  - "failed" otherwise -- including when summary.json itself contains a
+    malformed entry (CodeRabbit review, fresh evidence): a JSON string
+    like `"passed": "false"` is truthy in Python, so the naive
+    `all(r.get("passed") ...)` check would have emitted a PASSED receipt
+    for a result that actually failed; a non-object list entry would have
+    raised an unhandled AttributeError before any receipt was written at
+    all. Both fail closed instead -- see derive_statuses()'s own
+    docstring for exactly what counts as malformed and why a malformed
+    entry anywhere fails BOTH capabilities rather than only the one
+    profile it superficially names (an entry too corrupted to attribute
+    safely can't be trusted to describe only that one profile either).
 """
 
 from __future__ import annotations
@@ -43,18 +53,45 @@ PROFILE_TO_CAPABILITY_ID = {
 }
 
 
-def derive_statuses(results: list[dict]) -> dict[str, str]:
-    """{capability_id: status} for every profile in PROFILE_TO_CAPABILITY_ID."""
+def derive_statuses(results: list) -> tuple[dict[str, str], list[str]]:
+    """{capability_id: status} for every profile in PROFILE_TO_CAPABILITY_ID,
+    plus a list of human-readable descriptions of any malformed entry found.
+
+    Validates every entry defensively before trusting it (Codex/CodeRabbit
+    review, fresh evidence -- see the module docstring): an entry that
+    isn't a JSON object, or whose own `passed` field isn't a real JSON
+    boolean, is malformed. A malformed entry anywhere in `results` fails
+    BOTH capabilities (not just the one profile it superficially claims):
+    a non-object entry can't even be attributed to a profile safely, and
+    trusting the rest of a summary.json known to contain corrupted data
+    would be exactly the "fail open on partial evidence" this whole
+    receipt mechanism exists to avoid.
+    """
+    malformed: list[str] = []
+    for i, r in enumerate(results):
+        if not isinstance(r, dict):
+            malformed.append(f"result entry {i} is not a JSON object: {r!r}")
+            continue
+        profile = r.get("profile")
+        if profile in PROFILE_TO_CAPABILITY_ID and not isinstance(r.get("passed"), bool):
+            malformed.append(
+                f"result entry {i} (profile={profile!r}) has a non-boolean "
+                f"'passed' field: {r.get('passed')!r}"
+            )
+
+    if malformed:
+        return {cap_id: "failed" for cap_id in PROFILE_TO_CAPABILITY_ID.values()}, malformed
+
     statuses: dict[str, str] = {}
     for profile, capability_id in PROFILE_TO_CAPABILITY_ID.items():
         profile_results = [r for r in results if r.get("profile") == profile]
         if not profile_results:
             statuses[capability_id] = "skipped"
-        elif all(r.get("passed") for r in profile_results):
+        elif all(r["passed"] for r in profile_results):
             statuses[capability_id] = "passed"
         else:
             statuses[capability_id] = "failed"
-    return statuses
+    return statuses, []
 
 
 def main() -> int:
@@ -93,8 +130,8 @@ def main() -> int:
         statuses = {cap_id: "failed" for cap_id in PROFILE_TO_CAPABILITY_ID.values()}
         detail = f"summary.json at {args.summary} was not a list"
     else:
-        statuses = derive_statuses(results)
-        detail = ""
+        statuses, malformed = derive_statuses(results)
+        detail = "; ".join(malformed)
 
     exit_code = 0
     for capability_id, status in statuses.items():

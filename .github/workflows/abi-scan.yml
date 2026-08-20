@@ -560,20 +560,40 @@ jobs:
       # gates already failed, so its own `outcome` is `skipped` on the
       # common all-clear path and can't be read as "passed" the way a
       # normal step's success could.
+      # `RELEVANT`/`SCAN_OUTCOME`/`COVERAGE_OUTCOME` are read through `env`
+      # rather than interpolated directly into the `run:` script, for two
+      # reasons: it's the standard fix for GitHub's own "code injection
+      # via template expansion" hazard (zizmor flagged this exact
+      # interpolation pattern), and it lets the `if` chain below test for
+      # an explicit value rather than "not true" -- see that comment.
       - name: Emit math-source-gate capability receipt
         if: always()
         shell: bash
+        env:
+          RELEVANT: ${{ steps.relevance.outputs.relevant }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          COVERAGE_OUTCOME: ${{ steps.coverage_contract.outcome }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+          # CodeRabbit review, fresh evidence: the previous `!= "true"`
+          # check read "skip-check itself failed to run/produce an
+          # output" (RELEVANT empty) identically to "skip-check explicitly
+          # judged this PR not ABI-relevant" (RELEVANT=false) -- both
+          # emitted status: skipped, and verify_capability_receipts
+          # accepts that (--allow-skip math-source-gate), silently letting
+          # an UNRESOLVED relevance check pass as a clean, legitimate
+          # skip. Testing for the explicit "false" value, and folding
+          # every other value (including empty/unresolved) into the
+          # `failed` branch below, closes that gap.
+          if [ "$RELEVANT" == "false" ]; then
             status=skipped
             detail='PR judged not ABI-relevant by skip-check'
-          elif [ "${{ steps.scan.outcome }}" == "success" ] && [ "${{ steps.coverage_contract.outcome }}" == "success" ]; then
+          elif [ "$RELEVANT" == "true" ] && [ "$SCAN_OUTCOME" == "success" ] && [ "$COVERAGE_OUTCOME" == "success" ]; then
             status=passed
             detail=''
           else
             status=failed
-            detail="scan.outcome=${{ steps.scan.outcome }} coverage_contract.outcome=${{ steps.coverage_contract.outcome }}"
+            detail="relevant=$RELEVANT scan.outcome=$SCAN_OUTCOME coverage_contract.outcome=$COVERAGE_OUTCOME"
           fi
           python3 scripts/emit_capability_receipt.py \
             --receipts-dir "$RUNNER_TEMP/capability-receipts" \
@@ -586,11 +606,20 @@ jobs:
             --sha "${{ github.sha }}" \
             --detail "$detail"
 
+      # -${{ github.run_attempt }} suffix (CodeRabbit review, fresh
+      # evidence): `upload-artifact` names must be unique within a run,
+      # and `github.run_id` is identical across a re-run's attempts --
+      # without this suffix, a re-run's own upload could collide with (or,
+      # depending on artifact retention across attempts, be shadowed by) a
+      # previous attempt's artifact of the same name, letting
+      # verify_capability_receipts download a receipt that isn't from the
+      # attempt actually being judged. The download step below matches
+      # this same suffixed pattern.
       - name: Upload math-source-gate capability receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: capability-receipts-scan
+          name: capability-receipts-scan-${{ github.run_attempt }}
           path: ${{ runner.temp }}/capability-receipts
           if-no-files-found: warn
           retention-days: 30
@@ -887,17 +916,20 @@ jobs:
       - name: Emit aggregate-multi-library capability receipt
         if: always()
         shell: bash
+        env:
+          AGGREGATE_OUTCOME: ${{ steps.aggregate_run.outcome }}
+          MANIFEST_COUNT: ${{ steps.manifest.outputs.count }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.aggregate_run.outcome }}" == "success" ]; then
+          if [ "$AGGREGATE_OUTCOME" == "success" ]; then
             status=passed
             detail=''
-          elif [ "${{ steps.manifest.outputs.count }}" == "0" ]; then
+          elif [ "$MANIFEST_COUNT" == "0" ]; then
             status=skipped
-            detail="nothing declared this run (manifest count=0) and the --discovered-only fallback did not succeed; aggregate_run.outcome=${{ steps.aggregate_run.outcome }}"
+            detail="nothing declared this run (manifest count=0) and the --discovered-only fallback did not succeed; aggregate_run.outcome=$AGGREGATE_OUTCOME"
           else
             status=failed
-            detail="aggregate_run.outcome=${{ steps.aggregate_run.outcome }}"
+            detail="aggregate_run.outcome=$AGGREGATE_OUTCOME"
           fi
           python3 scripts/emit_capability_receipt.py \
             --receipts-dir "$RUNNER_TEMP/capability-receipts" \
@@ -910,11 +942,14 @@ jobs:
             --sha "${{ github.sha }}" \
             --detail "$detail"
 
+      # -${{ github.run_attempt }} suffix: same reasoning as the identical
+      # comment on the "Upload math-source-gate capability receipt" step
+      # above.
       - name: Upload aggregate-multi-library capability receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: capability-receipts-aggregate
+          name: capability-receipts-aggregate-${{ github.run_attempt }}
           path: ${{ runner.temp }}/capability-receipts
           if-no-files-found: warn
           retention-days: 30
@@ -948,10 +983,13 @@ jobs:
       - name: Install PyYAML (for validate_capability_receipts.py)
         run: pip install --quiet pyyaml
 
+      # Pattern matches this attempt's own suffixed artifact names only
+      # (capability-receipts-scan-<N>, capability-receipts-aggregate-<N>)
+      # -- see the upload steps' own comments for why the suffix exists.
       - name: Download capability receipts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: capability-receipts-*
+          pattern: capability-receipts-*-${{ github.run_attempt }}
           path: ${{ runner.temp }}/capability-receipts
           merge-multiple: true
 
@@ -980,6 +1018,7 @@ jobs:
             --allow-skip math-source-gate \
             --allow-skip aggregate-multi-library \
             --expect-run-id "${{ github.run_id }}" \
+            --expect-run-attempt "${{ github.run_attempt }}" \
             --expect-sha "${{ github.sha }}"
 
   # Architecture review P1-6 (consumer/app-scoped validation): //consumer's

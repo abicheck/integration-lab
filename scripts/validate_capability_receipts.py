@@ -43,17 +43,25 @@ modes, all reported by id rather than collapsed into one generic message:
      exactly as untrustworthy as a missing one -- e.g. a receipt for
      `math-source-gate` claiming it came from some other job, or from a
      workflow other than `abi-scan.yml`.
-  6. MISSING_PROVENANCE -- a receipt's `run_id` or `sha` is empty (Codex
-     review, fresh evidence: those fields are optional on
+  6. MISSING_PROVENANCE -- a receipt's `run_id`, `run_attempt`, or `sha`
+     is empty (Codex review, fresh evidence: those fields are optional on
      capability_receipts.build_receipt, so nothing before this required a
      caller to actually populate them -- a receipt naming no run at all
      proved nothing about which run produced it).
-  7. STALE_PROVENANCE -- only checked when `--expect-run-id`/`--expect-sha`
-     are given: the receipt's own `run_id`/`sha` don't match the run this
-     validation is running under. Opt-in (not required) because a local,
-     out-of-CI invocation of this script has no real run id/sha to pin
-     against; both `abi-scan.yml`'s and `scenarios.yml`'s own validation
-     steps pass `${{ github.run_id }}`/`${{ github.sha }}` explicitly, so
+  7. STALE_PROVENANCE -- only checked when `--expect-run-id`/
+     `--expect-run-attempt`/`--expect-sha` are given: the receipt's own
+     `run_id`/`run_attempt`/`sha` don't match the run this validation is
+     running under. `run_attempt` matters independently of `run_id`
+     (Codex review, fresh evidence): GitHub's own docs state `run_id`
+     "does not change if you re-run the workflow run", only
+     `run_attempt` does -- so pinning `run_id` alone would still accept a
+     `status: passed` receipt left over from an earlier, different
+     attempt of the SAME run whose actual producer step never ran (or
+     failed) on the current attempt. Opt-in (not required) because a
+     local, out-of-CI invocation of this script has no real run
+     id/attempt/sha to pin against; both `abi-scan.yml`'s and
+     `scenarios.yml`'s own validation steps pass `${{ github.run_id }}`/
+     `${{ github.run_attempt }}`/`${{ github.sha }}` explicitly, so
      neither production call site skips this check.
 
 Scope is capabilities.yaml's own `gating: true` entries, optionally
@@ -132,6 +140,7 @@ def validate(
     only: set[str] | None,
     allow_skip: set[str] | None = None,
     expect_run_id: str | None = None,
+    expect_run_attempt: str | None = None,
     expect_sha: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
@@ -189,16 +198,26 @@ def validate(
                 f"job={entry_job!r} for it"
             )
             continue
-        if not receipt.get("run_id") or not receipt.get("sha"):
+        if not receipt.get("run_id") or not receipt.get("run_attempt") or not receipt.get("sha"):
             errors.append(
                 f"MISSING_PROVENANCE: '{capability_id}' receipt has no "
-                "run_id/sha -- cannot confirm which run produced it"
+                "run_id/run_attempt/sha -- cannot confirm which run produced it"
             )
             continue
         if expect_run_id is not None and receipt["run_id"] != expect_run_id:
             errors.append(
                 f"STALE_PROVENANCE: '{capability_id}' receipt has "
                 f"run_id={receipt['run_id']!r}, expected {expect_run_id!r}"
+            )
+            continue
+        # run_attempt checked independently of run_id: a re-run keeps the
+        # same run_id but increments run_attempt (see the module docstring),
+        # so pinning run_id alone would still accept a receipt left over
+        # from a different attempt of the identical run.
+        if expect_run_attempt is not None and receipt["run_attempt"] != expect_run_attempt:
+            errors.append(
+                f"STALE_PROVENANCE: '{capability_id}' receipt has "
+                f"run_attempt={receipt['run_attempt']!r}, expected {expect_run_attempt!r}"
             )
             continue
         if expect_sha is not None and receipt["sha"] != expect_sha:
@@ -264,6 +283,15 @@ def main() -> int:
         help="reject a receipt whose own run_id doesn't match this (e.g. ${{ github.run_id }})",
     )
     parser.add_argument(
+        "--expect-run-attempt",
+        default=None,
+        help=(
+            "reject a receipt whose own run_attempt doesn't match this "
+            "(e.g. ${{ github.run_attempt }}) -- checked independently of "
+            "--expect-run-id, since a re-run keeps the same run_id"
+        ),
+    )
+    parser.add_argument(
         "--expect-sha",
         default=None,
         help="reject a receipt whose own sha doesn't match this (e.g. ${{ github.sha }})",
@@ -284,6 +312,7 @@ def main() -> int:
         only,
         allow_skip,
         expect_run_id=args.expect_run_id,
+        expect_run_attempt=args.expect_run_attempt,
         expect_sha=args.expect_sha,
     )
 

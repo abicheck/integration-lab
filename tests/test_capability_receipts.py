@@ -50,6 +50,71 @@ def test_build_receipt_rejects_invalid_input(kwargs):
         build_receipt(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "bad_id",
+    ["../escape", "a/b", "a\\b", ".", "..", "", "id with spaces"],
+)
+def test_build_receipt_rejects_path_unsafe_capability_id(bad_id):
+    # Codex/CodeRabbit review, fresh evidence: capability_id is embedded
+    # directly into receipt_path()'s output path -- an unvalidated value
+    # would let write_receipt() escape receipts_dir entirely.
+    with pytest.raises(ReceiptError):
+        build_receipt(capability_id=bad_id, status="passed", workflow="w.yml", job="j")
+
+
+def test_receipt_path_rejects_path_unsafe_capability_id_directly(tmp_path):
+    # Protects a direct write_receipt()/receipt_path() caller too, not
+    # only ones that go through build_receipt() first.
+    with pytest.raises(ReceiptError):
+        receipt_path(tmp_path, "../escape")
+
+
+def test_write_receipt_cannot_escape_receipts_dir(tmp_path):
+    # End-to-end: even a hand-built receipt dict (bypassing build_receipt's
+    # own validation) must not let write_receipt() write outside
+    # receipts_dir.
+    escaping = {
+        "schema_version": 1,
+        "capability_id": "../escape",
+        "status": "passed",
+        "workflow": "w.yml",
+        "job": "j",
+        "run_id": "",
+        "run_attempt": "",
+        "sha": "",
+        "detail": "",
+    }
+    with pytest.raises(ReceiptError):
+        write_receipt(tmp_path, escaping)
+    assert not (tmp_path.parent / "escape.json").exists()
+
+
+def test_build_receipt_rejects_unhashable_status():
+    # Codex review, fresh evidence: `status not in VALID_STATUSES` alone
+    # raises TypeError (not ReceiptError) for an unhashable value like a
+    # list -- must degrade to the same MALFORMED_RECEIPT-shaped error
+    # every other bad field already produces.
+    with pytest.raises(ReceiptError):
+        build_receipt(capability_id="x", status=["passed"], workflow="w.yml", job="j")
+
+
+def test_read_receipt_rejects_unhashable_status(tmp_path):
+    path = tmp_path / "x.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "capability_id": "x",
+                "status": ["passed"],
+                "workflow": "w.yml",
+                "job": "j",
+            }
+        )
+    )
+    with pytest.raises(ReceiptError):
+        read_receipt(path)
+
+
 def test_write_then_read_round_trip(tmp_path):
     receipt = build_receipt(
         capability_id="aggregate-multi-library",

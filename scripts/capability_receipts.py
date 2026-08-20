@@ -52,10 +52,12 @@ receipt. A capability whose gating step never ran this PR (e.g.
 `math-source-gate` when `skip-check` judged the PR not ABI-relevant) still
 writes a receipt saying so, so the validator can tell "genuinely nothing
 to prove this run" apart from "the job silently produced nothing" -- the
-exact ambiguity a *missing* receipt cannot resolve on its own. Only
-`status: passed` satisfies the validator for a `gating: true` capability;
-`skipped`/`failed` are both reported, deliberately not treated the same
-(the validator's message names which).
+exact ambiguity a *missing* receipt cannot resolve on its own.
+`status: passed` always satisfies validate_capability_receipts.py for a
+`gating: true` capability; `status: skipped` satisfies it only when the
+caller explicitly named that capability id via `--allow-skip` (opt-in per
+id, not a blanket default -- see that script's own module docstring for
+why); `status: failed` never satisfies it, regardless of `--allow-skip`.
 
 No timestamp field: this module is called from workflow scripts where
 `date -u` output would only ever be advisory (receipts aren't compared
@@ -66,6 +68,7 @@ across runs by time), and every fact that matters for provenance --
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -73,9 +76,36 @@ SCHEMA_VERSION = 1
 
 VALID_STATUSES = frozenset({"passed", "failed", "skipped"})
 
+# Every real capabilities.yaml `id:` is already this shape (lowercase
+# words joined by hyphens); enforced here too so a capability_id can never
+# smuggle a path separator or traversal segment into receipt_path()'s
+# output path (Codex/CodeRabbit review, fresh evidence).
+_CAPABILITY_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
 
 class ReceiptError(ValueError):
     """A receipt (or a receipt file on disk) doesn't match the schema."""
+
+
+def _validate_capability_id(capability_id: Any, *, where: str) -> None:
+    # Codex/CodeRabbit review, fresh evidence: capability_id is embedded
+    # directly into a filesystem path by receipt_path() -- an unvalidated
+    # value like "../../etc/passwd" would let write_receipt() write
+    # outside receipts_dir entirely. Restricted to a plain filename-safe
+    # slug (matching the shape every real capabilities.yaml `id:` already
+    # uses -- lowercase words joined by hyphens) rather than merely
+    # blocking "/"/".." specifically, since a slug allowlist can't be
+    # bypassed by some other path-meaningful character this list didn't
+    # anticipate.
+    if (
+        not isinstance(capability_id, str)
+        or not capability_id
+        or not _CAPABILITY_ID_RE.match(capability_id)
+    ):
+        raise ReceiptError(
+            f"{where}: capability_id={capability_id!r} must be a non-empty "
+            "filename-safe slug (letters, digits, '-', '_' only)"
+        )
 
 
 def build_receipt(
@@ -89,9 +119,13 @@ def build_receipt(
     sha: str = "",
     detail: str = "",
 ) -> dict[str, Any]:
-    if not capability_id:
-        raise ReceiptError("capability_id must be a non-empty string")
-    if status not in VALID_STATUSES:
+    _validate_capability_id(capability_id, where="build_receipt")
+    # Codex review, fresh evidence: `status not in VALID_STATUSES` raises
+    # TypeError (not caught anywhere as ReceiptError) for an unhashable
+    # status value like a list -- checking the type first turns that into
+    # the same MALFORMED_RECEIPT-shaped error every other bad field
+    # already produces, instead of an unhandled crash.
+    if not isinstance(status, str) or status not in VALID_STATUSES:
         raise ReceiptError(f"status={status!r} must be one of {sorted(VALID_STATUSES)}")
     if not workflow:
         raise ReceiptError("workflow must be a non-empty string")
@@ -111,11 +145,11 @@ def build_receipt(
 
 
 def receipt_path(receipts_dir: Path, capability_id: str) -> Path:
-    # One file per capability id, named after the id itself -- the id is
-    # already a slug (capabilities.yaml's own `id:` values), so no further
-    # sanitizing is needed, and this keeps "does a receipt exist for X"
-    # a plain path check rather than requiring every reader to scan and
-    # filter a directory of arbitrarily-named files.
+    # One file per capability id, named after the id itself. Validated
+    # here too (not only in build_receipt) so a direct write_receipt()
+    # call -- bypassing build_receipt entirely -- gets the identical
+    # path-traversal protection (Codex/CodeRabbit review, fresh evidence).
+    _validate_capability_id(capability_id, where="receipt_path")
     return receipts_dir / f"{capability_id}.json"
 
 
@@ -147,7 +181,11 @@ def read_receipt(path: Path) -> dict[str, Any]:
             f"{path}: schema_version={data['schema_version']!r}, "
             f"this reader only understands {SCHEMA_VERSION}"
         )
-    if data["status"] not in VALID_STATUSES:
+    # isinstance checked first, same reasoning as build_receipt(): a JSON
+    # file can legally hold `"status": []`, and `[] not in VALID_STATUSES`
+    # (a frozenset of strings) raises TypeError, not ReceiptError -- which
+    # load_all_receipts()'s callers only ever catch as ReceiptError.
+    if not isinstance(data["status"], str) or data["status"] not in VALID_STATUSES:
         raise ReceiptError(f"{path}: status={data['status']!r} not in {sorted(VALID_STATUSES)}")
     return data
 

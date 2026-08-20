@@ -22,6 +22,16 @@ on:
       - 'scripts/emit_scenario_receipts.py'
       - 'scripts/validate_capability_receipts.py'
       - 'scripts/capability_receipts.py'
+      # This job's "Enforce gate" step passes the two scenario capability
+      # ids to validate_capability_receipts.py as a hardcoded
+      # --capability-id argument (emit_scenario_receipts.py's own
+      # PROFILE_TO_CAPABILITY_ID mapping is hardcoded the same way) -- a
+      # capabilities.yaml rename or removal of either id would then make
+      # every subsequent scenarios.yml run raise "not a gating: true
+      # entry" until some unrelated PR happens to touch a path already in
+      # this filter, at which point it fails for a change this workflow
+      # never actually validated (Codex review, fresh evidence).
+      - 'capabilities.yaml'
       - '.github/workflows/scenarios.yml'
       # Shared Bazel configuration that every fixture's build actually
       # goes through -- a rules_cc bump, a changed -std/link flag, or a
@@ -135,11 +145,18 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --sha "${{ github.sha }}"
 
+      # -${{ github.run_attempt }} suffix (CodeRabbit review, fresh
+      # evidence): same reasoning as abi-scan.yml's identical upload
+      # steps -- `github.run_id` is unchanged across a re-run's attempts,
+      # so an unsuffixed artifact name risks a collision/shadowing
+      # between attempts. This job downloads its own artifact within the
+      # same job (no separate download step), so nothing else needs to
+      # match this pattern.
       - name: Upload detection-correctness-scenarios capability receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: capability-receipts-scenarios
+          name: capability-receipts-scenarios-${{ github.run_attempt }}
           path: ${{ runner.temp }}/capability-receipts
           if-no-files-found: warn
           retention-days: 30
@@ -164,5 +181,6 @@ jobs:
             --capability-id detection-correctness-scenarios-castxml \
             --capability-id detection-correctness-scenarios-clang \
             --expect-run-id "${{ github.run_id }}" \
+            --expect-run-attempt "${{ github.run_attempt }}" \
             --expect-sha "${{ github.sha }}"
           test "${{ steps.run_scenarios.outcome }}" == "success"
