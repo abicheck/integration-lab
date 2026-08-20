@@ -1,0 +1,41 @@
+name: Capability matrix
+
+# Keeps capabilities.yaml honest against the real workflow jobs it
+# describes -- see capabilities.yaml's own header comment and
+# scripts/check_capability_matrix.py for what this checks and why. Pure
+# Python + PyYAML, no Bazel/system deps, so this stays cheap and fast
+# (seconds, not minutes) and can gate every PR that touches either side of
+# the contract without adding real wall-clock cost to the heavier gates.
+#
+# Path-filtered (unlike abi-scan.yml's own deliberate no-filter -- see that
+# workflow's comment on why a required check can't use one): this check is
+# never a required status check on its own, so a workflow it can't see
+# (an unrelated PR) simply never runs it, with no "stuck pending" risk.
+on:
+  pull_request:
+    paths:
+      - 'capabilities.yaml'
+      - 'scripts/check_capability_matrix.py'
+      - '.github/workflows/*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: abicheck-capability-matrix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Check capabilities.yaml against the real workflow jobs
+        run: python3 scripts/check_capability_matrix.py
