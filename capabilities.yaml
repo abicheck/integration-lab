@@ -33,8 +33,11 @@
 # README's own gap list generated from this file), and phase 4
 # (scripts/check_toolchain_matrix_sync.py -- each toolchain_matrix entry's
 # `matrix_leg` checked against abi-scan.yml's real strategy.matrix.include)
-# are all built; a shared reusable-workflow leg replacing abi-scan.yml's
-# duplicated job boilerplate (phase 3) is the one remaining follow-up.
+# are all built; phase 3 (a shared reusable-workflow leg replacing
+# abi-scan.yml's duplicated job boilerplate) is partially done -- see
+# README.md's "Capability matrix" section and
+# .github/actions/skip-check|resolve-baseline for what's extracted and
+# why the Bazel-cache-setup step deliberately isn't (yet).
 
 dimensions:
   evidence_depth: [binary, headers, build, source, n/a]

@@ -647,8 +647,32 @@ prior job emitting JSON consumed via `fromJson()`): that would restructure
 a real, already-working job in the workflow this repo protects most
 carefully, with no way to dry-run the result outside an actual Actions
 run — this gets the same "can't silently drift" property without that
-risk. One follow-up remains: a shared reusable-workflow leg (phase 3)
-replacing the boilerplate `abi-scan.yml`'s jobs currently duplicate.
+risk. Phase 3 (a shared reusable-workflow leg replacing the boilerplate
+`abi-scan.yml`'s jobs currently duplicate) is partially done: the
+checkout + "Skip if nothing ABI-relevant changed" pair, and the
+"Resolve trusted baseline from PR base SHA" step, are now
+`.github/actions/skip-check` and `.github/actions/resolve-baseline` —
+two composite actions, each called from all 5 jobs that need it
+(`scan`, `scan_strings`, `consumer_scoped`, `toolchain_matrix`,
+`l4_clang_plugin`) instead of five duplicated copies. Deliberately does
+NOT extract the "Set up Bazel disk cache" step that follows —
+see `.github/actions/skip-check/action.yml`'s own docstring for why: its
+cache-key `hashFiles()` input list genuinely differs per job (root
+`BUILD.bazel` alone for `scan`/`toolchain_matrix`, plus
+`strings_lib/BUILD.bazel` for `scan_strings`, plus `consumer/BUILD.bazel`
+for `consumer_scoped`, plus two `tools/abicheck/*` files for
+`l4_clang_plugin`), so folding it in would trade real duplication for a
+wide, easy-to-misuse parameter surface instead of a clean extraction.
+Verified structurally rather than via a live Actions run (not possible
+here): every step from "Set up Bazel disk cache" onward, in every one of
+the 5 touched jobs, parses as byte-for-byte identical before and after
+this extraction (`yaml.safe_load`-level diff), and every one of the ~30
+existing `steps.relevance.outputs.relevant`/10
+`steps.resolve_baseline.outcome` references elsewhere in those jobs was
+left completely untouched — the invoking step in each job keeps the same
+`id: relevance`/`id: resolve_baseline` it always had, since a composite
+action's outputs (and `continue-on-error`) are exposed on the step that
+calls it, not on any step inside the action itself.
 
 ## Scenario validation (`scenarios.yml`)
 
