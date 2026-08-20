@@ -616,8 +616,8 @@ tracked as follow-up work rather than folded into this change.
 ## Capability matrix
 
 The "does not yet cover" claims two paragraphs above (generated, not
-hand-typed — see `<!-- capability-matrix:gaps:start -->` there) — and every
-axis this lab *does* cover (evidence depth, header frontend, toolchain,
+hand-typed — see `scripts/gen_capability_gaps.py`'s marker comments there)
+— and every axis this lab *does* cover (evidence depth, header frontend, toolchain,
 comparison scope) — used to live only as hand-typed prose here, with
 nothing to stop it drifting from the real CI jobs as those were added,
 renamed, or removed. `capabilities.yaml`
