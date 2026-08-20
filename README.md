@@ -729,6 +729,15 @@ for that profile silently removed from `scenarios/manifest.yaml` — fails
 loudly instead of passing vacuously. `status: failed` always fails
 validation regardless of `--allow-skip`.
 
+A schema-valid, `status: passed` receipt still proves nothing on its own
+if it wasn't actually produced by the job capabilities.yaml itself
+declares for that capability id, on the run being judged — so the
+validator also cross-checks a receipt's own `workflow`/`job` against
+capabilities.yaml's own declaration for that id, requires `run_id`/`sha`
+to be populated at all, and (via `--expect-run-id`/`--expect-sha`, which
+both workflows' own validation steps pass as `${{ github.run_id }}`/
+`${{ github.sha }}`) rejects a receipt left over from a different run.
+
 One residual gap `--allow-skip` doesn't close: `verify_capability_receipts`
 (and `scenarios.yml`'s own "Enforce gate" step, already required via its
 own job) is a *separate* job/step from `scan`/`aggregate`, so its own

@@ -978,7 +978,9 @@ jobs:
             --capability-id math-source-gate \
             --capability-id aggregate-multi-library \
             --allow-skip math-source-gate \
-            --allow-skip aggregate-multi-library
+            --allow-skip aggregate-multi-library \
+            --expect-run-id "${{ github.run_id }}" \
+            --expect-sha "${{ github.sha }}"
 
   # Architecture review P1-6 (consumer/app-scoped validation): //consumer's
   # `consumer_app` is a real, separately-built application binary that

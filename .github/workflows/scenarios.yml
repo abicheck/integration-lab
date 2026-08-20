@@ -162,5 +162,7 @@ jobs:
           python3 scripts/validate_capability_receipts.py \
             --receipts-dir "$RUNNER_TEMP/capability-receipts" \
             --capability-id detection-correctness-scenarios-castxml \
-            --capability-id detection-correctness-scenarios-clang
+            --capability-id detection-correctness-scenarios-clang \
+            --expect-run-id "${{ github.run_id }}" \
+            --expect-sha "${{ github.sha }}"
           test "${{ steps.run_scenarios.outcome }}" == "success"

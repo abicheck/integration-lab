@@ -37,6 +37,24 @@ modes, all reported by id rather than collapsed into one generic message:
      the schema (capability_receipts.read_receipt already raises for
      this; surfaced here rather than silently ignored, since a corrupted
      "passed" receipt is exactly as untrustworthy as a missing one).
+  5. WRONG_JOB_PROVENANCE -- a receipt's own `workflow`/`job` fields don't
+     match what capabilities.yaml itself declares for that capability id.
+     A schema-valid, `status: passed` receipt with a mismatched job is
+     exactly as untrustworthy as a missing one -- e.g. a receipt for
+     `math-source-gate` claiming it came from some other job, or from a
+     workflow other than `abi-scan.yml`.
+  6. MISSING_PROVENANCE -- a receipt's `run_id` or `sha` is empty (Codex
+     review, fresh evidence: those fields are optional on
+     capability_receipts.build_receipt, so nothing before this required a
+     caller to actually populate them -- a receipt naming no run at all
+     proved nothing about which run produced it).
+  7. STALE_PROVENANCE -- only checked when `--expect-run-id`/`--expect-sha`
+     are given: the receipt's own `run_id`/`sha` don't match the run this
+     validation is running under. Opt-in (not required) because a local,
+     out-of-CI invocation of this script has no real run id/sha to pin
+     against; both `abi-scan.yml`'s and `scenarios.yml`'s own validation
+     steps pass `${{ github.run_id }}`/`${{ github.sha }}` explicitly, so
+     neither production call site skips this check.
 
 Scope is capabilities.yaml's own `gating: true` entries, optionally
 narrowed further with `--capability-id` (repeatable) -- scenarios.yml
@@ -83,21 +101,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MATRIX_PATH = REPO_ROOT / "capabilities.yaml"
 
 
-def _required_capability_ids(matrix: dict[str, Any], only: set[str] | None) -> list[str]:
-    ids = [
-        entry["id"]
+def _required_capabilities(matrix: dict[str, Any], only: set[str] | None) -> list[dict[str, Any]]:
+    """The full capabilities.yaml entries (not just ids) for every
+    `gating: true` capability in scope -- callers need the entry's own
+    `workflow`/`job` to cross-check a receipt's provenance against it."""
+    entries = [
+        entry
         for entry in matrix.get("capabilities", [])
         if entry.get("gating") is True and isinstance(entry.get("id"), str)
     ]
     if only is not None:
-        unknown = only - set(ids)
+        ids = {e["id"] for e in entries}
+        unknown = only - ids
         if unknown:
             raise SystemExit(
                 f"validate_capability_receipts: --capability-id {sorted(unknown)} "
                 "is not a gating: true entry in capabilities.yaml"
             )
-        ids = [i for i in ids if i in only]
-    return ids
+        entries = [e for e in entries if e["id"] in only]
+    return entries
+
+
+def _required_capability_ids(matrix: dict[str, Any], only: set[str] | None) -> list[str]:
+    return [e["id"] for e in _required_capabilities(matrix, only)]
 
 
 def validate(
@@ -105,10 +131,12 @@ def validate(
     receipts_dir: Path,
     only: set[str] | None,
     allow_skip: set[str] | None = None,
+    expect_run_id: str | None = None,
+    expect_sha: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    required_ids = _required_capability_ids(matrix, only)
-    if not required_ids:
+    required = _required_capabilities(matrix, only)
+    if not required:
         errors.append(
             "NO_REQUIRED_CAPABILITIES: nothing to validate -- either "
             "capabilities.yaml has no gating: true entries, or --capability-id "
@@ -116,8 +144,9 @@ def validate(
         )
         return errors
 
+    required_ids = {e["id"] for e in required}
     allow_skip = allow_skip or set()
-    unknown_allow_skip = allow_skip - set(required_ids)
+    unknown_allow_skip = allow_skip - required_ids
     if unknown_allow_skip:
         errors.append(
             f"BAD_ALLOW_SKIP: --allow-skip {sorted(unknown_allow_skip)} "
@@ -130,7 +159,8 @@ def validate(
         errors.append(f"MALFORMED_RECEIPT: {exc}")
         return errors
 
-    for capability_id in required_ids:
+    for entry in required:
+        capability_id = entry["id"]
         receipt = receipts.get(capability_id)
         if receipt is None:
             errors.append(
@@ -138,6 +168,46 @@ def validate(
                 f"receipt was found under {receipts_dir}"
             )
             continue
+
+        # Provenance: a schema-valid, status: passed receipt still proves
+        # nothing if it wasn't actually produced by the job capabilities.yaml
+        # itself says answers this capability, for the run being judged
+        # (Codex review, fresh evidence). Checked before the status itself,
+        # since an untrustworthy receipt's status isn't worth reading.
+        entry_workflow, entry_job = entry.get("workflow"), entry.get("job")
+        if entry_workflow and receipt["workflow"] != entry_workflow:
+            errors.append(
+                f"WRONG_JOB_PROVENANCE: '{capability_id}' receipt claims "
+                f"workflow={receipt['workflow']!r}, but capabilities.yaml "
+                f"declares workflow={entry_workflow!r} for it"
+            )
+            continue
+        if entry_job and receipt["job"] != entry_job:
+            errors.append(
+                f"WRONG_JOB_PROVENANCE: '{capability_id}' receipt claims "
+                f"job={receipt['job']!r}, but capabilities.yaml declares "
+                f"job={entry_job!r} for it"
+            )
+            continue
+        if not receipt.get("run_id") or not receipt.get("sha"):
+            errors.append(
+                f"MISSING_PROVENANCE: '{capability_id}' receipt has no "
+                "run_id/sha -- cannot confirm which run produced it"
+            )
+            continue
+        if expect_run_id is not None and receipt["run_id"] != expect_run_id:
+            errors.append(
+                f"STALE_PROVENANCE: '{capability_id}' receipt has "
+                f"run_id={receipt['run_id']!r}, expected {expect_run_id!r}"
+            )
+            continue
+        if expect_sha is not None and receipt["sha"] != expect_sha:
+            errors.append(
+                f"STALE_PROVENANCE: '{capability_id}' receipt has "
+                f"sha={receipt['sha']!r}, expected {expect_sha!r}"
+            )
+            continue
+
         status = receipt["status"]
         detail = f" ({receipt['detail']})" if receipt.get("detail") else ""
         if status == "failed":
@@ -188,6 +258,16 @@ def main() -> int:
             "script's own module docstring for why skip-tolerance is opt-in per id"
         ),
     )
+    parser.add_argument(
+        "--expect-run-id",
+        default=None,
+        help="reject a receipt whose own run_id doesn't match this (e.g. ${{ github.run_id }})",
+    )
+    parser.add_argument(
+        "--expect-sha",
+        default=None,
+        help="reject a receipt whose own sha doesn't match this (e.g. ${{ github.sha }})",
+    )
     args = parser.parse_args()
 
     with args.matrix.open(encoding="utf-8") as fh:
@@ -198,7 +278,14 @@ def main() -> int:
 
     only = set(args.capability_ids) if args.capability_ids else None
     allow_skip = set(args.allow_skip) if args.allow_skip else None
-    errors = validate(matrix, args.receipts_dir, only, allow_skip)
+    errors = validate(
+        matrix,
+        args.receipts_dir,
+        only,
+        allow_skip,
+        expect_run_id=args.expect_run_id,
+        expect_sha=args.expect_sha,
+    )
 
     if errors:
         print(f"validate_capability_receipts: {len(errors)} problem(s) found:\n", file=sys.stderr)
