@@ -109,6 +109,13 @@ PATTERNS = (
     "*.c++",
     ".github/workflows/abi-scan.yml",
     ".github/workflows/baseline.yml",
+    # Phase 3: the "Skip if..."/"Resolve trusted baseline" steps this very
+    # script's own decision feeds into now live here (extracted from
+    # abi-scan.yml itself into two composite actions) -- a PR touching
+    # only one of these, on its own, must still be judged relevant so the
+    # gate actually exercises the changed code, matching the CODEOWNERS
+    # protection just added for the same paths (Codex review, PR #16).
+    ".github/actions/*",
     ".github/CODEOWNERS",
     "scripts/normalize_baseline.py",
     "scripts/render_scan_comment.py",
