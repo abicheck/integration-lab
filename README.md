@@ -712,11 +712,30 @@ entry describes and validated before anything downstream trusts it:
   "Enforce gate" step that already gates on `run_scenario.py`'s own exit
   code.
 
-`status: skipped` (e.g. `math-source-gate` on a PR `skip-check` judges not
-ABI-relevant) is deliberately accepted, not rejected, by the validator —
-this repo's existing gates already treat a legitimate skip as clean, and
-the receipt validator must not be stricter than the gate it's validating;
-only `status: failed` (or a missing/malformed receipt) fails validation.
+`status: skipped` is accepted only for a capability id explicitly passed
+via `--allow-skip` — never by default. `abi-scan.yml`'s own validation
+step passes `--allow-skip math-source-gate --allow-skip
+aggregate-multi-library`: `math-source-gate` skips (with a stated reason)
+when `skip-check` judges the PR not ABI-relevant, and
+`aggregate-multi-library` skips only in the identical tolerated case its
+own job already accepts (nothing declared, and the best-effort
+`--discovered-only` fallback didn't succeed) — mirroring, not
+loosening, what `abi-scan.yml`'s existing gates already treat as clean.
+`scenarios.yml`'s own validation step passes no `--allow-skip` at all:
+`detection-correctness-scenarios-{castxml,clang}` have no legitimate
+"not applicable this run" condition (the `scenarios` job always runs
+every declared scenario), so a `skipped` receipt there — every scenario
+for that profile silently removed from `scenarios/manifest.yaml` — fails
+loudly instead of passing vacuously. `status: failed` always fails
+validation regardless of `--allow-skip`.
+
+One residual gap `--allow-skip` doesn't close: `verify_capability_receipts`
+(and `scenarios.yml`'s own "Enforce gate" step, already required via its
+own job) is a *separate* job/step from `scan`/`aggregate`, so its own
+failure only blocks a merge once it's added to this repository's required
+status checks in branch protection — the same "only has teeth once branch
+protection requires it" caveat `.github/CODEOWNERS` already states for
+what it protects.
 
 Deliberately scoped to today's 4 `gating: true` entries only, and
 deliberately minimal (status + provenance, no scanner ref, no
@@ -725,9 +744,10 @@ report's own findings) — a natural next phase for a fuller downstream
 conformance platform, not attempted here. `tests/` (run by
 `capability-matrix.yml`'s own `pytest tests/` step) covers the schema,
 both emitters' status derivation, and the validator's failure modes
-(`MISSING_RECEIPT`, `FAILED`, `MALFORMED_RECEIPT`, an id filtered out of
-scope, and that `skipped` is accepted) directly, without needing
-Bazel/castxml to exercise them.
+(`MISSING_RECEIPT`, `FAILED`, `UNEXPECTED_SKIP`, `MALFORMED_RECEIPT`, an
+id filtered out of scope, an `--allow-skip` id outside that scope, and
+that an allowed skip is accepted) directly, without needing Bazel/castxml
+to exercise them.
 
 ## Scenario validation (`scenarios.yml`)
 

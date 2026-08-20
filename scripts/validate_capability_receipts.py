@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Fail-closed check: every `gating: true` capabilities.yaml entry (in the
 selected scope) must have a receipt (scripts/capability_receipts.py) in
-the given receipts directory, and that receipt must not say
-`status: failed`.
+the given receipts directory, and that receipt must say `status: passed`
+-- or `status: skipped`, but ONLY for a capability id explicitly named via
+`--allow-skip`.
 
 This is the read half of the phase-5 receipt mechanism -- see
 capability_receipts.py's module docstring for why a receipt exists at all
-and exactly what capabilities.yaml claims it proves. Three distinct
-failure modes, all reported by id rather than collapsed into one generic
-message:
+and exactly what capabilities.yaml claims it proves. Four distinct failure
+modes, all reported by id rather than collapsed into one generic message:
 
   1. MISSING_RECEIPT -- no receipt file at all for a required capability.
      Indistinguishable, without this check, from "the job that was
@@ -16,14 +16,24 @@ message:
      exactly the gap phase 1-4's job/workflow-existence check cannot
      close (see capability_receipts.py's docstring).
   2. FAILED -- a receipt exists and says `status: failed`. Reported with
-     the receipt's own `detail` when present. `status: skipped` is
-     deliberately NOT an error here (Codex review, fresh evidence) -- see
-     the inline comment on that check for why: this repo's existing
-     gates already treat a legitimate skip (e.g. a README-only PR that
-     `skip-check` judges not ABI-relevant) as a clean, non-failing
+     the receipt's own `detail` when present.
+  3. UNEXPECTED_SKIP -- a receipt exists and says `status: skipped`, but
+     this capability id was not named via `--allow-skip`. `status:
+     skipped` is legitimate for SOME capabilities (e.g. math-source-gate
+     on a PR skip-check judges not ABI-relevant -- abi-scan.yml's own
+     "Enforce gate" step already treats that as a clean, non-failing
      outcome, and this validator must not be stricter than the gate it
-     validates.
-  3. MALFORMED_RECEIPT -- a receipt file exists but doesn't parse against
+     validates) but not others: detection-correctness-scenarios-{castxml,
+     clang} have no analogous "not applicable this run" condition --
+     scenarios.yml's `scenarios` job always runs every declared scenario,
+     so a `skipped` receipt there means every scenario for that profile
+     was silently removed from scenarios/manifest.yaml, which must fail
+     loudly rather than pass vacuously (Codex review, fresh evidence: the
+     first cut of this script accepted `skipped` for every capability
+     unconditionally, which let exactly this go silently green). Callers
+     opt a capability id into skip-tolerance explicitly, per id, rather
+     than this script guessing from the id's name or its own defaults.
+  4. MALFORMED_RECEIPT -- a receipt file exists but doesn't parse against
      the schema (capability_receipts.read_receipt already raises for
      this; surfaced here rather than silently ignored, since a corrupted
      "passed" receipt is exactly as untrustworthy as a missing one).
@@ -33,9 +43,22 @@ narrowed further with `--capability-id` (repeatable) -- scenarios.yml
 only ever has its own two ids' receipts available (a receipt written in
 one workflow run isn't visible to a different workflow's run), so it
 passes `--capability-id detection-correctness-scenarios-castxml
---capability-id detection-correctness-scenarios-clang` rather than
-validating the full gating set abi-scan.yml's own receipts alone can
-never fully satisfy either (it never produces the scenarios.yml pair).
+--capability-id detection-correctness-scenarios-clang` (with no
+`--allow-skip` at all) rather than validating the full gating set
+abi-scan.yml's own receipts alone can never fully satisfy either (it
+never produces the scenarios.yml pair). abi-scan.yml's own call passes
+`--allow-skip math-source-gate --allow-skip aggregate-multi-library` --
+see emit_capability_receipt.py's call sites in that workflow for exactly
+which real (job-conclusion-affecting) conditions each one's `skipped`
+status corresponds to.
+
+NOTE on the residual gap this script cannot close on its own: this
+verifier is a separate job/step from the `scan`/`aggregate` jobs whose
+receipts it reads, so its own failure only blocks a merge if it is itself
+added to the repository's required status checks in branch protection --
+the same "only has teeth once branch protection requires it" caveat
+`.github/CODEOWNERS` already states for the checks it protects. See
+README.md's "Capability receipts" section.
 """
 
 from __future__ import annotations
@@ -77,7 +100,12 @@ def _required_capability_ids(matrix: dict[str, Any], only: set[str] | None) -> l
     return ids
 
 
-def validate(matrix: dict[str, Any], receipts_dir: Path, only: set[str] | None) -> list[str]:
+def validate(
+    matrix: dict[str, Any],
+    receipts_dir: Path,
+    only: set[str] | None,
+    allow_skip: set[str] | None = None,
+) -> list[str]:
     errors: list[str] = []
     required_ids = _required_capability_ids(matrix, only)
     if not required_ids:
@@ -87,6 +115,14 @@ def validate(matrix: dict[str, Any], receipts_dir: Path, only: set[str] | None) 
             "filtered everything out"
         )
         return errors
+
+    allow_skip = allow_skip or set()
+    unknown_allow_skip = allow_skip - set(required_ids)
+    if unknown_allow_skip:
+        errors.append(
+            f"BAD_ALLOW_SKIP: --allow-skip {sorted(unknown_allow_skip)} "
+            "is not among the capability ids being validated"
+        )
 
     try:
         receipts = load_all_receipts(receipts_dir)
@@ -102,24 +138,18 @@ def validate(matrix: dict[str, Any], receipts_dir: Path, only: set[str] | None) 
                 f"receipt was found under {receipts_dir}"
             )
             continue
-        if receipt["status"] == "failed":
-            detail = f" ({receipt['detail']})" if receipt.get("detail") else ""
+        status = receipt["status"]
+        detail = f" ({receipt['detail']})" if receipt.get("detail") else ""
+        if status == "failed":
+            errors.append(f"FAILED: '{capability_id}' receipt says status='failed'{detail}")
+        elif status == "skipped" and capability_id not in allow_skip:
             errors.append(
-                f"FAILED: '{capability_id}' receipt says status='failed'{detail}"
+                f"UNEXPECTED_SKIP: '{capability_id}' receipt says "
+                f"status='skipped'{detail}, but this id was not passed via "
+                "--allow-skip -- a skip is not an accepted outcome for it"
             )
-        # status: skipped is deliberately NOT an error here (Codex review,
-        # fresh evidence): this repo's existing gates already treat a
-        # legitimate skip as a clean, non-failing outcome -- abi-scan.yml's
-        # own "Enforce gate" step only fails on steps.scan.outcome ==
-        # 'failure', never on skip-check judging a PR not ABI-relevant,
-        # and a README-only PR is SUPPOSED to sail through math-source-gate
-        # with nothing to prove. Rejecting `skipped` here would make this
-        # validator strictly stricter than the gate it's validating,
-        # failing every ABI-irrelevant PR that abi-scan.yml itself passes
-        # cleanly. A receipt still has to exist (MISSING_RECEIPT above
-        # still fires) and still has to say *why* it skipped (`detail`),
-        # so this stays meaningfully different from having no receipt at
-        # all -- it just isn't graded as a failure.
+        # status == "passed", or status == "skipped" for an
+        # explicitly-allowed id: satisfied.
     return errors
 
 
@@ -147,6 +177,17 @@ def main() -> int:
             "validates every gating: true entry in --matrix"
         ),
     )
+    parser.add_argument(
+        "--allow-skip",
+        action="append",
+        dest="allow_skip",
+        default=None,
+        help=(
+            "accept a status: skipped receipt for this capability id (repeatable); "
+            "any other gating id with status: skipped fails validation -- see this "
+            "script's own module docstring for why skip-tolerance is opt-in per id"
+        ),
+    )
     args = parser.parse_args()
 
     with args.matrix.open(encoding="utf-8") as fh:
@@ -156,7 +197,8 @@ def main() -> int:
         return 1
 
     only = set(args.capability_ids) if args.capability_ids else None
-    errors = validate(matrix, args.receipts_dir, only)
+    allow_skip = set(args.allow_skip) if args.allow_skip else None
+    errors = validate(matrix, args.receipts_dir, only, allow_skip)
 
     if errors:
         print(f"validate_capability_receipts: {len(errors)} problem(s) found:\n", file=sys.stderr)
@@ -167,7 +209,7 @@ def main() -> int:
     required_ids = _required_capability_ids(matrix, only)
     print(
         f"validate_capability_receipts: OK -- {len(required_ids)} gating "
-        f"capability receipt(s) all passed"
+        f"capability receipt(s) satisfied"
     )
     return 0
 

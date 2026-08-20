@@ -868,6 +868,22 @@ jobs:
       # either passed or found a real coverage gap) or fell back to
       # --discovered-only on a PR with nothing declared -- both are a real
       # `steps.aggregate_run.outcome` this receipt reports directly.
+      # Codex review, fresh evidence: `aggregate_run`'s own
+      # `continue-on-error: ${{ steps.manifest.outputs.count == '0' }}`
+      # means a failed step is deliberately TOLERATED (the job itself
+      # stays green) whenever nothing was declared -- an ABI-irrelevant
+      # PR's --discovered-only fallback failing (e.g. a transient
+      # `abicheck` install hiccup) is an accepted, optional-path outcome,
+      # not a real gate failure. The first cut of this step read that
+      # exact tolerated case as `status: failed`, which would have made
+      # `verify_capability_receipts` fail even though the `aggregate` job
+      # itself passed cleanly by design. Mirrors that same tolerance:
+      # `status: skipped` (not `failed`) when nothing was declared and the
+      # step didn't succeed -- `verify_capability_receipts` is passed
+      # `--allow-skip aggregate-multi-library` specifically to accept
+      # this. A declared-but-failed run (manifest count > 0) is always a
+      # real `status: failed` -- there is no tolerance for that case, in
+      # this step or in `aggregate_run`'s own continue-on-error.
       - name: Emit aggregate-multi-library capability receipt
         if: always()
         shell: bash
@@ -876,6 +892,9 @@ jobs:
           if [ "${{ steps.aggregate_run.outcome }}" == "success" ]; then
             status=passed
             detail=''
+          elif [ "${{ steps.manifest.outputs.count }}" == "0" ]; then
+            status=skipped
+            detail="nothing declared this run (manifest count=0) and the --discovered-only fallback did not succeed; aggregate_run.outcome=${{ steps.aggregate_run.outcome }}"
           else
             status=failed
             detail="aggregate_run.outcome=${{ steps.aggregate_run.outcome }}"
@@ -943,12 +962,23 @@ jobs:
       # separately-triggered workflow run; this job has no access to that
       # run's artifacts and must not fail claiming a receipt that could
       # never have been written here.
+      # --allow-skip on both ids: math-source-gate's own emit step (in
+      # `scan`) reports `status: skipped` when skip-check judged the PR
+      # not ABI-relevant, and aggregate-multi-library's own emit step (in
+      # `aggregate`, above) reports it for the identical tolerated
+      # "nothing declared, best-effort fallback didn't succeed" case --
+      # both are accepted, non-failing outcomes on this workflow's own
+      # jobs, so the validator must accept them too (Codex review, fresh
+      # evidence). Neither is blanket-tolerant: a `status: failed` receipt
+      # on either id still fails this step regardless of --allow-skip.
       - name: Validate math-source-gate / aggregate-multi-library receipts
         run: |
           python3 scripts/validate_capability_receipts.py \
             --receipts-dir "${{ runner.temp }}/capability-receipts" \
             --capability-id math-source-gate \
-            --capability-id aggregate-multi-library
+            --capability-id aggregate-multi-library \
+            --allow-skip math-source-gate \
+            --allow-skip aggregate-multi-library
 
   # Architecture review P1-6 (consumer/app-scoped validation): //consumer's
   # `consumer_app` is a real, separately-built application binary that
