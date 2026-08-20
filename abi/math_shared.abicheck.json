@@ -589,13 +589,13 @@
       "frontend_context_kind": "",
       "header_sequence": "[\"<single-header>\"]",
       "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\", \"1:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\"]",
-      "language_standard": "",
+      "language_standard": "c++",
       "macro_ops": "[]",
       "pass_through_flags": "[]",
       "pointer_width": "",
       "target_triple": ""
     },
-    "profile_fingerprint": "sha256:124eda06f483bc64b425119093923eead9be2bef59fd3134689b713109d5187a",
+    "profile_fingerprint": "sha256:4ea5e299e9b39be50b34e5dd0b30b388011ad91b5879a59aba3a3a1255f34db1",
     "scope_fields": {
       "headers": "[\"<single-header>\"]",
       "public_header_dirs": "[]",
@@ -703,18 +703,18 @@
       {
         "binding": "weak",
         "is_default": true,
-        "name": "_ITM_registerTMCloneTable",
-        "sym_type": "notype",
-        "version": "",
-        "version_soname": ""
-      },
-      {
-        "binding": "weak",
-        "is_default": true,
         "name": "__cxa_finalize",
         "sym_type": "func",
         "version": "GLIBC_2.2.5",
         "version_soname": "libc.so.6"
+      },
+      {
+        "binding": "weak",
+        "is_default": true,
+        "name": "_ITM_registerTMCloneTable",
+        "sym_type": "notype",
+        "version": "",
+        "version_soname": ""
       }
     ],
     "interpreter": "",
@@ -732,6 +732,39 @@
     "runpath": "",
     "soname": "",
     "symbols": [
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "_end",
+        "origin_lib": null,
+        "size": 0,
+        "sym_type": "notype",
+        "value_alignment": 1,
+        "version": "",
+        "visibility": "default"
+      },
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "_edata",
+        "origin_lib": null,
+        "size": 0,
+        "sym_type": "notype",
+        "value_alignment": 8,
+        "version": "",
+        "visibility": "default"
+      },
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "__bss_start",
+        "origin_lib": null,
+        "size": 0,
+        "sym_type": "notype",
+        "value_alignment": 8,
+        "version": "",
+        "visibility": "default"
+      },
       {
         "binding": "global",
         "is_default": true,
@@ -957,7 +990,7 @@
   "git_tag": null,
   "header_cv_facts_reliable": true,
   "kabi": null,
-  "language_profile": null,
+  "language_profile": "cpp",
   "library": "libmath_shared.so",
   "macho": null,
   "numpy_capi": {
