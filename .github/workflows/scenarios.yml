@@ -13,6 +13,25 @@ on:
       - 'scenarios/**'
       - 'suppressions/**'
       - 'scripts/run_scenario.py'
+      # Phase 5 (capability receipts): this job's own "Emit
+      # detection-correctness-scenarios capability receipts" and "Enforce
+      # gate" steps directly execute/import these three -- a PR touching
+      # only one of them (a broken emitter or validator) must still run
+      # this workflow to actually exercise it, not merge unexercised
+      # (Codex review, fresh evidence).
+      - 'scripts/emit_scenario_receipts.py'
+      - 'scripts/validate_capability_receipts.py'
+      - 'scripts/capability_receipts.py'
+      # This job's "Enforce gate" step passes the two scenario capability
+      # ids to validate_capability_receipts.py as a hardcoded
+      # --capability-id argument (emit_scenario_receipts.py's own
+      # PROFILE_TO_CAPABILITY_ID mapping is hardcoded the same way) -- a
+      # capabilities.yaml rename or removal of either id would then make
+      # every subsequent scenarios.yml run raise "not a gating: true
+      # entry" until some unrelated PR happens to touch a path already in
+      # this filter, at which point it fails for a change this workflow
+      # never actually validated (Codex review, fresh evidence).
+      - 'capabilities.yaml'
       - '.github/workflows/scenarios.yml'
       # Shared Bazel configuration that every fixture's build actually
       # goes through -- a rules_cc bump, a changed -std/link flag, or a
@@ -86,6 +105,8 @@ jobs:
           pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       - name: Run scenarios against the manifest oracle
+        id: run_scenarios
+        continue-on-error: true
         run: python3 scripts/run_scenario.py
 
       - name: Upload scenario results
@@ -96,3 +117,70 @@ jobs:
           path: scenario-results/
           if-no-files-found: warn
           retention-days: 30
+
+      # Phase 5 (capability receipts, scripts/capability_receipts.py): this
+      # workflow's own `scenarios` job is what capabilities.yaml's
+      # detection-correctness-scenarios-{castxml,clang} entries name as
+      # `gating: true` -- run_scenario.py's own exit code already fails
+      # this job on any mismatch (unchanged, still the real oracle), but
+      # nothing before this recorded a machine-readable receipt proving
+      # each profile actually ran and passed *this run*, the same gap the
+      # identical mechanism closes for abi-scan.yml's math-source-gate/
+      # aggregate-multi-library. `always()`: a receipt is written whether
+      # run_scenario.py passed, failed, or (very unlikely, given the step
+      # above already writes it) never produced summary.json at all --
+      # scripts/emit_scenario_receipts.py degrades to status: failed for
+      # every profile in that last case rather than emitting nothing.
+      - name: Emit detection-correctness-scenarios capability receipts
+        id: emit_receipts
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/emit_scenario_receipts.py \
+            --summary scenario-results/summary.json \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --workflow scenarios.yml \
+            --job scenarios \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}"
+
+      # -${{ github.run_attempt }} suffix (CodeRabbit review, fresh
+      # evidence): same reasoning as abi-scan.yml's identical upload
+      # steps -- `github.run_id` is unchanged across a re-run's attempts,
+      # so an unsuffixed artifact name risks a collision/shadowing
+      # between attempts. This job downloads its own artifact within the
+      # same job (no separate download step), so nothing else needs to
+      # match this pattern.
+      - name: Upload detection-correctness-scenarios capability receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-scenarios-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Fail-closed on the receipts themselves, not just on
+      # run_scenario.py's own exit code (which "Run scenarios against the
+      # manifest oracle" above already surfaces via continue-on-error +
+      # this step) -- scoped to exactly the two ids this workflow can ever
+      # produce a receipt for, mirroring abi-scan.yml's own
+      # "verify_capability_receipts" job. This is the job's real gate:
+      # both steps above run with continue-on-error so evidence still
+      # publishes on a red result, and this step decides the job's actual
+      # outcome.
+      - name: Enforce gate (scenario oracle + capability receipts)
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.run_scenarios.outcome }}" != "success" ]; then
+            echo 'One or more scenarios did not match their expected outcome -- see the step log and scenario-results artifact above.' >&2
+          fi
+          python3 scripts/validate_capability_receipts.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id detection-correctness-scenarios-castxml \
+            --capability-id detection-correctness-scenarios-clang \
+            --expect-run-id "${{ github.run_id }}" \
+            --expect-run-attempt "${{ github.run_attempt }}" \
+            --expect-sha "${{ github.sha }}"
+          test "${{ steps.run_scenarios.outcome }}" == "success"

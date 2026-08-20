@@ -1,10 +1,20 @@
 # Pin the environment this lab builds under, so a Bazel build here means
 # the same thing on every runner and every local checkout.
 #
-# Not yet added: a MODULE.bazel.lock (would need a real `bazel` invocation
-# to generate correctly, which isn't available while authoring this file --
-# see README's "Known limitations"). Generate one locally with
-# `bazel mod deps --lockfile_mode=update` and commit it as a follow-up.
+# MODULE.bazel.lock (committed, generated with `bazel mod deps
+# --lockfile_mode=update`) pins every Bazel Central Registry module this
+# workspace transitively resolves to an exact version + hash, closing the
+# gap where a BCR module release between two CI runs could silently change
+# what //:math actually links against. `error` (rather than the `update`
+# default) makes drift a hard failure instead of a silent re-resolution:
+# any MODULE.bazel change that isn't already reflected in the committed
+# lock file fails the build with an explicit diff, rather than resolving
+# whatever the registry currently serves and updating the lock file
+# in-place unnoticed. To intentionally update the lock file (e.g. after
+# bumping a bazel_dep version in MODULE.bazel), regenerate it explicitly:
+# `bazel mod deps --lockfile_mode=update` (a later `--lockfile_mode` flag
+# on the command line overrides this default) and commit the result.
+common --lockfile_mode=error
 
 # Explicit, fixed C++ standard rather than whatever the default toolchain
 # happens to pick — a silent standard bump can change name mangling/ABI

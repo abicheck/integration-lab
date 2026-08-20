@@ -1,5 +1,6 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 
 cc_library(
     name = "math_api",
@@ -8,10 +9,44 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# Legacy/demo target shape (capabilities.yaml: target_shape = cc_binary_linkshared)
+# -- this is what every existing scan/scenario/toolchain-matrix job in this
+# repo still builds and scans. Kept unchanged and still the ONE target the
+# required PR gate (abi-scan.yml's `scan` job) exercises: a target-shape
+# migration is out of scope for a capability-matrix PR on its own, and every
+# existing job's cache key, evidence pack, and committed baseline
+# (abi/math.abicheck.json) are keyed to `//:math` specifically.
 cc_binary(
     name = "math",
     srcs = ["src/math.cc"],
     deps = [":math_api"],
     linkshared = True,
+    visibility = ["//visibility:public"],
+)
+
+# Realistic target shape (capabilities.yaml: target_shape = cc_shared_library)
+# -- the shape a real Bazel C++ project actually uses for a shared library
+# with library-vs-library dependencies, as opposed to `math`'s
+# cc_binary(linkshared=True) demo shape above. `math_impl` is a private,
+# ordinary cc_library (never linked on its own); `cc_shared_library` is what
+# actually produces the .so, giving this lab a second, independently-scanned
+# target whose Bazel action graph (link action, exports, output naming, root
+# target identity) genuinely differs from `math`'s -- see capabilities.yaml's
+# cc-shared-library-target-shape entry (README's own review: "no true
+# cc_shared_library, no MODULE.bazel.lock" was the reason this axis was a
+# gap). Deliberately non-gating everywhere it's wired into CI so far (no
+# existing job's cache key, evidence pack, or committed baseline is keyed to
+# it) -- see abi-scan.yml's `scan_math_shared` job.
+cc_library(
+    name = "math_impl",
+    srcs = ["src/math.cc"],
+    deps = [":math_api"],
+    visibility = ["//visibility:private"],
+)
+
+cc_shared_library(
+    name = "math_shared",
+    shared_lib_name = "libmath_shared.so",
+    deps = [":math_impl"],
     visibility = ["//visibility:public"],
 )

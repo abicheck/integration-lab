@@ -71,9 +71,31 @@
 #
 # This only has teeth once branch protection on `main` requires review
 # from code owners for matching paths.
+
+# Phase 5 (capability receipts, scripts/capability_receipts.py): the
+# `verify_capability_receipts` job in abi-scan.yml and the "Enforce gate"
+# step in scenarios.yml both now fail closed on
+# scripts/validate_capability_receipts.py's own verdict -- a PR that
+# quietly weakened it (e.g. to treat a missing or `skipped` receipt as
+# satisfied) could make either gate report success without the underlying
+# capability (math-source-gate/aggregate-multi-library/
+# detection-correctness-scenarios-*) having actually run to a passing
+# result this run, the exact same "the checker itself is part of the
+# trust boundary" reasoning as scripts/check_coverage_contract.py above.
+# scripts/emit_capability_receipt.py/emit_scenario_receipts.py are the
+# same boundary from the writing side: a weakened emitter could write a
+# `status: passed` receipt regardless of the real outcome it's supposed to
+# report, and capability_receipts.py is the schema/I/O both directions
+# share, so a change there can silently affect what either side accepts.
+# scenarios.yml itself was already an unprotected gate (run_scenario.py's
+# own exit code, unreviewed) before this phase added the receipt
+# mechanism to it -- protected here alongside the new receipt files
+# rather than left as the one gating workflow in this repo with no
+# CODEOWNERS entry at all.
 abi/** @napetrov
 .github/workflows/baseline.yml @napetrov
 .github/workflows/abi-scan.yml @napetrov
+.github/workflows/scenarios.yml @napetrov
 .github/actions/skip-check/** @napetrov
 .github/actions/resolve-baseline/** @napetrov
 scripts/normalize_baseline.py @napetrov
@@ -81,4 +103,8 @@ scripts/check_coverage_contract.py @napetrov
 scripts/render_scan_comment.py @napetrov
 scripts/paths_changed.py @napetrov
 scripts/build_bazel_evidence_pack.py @napetrov
+scripts/capability_receipts.py @napetrov
+scripts/emit_capability_receipt.py @napetrov
+scripts/emit_scenario_receipts.py @napetrov
+scripts/validate_capability_receipts.py @napetrov
 .github/CODEOWNERS @napetrov

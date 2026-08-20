@@ -275,10 +275,22 @@ Both `abi-scan.yml` and `baseline.yml` cache Bazel's disk cache
 (`~/.cache/bazel-disk`) via `actions/cache`, keyed on
 `MODULE.bazel`/`.bazelversion`/`.bazelrc`/`BUILD.bazel`.
 
-**Not yet added:** a `MODULE.bazel.lock`. Generating one correctly needs a
-real `bazel mod deps --lockfile_mode=update` run, which isn't available
-while authoring these files outside CI — tracked as a follow-up rather than
-hand-authored here.
+`MODULE.bazel.lock` (committed, `module-bazel-lock-pinning` in
+`capabilities.yaml`) pins every Bazel Central Registry module this
+workspace transitively resolves — regenerated with a real
+`bazel mod deps --lockfile_mode=update` run, not hand-authored. `.bazelrc`'s
+`common --lockfile_mode=error` enforces it against every Bazel invocation
+in every job (build, query, cquery, aquery, mod), not just one — a
+`MODULE.bazel` change left unreflected in the committed lock fails
+closed with an explicit "run `bazel mod deps --lockfile_mode=update`"
+message rather than silently re-resolving whatever the registry
+currently serves. Verified directly: a deliberately mismatched
+`MODULE.bazel` (a downgraded `rules_cc` version not in the committed
+lock) fails `bazel build //:math` with exactly that message; reverting
+it builds cleanly again. To intentionally update the lock (e.g. after
+bumping a `bazel_dep` version), regenerate it explicitly and commit the
+result — a later `--lockfile_mode` flag on the command line overrides
+`.bazelrc`'s default.
 
 ## Producer conformance reports
 
@@ -456,6 +468,51 @@ own required gate (the `scan` job's "Enforce gate" step) is unaffected
 either way; this job additionally validates that the aggregate CLI's own
 plumbing produced the report `scan` was actually supposed to produce.
 
+## `cc_shared_library` target shape (`capabilities.yaml`: `cc-shared-library-target-shape`)
+
+Every other target in this repo — `//:math`, `//strings_lib:strings`,
+every `fixtures/*` scenario pair — is built as `cc_binary(linkshared =
+True)`: a `cc_binary` whose `linkshared` attribute makes Bazel emit a
+`.so` instead of an executable. That's a real, common way to produce a
+shared library with Bazel, but it isn't the *only* one, and a review of
+this lab's own coverage flagged it as a gap: nothing exercised a genuine
+`cc_shared_library` target — the rule Bazel actually documents for a
+shared library assembled from one or more `cc_library` dependencies, with
+its own distinct action graph (a real link action producing the shared
+object, not `cc_binary`'s implicit one) and its own export-surface
+semantics.
+
+`//:math_shared` (root `BUILD.bazel`) closes that gap, deliberately by
+addition rather than by migration: `math_impl` is an ordinary, private
+`cc_library` (the same `src/math.cc` `//:math` already builds, just never
+linked into a binary on its own), and `math_shared` is a `cc_shared_library`
+wrapping it. `//:math` itself is untouched — every existing job's cache
+key, evidence pack, and committed baseline (`abi/math.abicheck.json`)
+stay keyed to `//:math` exactly as before; migrating the required gate's
+own target shape is a separate, much larger decision this PR doesn't
+make. Verified directly (not assumed) that the two shapes currently
+produce an identical export surface for the same source:
+`nm -D bazel-bin/libmath.so` and `nm -D bazel-bin/libmath_shared.so` list
+the same three defined symbols (`Calculator::add`, `Calculator::multiply`,
+`api_version`) for unchanged `src/math.cc`.
+
+`abi-scan.yml`'s `scan_math_shared` job builds `//:math_shared` and
+`compare`s it (headers-depth, `ast-frontend: clang`) against its own
+committed baseline, `abi/math_shared.abicheck.json` — collected by
+`baseline.yml` the identical, lightweight way `abi/strings.abicheck.json`
+is (no Bazel evidence pack, no `depth: source` replay; this target
+exists to validate the target-shape mechanism, not to duplicate `:math`'s
+own full source-evidence pipeline). Deliberately non-gating, same posture
+as `scan_strings`: continue-on-error throughout, no "Enforce gate" step,
+never able to block a PR that never touched `//:math_shared`.
+
+Still open, and deliberately not attempted here (see "Known limitations"
+below): `scenarios/manifest.yaml`'s own detection-correctness fixture
+pairs (`fixtures/*`) are still all `cc_binary(linkshared = True)`-shaped
+— proving abicheck's *detectors* behave identically against a
+`cc_shared_library`-shaped target, not just that one such target can be
+built and scanned, is a separate, still-open axis.
+
 ## Consumer/app-scoped validation (architecture review P1-6)
 
 `consumer/` (`consumer/BUILD.bazel`) is a real, separately-built
@@ -572,15 +629,21 @@ This lab currently validates one `cc_library` + `cc_binary(linkshared =
 True)` target (`//:math`) with the full `depth: source` gate pipeline,
 a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
-CLI at a deliberately scoped-down `depth: headers`, and a real consumer
+CLI at a deliberately scoped-down `depth: headers`, a real consumer
 application (`//consumer:consumer_app`, see "Consumer/app-scoped
-validation" above) exercising `compare --used-by`. The known axes it does
+validation" above) exercising `compare --used-by`, and — since the
+`cc-shared-library-target-shape` capability closed — a genuine `cc_shared_library`
+target (`//:math_shared`, root `BUILD.bazel`) wrapping a private
+`cc_library`, coexisting with `//:math`'s own `cc_binary(linkshared =
+True)` shape rather than replacing it, scanned (headers-depth,
+non-gating) by `abi-scan.yml`'s `scan_math_shared` job against its own
+committed baseline (`abi/math_shared.abicheck.json`, refreshed by
+`baseline.yml` the same way `abi/strings.abicheck.json` is). The known axes it does
 not yet cover are generated from `capabilities.yaml` below (see
 "Capability matrix"), not hand-typed here, so the two cannot disagree:
 
 <!-- capability-matrix:gaps:start -->
-- **cc-shared-library-target-shape** (`gap`): README's "Known limitations": every fixture and the real :math target use cc_binary(linkshared = True); nothing exercises a genuine Bazel cc_shared_library target yet.
-- **module-bazel-lock-pinning** (`gap`): README's "Known limitations": MODULE.bazel.lock (dependency pinning) is not part of any covered axis yet.
+_No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 <!-- capability-matrix:gaps:end -->
 
 This lab DOES
@@ -674,6 +737,90 @@ left completely untouched — the invoking step in each job keeps the same
 action's outputs (and `continue-on-error`) are exposed on the step that
 calls it, not on any step inside the action itself.
 
+### Capability receipts (phase 5)
+
+Phases 1–4 above prove `capabilities.yaml` stays honest about *what CI is
+wired to run* — every `covered`/`non_gating_watch` entry names a real
+`job` in a real workflow. They cannot prove the thing that actually
+matters for trusting a `gating: true` entry: that the job *ran this
+workflow run* and actually reached a passing result, rather than being
+silently skipped, degraded, or left dangling behind an unrelated failure
+earlier in the same job. A matrix entry pointing at a job that exists says
+nothing about whether that job's gating step executed to completion on
+the run a required check is being judged against.
+
+`scripts/capability_receipts.py` closes that gap with a small,
+machine-written JSON fact per `gating: true` capability id
+(`status: passed | failed | skipped`, plus which workflow/job/run/sha
+produced it), written immediately after the step(s) that capability's
+entry describes and validated before anything downstream trusts it:
+
+- `scan`/`aggregate` in `abi-scan.yml` each emit their own receipt
+  (`scripts/emit_capability_receipt.py`) for `math-source-gate`/
+  `aggregate-multi-library` right after their own gating logic runs, in
+  every case — `status: skipped` (not a missing receipt) when a PR was
+  judged not ABI-relevant, so a validator can tell "genuinely nothing to
+  prove this run" apart from "the job silently produced nothing".
+- A new `verify_capability_receipts` job (`needs: [scan, aggregate]`,
+  `if: always()`) downloads both receipts and fails closed via
+  `scripts/validate_capability_receipts.py` if either is missing or not
+  `status: passed`.
+- `scenarios.yml`'s own `scenarios` job derives
+  `detection-correctness-scenarios-{castxml,clang}`'s receipts from
+  `run_scenario.py`'s existing `summary.json`
+  (`scripts/emit_scenario_receipts.py` — one receipt per header-frontend
+  profile: `passed` only if every result for that profile passed, `failed`
+  on any mismatch, `skipped` if the manifest currently declares no
+  scenario for that profile at all) and validates them in the same
+  "Enforce gate" step that already gates on `run_scenario.py`'s own exit
+  code.
+
+`status: skipped` is accepted only for a capability id explicitly passed
+via `--allow-skip` — never by default. `abi-scan.yml`'s own validation
+step passes `--allow-skip math-source-gate --allow-skip
+aggregate-multi-library`: `math-source-gate` skips (with a stated reason)
+when `skip-check` judges the PR not ABI-relevant, and
+`aggregate-multi-library` skips only in the identical tolerated case its
+own job already accepts (nothing declared, and the best-effort
+`--discovered-only` fallback didn't succeed) — mirroring, not
+loosening, what `abi-scan.yml`'s existing gates already treat as clean.
+`scenarios.yml`'s own validation step passes no `--allow-skip` at all:
+`detection-correctness-scenarios-{castxml,clang}` have no legitimate
+"not applicable this run" condition (the `scenarios` job always runs
+every declared scenario), so a `skipped` receipt there — every scenario
+for that profile silently removed from `scenarios/manifest.yaml` — fails
+loudly instead of passing vacuously. `status: failed` always fails
+validation regardless of `--allow-skip`.
+
+A schema-valid, `status: passed` receipt still proves nothing on its own
+if it wasn't actually produced by the job capabilities.yaml itself
+declares for that capability id, on the run being judged — so the
+validator also cross-checks a receipt's own `workflow`/`job` against
+capabilities.yaml's own declaration for that id, requires `run_id`/`sha`
+to be populated at all, and (via `--expect-run-id`/`--expect-sha`, which
+both workflows' own validation steps pass as `${{ github.run_id }}`/
+`${{ github.sha }}`) rejects a receipt left over from a different run.
+
+One residual gap `--allow-skip` doesn't close: `verify_capability_receipts`
+(and `scenarios.yml`'s own "Enforce gate" step, already required via its
+own job) is a *separate* job/step from `scan`/`aggregate`, so its own
+failure only blocks a merge once it's added to this repository's required
+status checks in branch protection — the same "only has teeth once branch
+protection requires it" caveat `.github/CODEOWNERS` already states for
+what it protects.
+
+Deliberately scoped to today's 4 `gating: true` entries only, and
+deliberately minimal (status + provenance, no scanner ref, no
+effective-config digest, no semantic assertions on the underlying
+report's own findings) — a natural next phase for a fuller downstream
+conformance platform, not attempted here. `tests/` (run by
+`capability-matrix.yml`'s own `pytest tests/` step) covers the schema,
+both emitters' status derivation, and the validator's failure modes
+(`MISSING_RECEIPT`, `FAILED`, `UNEXPECTED_SKIP`, `MALFORMED_RECEIPT`, an
+id filtered out of scope, an `--allow-skip` id outside that scope, and
+that an allowed skip is accepted) directly, without needing Bazel/castxml
+to exercise them.
+
 ## Scenario validation (`scenarios.yml`)
 
 `abi-scan.yml`'s gate only ever exercises whatever a given PR's diff to
@@ -720,8 +867,11 @@ desired detector improvement, not necessarily a bug), not "this repo is
 broken."
 
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario and `MODULE.bazel.lock`
-pinning. `fixtures/`/`scenarios/` themselves are still single-library
+silently dropped): a `cc_shared_library` *detection-correctness scenario*
+(fixtures/`scenarios/manifest.yaml`'s own `v1`/`v2` compare pairs are
+still all `cc_binary(linkshared = True)`-shaped, unlike root
+`BUILD.bazel`'s standalone `//:math_shared` target above, which the
+capability matrix now covers). `fixtures/`/`scenarios/` themselves are still single-library
 `v1`/`v2` compare fixtures — the multi-library *aggregate-plumbing* gap
 is covered separately by `strings_lib/`'s own CI wiring (see
 "Multi-library aggregate gate" above) and the consumer/app-scoped gap by

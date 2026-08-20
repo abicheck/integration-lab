@@ -100,6 +100,23 @@ jobs:
             bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
             bazel-disk-${{ runner.os }}-
 
+      # module-bazel-lock-pinning (capabilities.yaml): a dedicated,
+      # independently-observable step for the MODULE.bazel.lock check
+      # `.bazelrc`'s `common --lockfile_mode=error` already enforces on
+      # every Bazel invocation -- not folded into "Build candidate shared
+      # library" below so lockfile drift and an ordinary library build
+      # failure produce two distinct step outcomes (`steps.lockfile_check.
+      # outcome`, read by the receipt emitted further down) instead of one
+      # step whose failure could mean either. `bazel query //:math` is
+      # deliberately cheap (no compile/link actions) -- module resolution
+      # happens during Bazel's own loading phase, before any target is
+      # analyzed, so this fails on lock drift exactly as fast as the real
+      # build would, without paying for one.
+      - name: Verify MODULE.bazel.lock is in sync (lockfile_mode=error)
+        id: lockfile_check
+        if: steps.relevance.outputs.relevant == 'true'
+        run: bazel query //:math > /dev/null
+
       - name: Build candidate shared library with Bazel
         if: steps.relevance.outputs.relevant == 'true'
         run: bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"
@@ -544,6 +561,128 @@ jobs:
           fi
           exit 1
 
+      # Phase 5 (capability receipts, scripts/capability_receipts.py):
+      # capabilities.yaml's `math-source-gate` entry claims this job proves
+      # depth:source Bazel-evidence comparison against a trusted baseline --
+      # but scripts/check_capability_matrix.py can only check that the
+      # `scan` job/workflow this entry names *exists*, never that it
+      # actually ran to a passing result on a given PR. This step writes
+      # the receipt that closes that gap: `always()` so it runs whether the
+      # "Enforce gate" step above passed, failed, or was skipped (a
+      # not-ABI-relevant PR) -- a receipt is written in every case,
+      # `status: skipped` included, never silently omitted. Deliberately
+      # keyed on `steps.scan.outcome`/`steps.coverage_contract.outcome`
+      # directly rather than "Enforce gate"'s own outcome: that step only
+      # ever runs (and can only ever fail) when one of the two underlying
+      # gates already failed, so its own `outcome` is `skipped` on the
+      # common all-clear path and can't be read as "passed" the way a
+      # normal step's success could.
+      # `RELEVANT`/`SCAN_OUTCOME`/`COVERAGE_OUTCOME` are read through `env`
+      # rather than interpolated directly into the `run:` script, for two
+      # reasons: it's the standard fix for GitHub's own "code injection
+      # via template expansion" hazard (zizmor flagged this exact
+      # interpolation pattern), and it lets the `if` chain below test for
+      # an explicit value rather than "not true" -- see that comment.
+      - name: Emit math-source-gate capability receipt
+        if: always()
+        shell: bash
+        env:
+          RELEVANT: ${{ steps.relevance.outputs.relevant }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          COVERAGE_OUTCOME: ${{ steps.coverage_contract.outcome }}
+        run: |
+          set -euo pipefail
+          # CodeRabbit review, fresh evidence: the previous `!= "true"`
+          # check read "skip-check itself failed to run/produce an
+          # output" (RELEVANT empty) identically to "skip-check explicitly
+          # judged this PR not ABI-relevant" (RELEVANT=false) -- both
+          # emitted status: skipped, and verify_capability_receipts
+          # accepts that (--allow-skip math-source-gate), silently letting
+          # an UNRESOLVED relevance check pass as a clean, legitimate
+          # skip. Testing for the explicit "false" value, and folding
+          # every other value (including empty/unresolved) into the
+          # `failed` branch below, closes that gap.
+          if [ "$RELEVANT" == "false" ]; then
+            status=skipped
+            detail='PR judged not ABI-relevant by skip-check'
+          elif [ "$RELEVANT" == "true" ] && [ "$SCAN_OUTCOME" == "success" ] && [ "$COVERAGE_OUTCOME" == "success" ]; then
+            status=passed
+            detail=''
+          else
+            status=failed
+            detail="relevant=$RELEVANT scan.outcome=$SCAN_OUTCOME coverage_contract.outcome=$COVERAGE_OUTCOME"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id math-source-gate \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job scan \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
+      # module-bazel-lock-pinning (capabilities.yaml): Codex review, fresh
+      # evidence -- marking this capability `gating: true` without ever
+      # emitting a receipt for it left a real gap in the one-receipt-per-
+      # gating-capability contract every other entry here satisfies (the
+      # scenario ids are gating: true too, but scenarios.yml's own
+      # separate validation step covers them -- this one had NO coverage
+      # anywhere). Derived straight from the dedicated `lockfile_check`
+      # step above, independent of whether the library build/scan
+      # themselves succeeded -- so a real lockfile drift reads distinctly
+      # from an ordinary scan failure in this receipt, even though both
+      # happen to fail the same job today.
+      - name: Emit module-bazel-lock-pinning capability receipt
+        if: always()
+        shell: bash
+        env:
+          RELEVANT: ${{ steps.relevance.outputs.relevant }}
+          LOCKFILE_OUTCOME: ${{ steps.lockfile_check.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEVANT" == "false" ]; then
+            status=skipped
+            detail='PR judged not ABI-relevant by skip-check'
+          elif [ "$RELEVANT" == "true" ] && [ "$LOCKFILE_OUTCOME" == "success" ]; then
+            status=passed
+            detail=''
+          else
+            status=failed
+            detail="relevant=$RELEVANT lockfile_check.outcome=$LOCKFILE_OUTCOME"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id module-bazel-lock-pinning \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job scan \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
+      # -${{ github.run_attempt }} suffix (CodeRabbit review, fresh
+      # evidence): `upload-artifact` names must be unique within a run,
+      # and `github.run_id` is identical across a re-run's attempts --
+      # without this suffix, a re-run's own upload could collide with (or,
+      # depending on artifact retention across attempts, be shadowed by) a
+      # previous attempt's artifact of the same name, letting
+      # verify_capability_receipts download a receipt that isn't from the
+      # attempt actually being judged. The download step below matches
+      # this same suffixed pattern. Now carries BOTH math-source-gate's
+      # and module-bazel-lock-pinning's receipts (same $RUNNER_TEMP/
+      # capability-receipts directory).
+      - name: Upload scan job capability receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-scan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
   # Architecture review P1-5 (multi-library aggregate validation):
   # //strings_lib:strings is a second, deliberately independent library
   # (strings_lib/BUILD.bazel, its own Bazel package -- see that file's own
@@ -647,6 +786,107 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # cc-shared-library-target-shape (P1 follow-up to the capability-receipts
+  # PR): `//:math_shared` (root BUILD.bazel) is a real `cc_shared_library`
+  # wrapping a private `cc_library`, coexisting with `//:math`'s own legacy
+  # `cc_binary(linkshared = True)` demo shape rather than replacing it --
+  # every OTHER job in this workflow, and the committed
+  # abi/math.abicheck.json baseline, stay keyed to `//:math` exactly as
+  # before. Its own Bazel action graph (a real link action producing the
+  # shared object, as opposed to cc_binary's implicit one) and exports were
+  # verified byte-identical to :math's for the current, unchanged source
+  # (nm -D on both .so's lists the same three symbols) -- this job is what
+  # keeps that true going forward, scanning //:math_shared's own committed
+  # baseline (abi/math_shared.abicheck.json, collected the identical
+  # headers-depth way strings.abicheck.json is -- see baseline.yml).
+  # Mirrors scan_strings exactly in shape and posture: deliberately
+  # non-gating (continue-on-error throughout, no "Enforce gate" step) --
+  # this validates the target-shape mechanism itself, not an additional
+  # required check on :math's own ABI.
+  scan_math_shared:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        uses: ./.github/actions/skip-check
+
+      - name: Resolve trusted baseline from PR base SHA
+        id: resolve_baseline
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math_shared.abicheck.json
+          baseline-temp-filename: math_shared.base.abicheck.json
+
+      - name: Set up Bazel disk cache
+        if: steps.resolve_baseline.outcome == 'success'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-math_shared-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate //:math_shared with Bazel
+        id: build
+        if: steps.resolve_baseline.outcome == 'success'
+        continue-on-error: true
+        run: bazel build //:math_shared --disk_cache="$HOME/.cache/bazel-disk"
+
+      - name: ABICheck compare (math_shared, non-gating, artifact only)
+        id: compare
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math_shared.base.abicheck.json
+          new-library: bazel-bin/libmath_shared.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          format: json
+          output-file: abi-report-math-shared.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload abi-report-math-shared artifact
+        if: always() && steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abi-report-math-shared
+          path: abi-report-math-shared.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Report math_shared target-shape profile status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### math_shared target-shape profile (cc_shared_library, best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not resolve abi/math_shared.abicheck.json from the PR base SHA.'
+            elif [ "${{ steps.build.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: `bazel build //:math_shared` failed.'
+            elif [ "${{ steps.compare.outcome }}" != "success" ]; then
+              echo '⚠️ Build succeeded but the abicheck compare step failed -- see the job log above.'
+            else
+              echo '✅ Ran successfully -- see the `abi-report-math-shared` artifact for the report.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Architecture review P1-5, hardened per the P0 follow-up in
   # UPSTREAM_TO_ABICHECK.md's "P0.6 Fail-closed expected-check aggregation":
   # `abicheck aggregate` now gates against a *declared* expected-target
@@ -675,8 +915,17 @@ jobs:
   # back to `--discovered-only`: nothing was expected, so nothing to gate
   # -- purely informational, as before. See README.md's "Multi-library
   # aggregate gate" section.
+  # scan_math_shared added to needs (Codex/CodeRabbit review, fresh
+  # evidence): its own abi-report-math-shared artifact matches the
+  # abi-report-* pattern the download step below globs -- without this
+  # job in `needs`, `aggregate` could start before scan_math_shared
+  # finished uploading, non-deterministically including or omitting its
+  # report in the discovered set for otherwise-identical runs. Same
+  # posture as `strings`: never declared in the manifest (so it's
+  # discovered-and-warned, not required/gating), just guaranteed to have
+  # actually finished before `aggregate` looks for its artifact.
   aggregate:
-    needs: [scan, scan_strings]
+    needs: [scan, scan_strings, scan_math_shared]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -769,6 +1018,7 @@ jobs:
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
 
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
+        id: aggregate_run
         # Same conditional posture as the install step immediately above,
         # and for the identical reason.
         continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
@@ -806,6 +1056,142 @@ jobs:
           path: ${{ runner.temp }}/aggregate-report.json
           if-no-files-found: ignore
           retention-days: 30
+
+      # Phase 5 (capability receipts) -- see the identical mechanism/
+      # rationale on the `scan` job's "Emit math-source-gate capability
+      # receipt" step above. This job runs unconditionally (`if: always()`
+      # at the job level), so there is no "not relevant, skipped" status to
+      # distinguish here the way math-source-gate has: the aggregate step
+      # itself either genuinely ran the fail-closed manifest check (and
+      # either passed or found a real coverage gap) or fell back to
+      # --discovered-only on a PR with nothing declared -- both are a real
+      # `steps.aggregate_run.outcome` this receipt reports directly.
+      # Codex review, fresh evidence: `aggregate_run`'s own
+      # `continue-on-error: ${{ steps.manifest.outputs.count == '0' }}`
+      # means a failed step is deliberately TOLERATED (the job itself
+      # stays green) whenever nothing was declared -- an ABI-irrelevant
+      # PR's --discovered-only fallback failing (e.g. a transient
+      # `abicheck` install hiccup) is an accepted, optional-path outcome,
+      # not a real gate failure. The first cut of this step read that
+      # exact tolerated case as `status: failed`, which would have made
+      # `verify_capability_receipts` fail even though the `aggregate` job
+      # itself passed cleanly by design. Mirrors that same tolerance:
+      # `status: skipped` (not `failed`) when nothing was declared and the
+      # step didn't succeed -- `verify_capability_receipts` is passed
+      # `--allow-skip aggregate-multi-library` specifically to accept
+      # this. A declared-but-failed run (manifest count > 0) is always a
+      # real `status: failed` -- there is no tolerance for that case, in
+      # this step or in `aggregate_run`'s own continue-on-error.
+      - name: Emit aggregate-multi-library capability receipt
+        if: always()
+        shell: bash
+        env:
+          AGGREGATE_OUTCOME: ${{ steps.aggregate_run.outcome }}
+          MANIFEST_COUNT: ${{ steps.manifest.outputs.count }}
+        run: |
+          set -euo pipefail
+          if [ "$AGGREGATE_OUTCOME" == "success" ]; then
+            status=passed
+            detail=''
+          elif [ "$MANIFEST_COUNT" == "0" ]; then
+            status=skipped
+            detail="nothing declared this run (manifest count=0) and the --discovered-only fallback did not succeed; aggregate_run.outcome=$AGGREGATE_OUTCOME"
+          else
+            status=failed
+            detail="aggregate_run.outcome=$AGGREGATE_OUTCOME"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id aggregate-multi-library \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job aggregate \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
+      # -${{ github.run_attempt }} suffix: same reasoning as the identical
+      # comment on the "Upload math-source-gate capability receipt" step
+      # above.
+      - name: Upload aggregate-multi-library capability receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-aggregate-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Phase 5 (capability receipts): a final, fail-closed check that every
+  # capabilities.yaml entry this workflow can prove (`gating: true` AND
+  # produced within abi-scan.yml itself -- the two detection-correctness-
+  # scenarios-* ids live in the separate scenarios.yml workflow run and
+  # validate their own receipts there, see that workflow's own
+  # "Enforce gate (scenario oracle + capability receipts)" step) actually
+  # wrote a receipt that isn't `status: failed` this run -- `status:
+  # skipped` (e.g. math-source-gate on a PR skip-check judged not
+  # ABI-relevant) is accepted, matching the "Enforce gate" step's own
+  # existing semantics (a skip is clean, not a failure); see
+  # scripts/validate_capability_receipts.py's module docstring.
+  # `needs: [scan, aggregate]` + `if: always()`: both upstream jobs
+  # already emit their own receipt(s) unconditionally (always(), even on
+  # their own gate failure -- `scan` emits two, math-source-gate and
+  # module-bazel-lock-pinning), so this job must run regardless of either
+  # one's outcome to actually read them -- skipping it on a red
+  # `scan`/`aggregate` would silently exempt exactly the runs where a
+  # missing/failed receipt matters most.
+  verify_capability_receipts:
+    needs: [scan, aggregate]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install PyYAML (for validate_capability_receipts.py)
+        run: pip install --quiet pyyaml
+
+      # Pattern matches this attempt's own suffixed artifact names only
+      # (capability-receipts-scan-<N>, capability-receipts-aggregate-<N>)
+      # -- see the upload steps' own comments for why the suffix exists.
+      - name: Download capability receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: capability-receipts-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-receipts
+          merge-multiple: true
+
+      # Scoped to the two ids abi-scan.yml itself can ever produce a
+      # receipt for -- the full gating set also includes
+      # detection-correctness-scenarios-{castxml,clang}, which only ever
+      # run (and only ever get a receipt) inside scenarios.yml's own,
+      # separately-triggered workflow run; this job has no access to that
+      # run's artifacts and must not fail claiming a receipt that could
+      # never have been written here.
+      # --allow-skip on both ids: math-source-gate's own emit step (in
+      # `scan`) reports `status: skipped` when skip-check judged the PR
+      # not ABI-relevant, and aggregate-multi-library's own emit step (in
+      # `aggregate`, above) reports it for the identical tolerated
+      # "nothing declared, best-effort fallback didn't succeed" case --
+      # both are accepted, non-failing outcomes on this workflow's own
+      # jobs, so the validator must accept them too (Codex review, fresh
+      # evidence). Neither is blanket-tolerant: a `status: failed` receipt
+      # on either id still fails this step regardless of --allow-skip.
+      - name: Validate math-source-gate / aggregate-multi-library / module-bazel-lock-pinning receipts
+        run: |
+          python3 scripts/validate_capability_receipts.py \
+            --receipts-dir "${{ runner.temp }}/capability-receipts" \
+            --capability-id math-source-gate \
+            --capability-id aggregate-multi-library \
+            --capability-id module-bazel-lock-pinning \
+            --allow-skip math-source-gate \
+            --allow-skip aggregate-multi-library \
+            --allow-skip module-bazel-lock-pinning \
+            --expect-run-id "${{ github.run_id }}" \
+            --expect-run-attempt "${{ github.run_attempt }}" \
+            --expect-sha "${{ github.sha }}"
 
   # Architecture review P1-6 (consumer/app-scoped validation): //consumer's
   # `consumer_app` is a real, separately-built application binary that

@@ -180,6 +180,42 @@ capabilities:
       discovered but not required). A missing required report is a real
       coverage-axis failure (exit 1), not absorbed into --discovered-only.
 
+  # Phase 5 (capability receipts, scripts/capability_receipts.py): the
+  # `scan`/`aggregate` jobs above now each write a status:{passed,failed,
+  # skipped} receipt for their own `gating: true` entry immediately after
+  # running -- this job reads both back and fails closed if either is
+  # missing or not `passed`. Closes the gap phases 1-4 (this file +
+  # check_capability_matrix.py) cannot: those prove a `job`/`workflow`
+  # this file names *exists*, never that it actually ran to a passing
+  # result on the run being judged. `gating: false` here deliberately --
+  # this entry doesn't describe an evidence-depth/header-frontend/
+  # toolchain/scope/target-shape axis the way every other entry does, it
+  # describes the meta-property "did the two entries above actually prove
+  # what they claim this run" -- and scripts/validate_capability_receipts.py
+  # itself only ever iterates `gating: true` entries when deriving what a
+  # receipt directory must satisfy, so marking this one `gating: true` too
+  # would make it recursively require a receipt for itself.
+  - id: capability-receipt-verification
+    status: covered
+    gating: false
+    workflow: abi-scan.yml
+    job: verify_capability_receipts
+    dimensions:
+      evidence_depth: n/a
+      header_frontend: n/a
+      toolchain: n/a
+      scope: n/a
+      target_shape: n/a
+    note: >
+      Fail-closed check that math-source-gate, aggregate-multi-library,
+      and module-bazel-lock-pinning each wrote a receipt that isn't
+      status: failed this run (a legitimate status: skipped -- e.g.
+      math-source-gate on a PR judged not ABI-relevant -- is accepted;
+      see scripts/capability_receipts.py's module docstring for the full
+      rationale). detection-correctness-scenarios-{castxml,clang}'s own
+      receipts are validated inside scenarios.yml itself instead (a
+      separate workflow run this job has no artifact access to).
+
   - id: consumer-scoped-compare
     status: covered
     gating: false
@@ -445,22 +481,36 @@ capabilities:
 
   # Known gaps -- deliberately no job/workflow (there is none to check).
   - id: cc-shared-library-target-shape
-    status: gap
+    status: covered
     gating: false
+    workflow: abi-scan.yml
+    job: scan_math_shared
     dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
-      toolchain: n/a
-      scope: n/a
+      evidence_depth: headers
+      header_frontend: clang
+      toolchain: pinned-default
+      scope: single_library
       target_shape: cc_shared_library
     note: >
-      README's "Known limitations": every fixture and the real :math
-      target use cc_binary(linkshared = True); nothing exercises a
-      genuine Bazel cc_shared_library target yet.
+      `//:math_shared` (root BUILD.bazel) -- a real `cc_shared_library`
+      wrapping a private `cc_library` (`math_impl`), coexisting with
+      `//:math`'s legacy `cc_binary(linkshared = True)` demo shape rather
+      than replacing it: every existing job's cache key, evidence pack,
+      and committed baseline (abi/math.abicheck.json) stay keyed to
+      `//:math` specifically. `scan_math_shared` builds and scans this
+      target's own genuinely different Bazel action graph (a real link
+      action producing the shared object, not `cc_binary`'s own implicit
+      link step) against its own committed baseline
+      (abi/math_shared.abicheck.json, collected the same headers-depth
+      way as strings.abicheck.json). Deliberately non-gating, same
+      posture as scan_strings -- this validates the target-shape
+      mechanism itself, not an additional required check on :math.
 
   - id: module-bazel-lock-pinning
-    status: gap
-    gating: false
+    status: covered
+    gating: true
+    workflow: abi-scan.yml
+    job: scan
     dimensions:
       evidence_depth: n/a
       header_frontend: n/a
@@ -468,5 +518,24 @@ capabilities:
       scope: n/a
       target_shape: n/a
     note: >
-      README's "Known limitations": MODULE.bazel.lock (dependency
-      pinning) is not part of any covered axis yet.
+      Not a job-shaped axis like every other entry in this file --
+      `.bazelrc`'s `common --lockfile_mode=error` enforces MODULE.bazel.lock
+      against every Bazel invocation in every job that runs one (build,
+      query, cquery, aquery, mod), not just `scan`. Pointed at `scan`
+      here (`gating: true`, since it's this repo's own required gate and
+      the earliest Bazel invocation in the PR pipeline) as the
+      representative job check_capability_matrix.py's job/workflow model
+      needs one entry to name; a lockfile-drift failure surfaces there
+      first, on every PR, before any other job's own build runs. `scan`
+      emits a dedicated receipt for it (Codex review, fresh evidence:
+      marking this `gating: true` with no receipt anywhere left a real
+      gap in the one-receipt-per-gating-capability contract) derived
+      from its own `lockfile_check` step -- a cheap `bazel query //:math`
+      run before the real build, independent of whether the library
+      build/scan themselves succeed, so lockfile drift reads distinctly
+      from an ordinary scan failure. Verified directly: `bazel build
+      //:math --lockfile_mode=error` fails closed with an explicit "run
+      bazel mod deps --lockfile_mode=update" message on a deliberately
+      mismatched MODULE.bazel (a downgraded rules_cc version not in the
+      committed lock), and passes cleanly when MODULE.bazel and
+      MODULE.bazel.lock agree.
