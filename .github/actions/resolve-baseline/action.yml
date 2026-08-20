@@ -31,9 +31,14 @@ inputs:
   baseline-temp-filename:
     description: >
       Filename (not a path) to write the resolved baseline to under
-      `$RUNNER_TEMP`, matching whatever literal `${{ runner.temp }}/...`
-      path every downstream step in the calling job already expects
-      (e.g. `math.base.abicheck.json`).
+      RUNNER_TEMP, matching whatever literal runner-temp-relative path
+      every downstream step in the calling job already expects (e.g.
+      math.base.abicheck.json). Deliberately spelled without expression
+      brace syntax anywhere in this description -- GitHub's action-manifest
+      loader parses that syntax even inside description text, not just
+      inside runs.steps, and evaluating it here failed with "Unrecognized
+      named-value: 'runner'" on a real CI run (PR #16) since an input
+      description is not an expression-evaluation context at all.
     required: true
 
 runs:
