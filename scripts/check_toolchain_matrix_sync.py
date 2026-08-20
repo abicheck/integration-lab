@@ -39,6 +39,7 @@ sides.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,32 @@ MATRIX_PATH = REPO_ROOT / "capabilities.yaml"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "abi-scan.yml"
 
 _REQUIRED_LEG_KEYS = frozenset({"cc", "cxx", "std"})
+
+# capabilities.yaml's own `dimensions.toolchain` enum is
+# `<family>-cxx<NN>` (gcc-cxx17, gcc-cxx20, clang-cxx17, clang-cxx20) --
+# ties an entry's declared axis VALUE to its `matrix_leg` fields, so a
+# swapped/wrong `dimensions.toolchain` on one entry can't hide behind an
+# aggregate set comparison that still happens to balance out across all
+# entries (Codex review, PR #16: the set-only comparison couldn't tell
+# "entry X's toolchain value is wrong" from "entry X and entry Y's values
+# got swapped" as long as the overall triple set stayed the same).
+# Deliberately checks family/std, not an exact compiler binary/version --
+# `clang-18` vs. a future `clang-20` is real content `matrix_leg` alone
+# already owns; this only ties the *shape* the axis name promises (gcc
+# means g++, clang means some clang++) to what's actually declared.
+_TOOLCHAIN_AXIS_PATTERN = re.compile(r"^(?P<family>gcc|clang)-cxx(?P<std>1[0-9]|2[0-9])$")
+
+
+def _leg_matches_toolchain_axis(toolchain: str, leg: dict[str, str]) -> bool:
+    m = _TOOLCHAIN_AXIS_PATTERN.match(toolchain)
+    if not m:
+        return False
+    if leg.get("std") != f"c++{m.group('std')}":
+        return False
+    family = m.group("family")
+    if family == "gcc":
+        return leg.get("cc") == "gcc" and leg.get("cxx") == "g++"
+    return leg.get("cc", "").startswith("clang") and leg.get("cxx", "").startswith("clang++")
 
 
 def _capability_legs(matrix: dict[str, Any]) -> tuple[set[tuple[str, str, str]], list[str]]:
@@ -80,6 +107,14 @@ def _capability_legs(matrix: dict[str, Any]) -> tuple[set[tuple[str, str, str]],
             errors.append(
                 f"BAD_MATRIX_LEG: '{entry_id}'.matrix_leg values must all be "
                 f"non-empty strings, got {leg!r}"
+            )
+            continue
+        toolchain = entry.get("dimensions", {}).get("toolchain") if isinstance(entry.get("dimensions"), dict) else None
+        if not isinstance(toolchain, str) or not _leg_matches_toolchain_axis(toolchain, leg):
+            errors.append(
+                f"MATRIX_LEG_TOOLCHAIN_MISMATCH: '{entry_id}' declares "
+                f"dimensions.toolchain={toolchain!r} but matrix_leg={leg!r} "
+                "doesn't match that axis value (family/standard mismatch)"
             )
             continue
         legs.add((leg["cc"], leg["cxx"], leg["std"]))
