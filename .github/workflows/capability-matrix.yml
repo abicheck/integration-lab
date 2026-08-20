@@ -23,6 +23,14 @@ on:
       # same gap.
       - 'scripts/check_*.py'
       - 'scripts/gen_*.py'
+      # Phase 5 (capability receipts): the receipt schema/emitters/
+      # validator have their own unit tests (tests/), run below -- globbed
+      # the same way as check_*.py/gen_*.py above so a future receipt
+      # helper doesn't repeat the same "landed unexercised" gap.
+      - 'scripts/capability_receipts.py'
+      - 'scripts/emit_*.py'
+      - 'scripts/validate_*.py'
+      - 'tests/**'
       - 'README.md'
       - '.github/workflows/*.yml'
   workflow_dispatch:
@@ -42,8 +50,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Install PyYAML + pytest
+        run: pip install --quiet pyyaml pytest
 
       - name: Check capabilities.yaml against the real workflow jobs
         run: python3 scripts/check_capability_matrix.py
@@ -53,3 +61,11 @@ jobs:
 
       - name: Check toolchain_matrix's compiler legs against capabilities.yaml
         run: python3 scripts/check_toolchain_matrix_sync.py
+
+      # Phase 5 (capability receipts): unit tests for the receipt schema
+      # (scripts/capability_receipts.py), the emitters, and the validator
+      # -- pure-Python logic, so these run here rather than needing
+      # Bazel/castxml the way abi-scan.yml/scenarios.yml's own end-to-end
+      # exercise of the emit/validate steps does.
+      - name: Run lab script unit tests
+        run: python3 -m pytest tests/ -q

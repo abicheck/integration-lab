@@ -674,6 +674,54 @@ left completely untouched — the invoking step in each job keeps the same
 action's outputs (and `continue-on-error`) are exposed on the step that
 calls it, not on any step inside the action itself.
 
+### Capability receipts (phase 5)
+
+Phases 1–4 above prove `capabilities.yaml` stays honest about *what CI is
+wired to run* — every `covered`/`non_gating_watch` entry names a real
+`job` in a real workflow. They cannot prove the thing that actually
+matters for trusting a `gating: true` entry: that the job *ran this
+workflow run* and actually reached a passing result, rather than being
+silently skipped, degraded, or left dangling behind an unrelated failure
+earlier in the same job. A matrix entry pointing at a job that exists says
+nothing about whether that job's gating step executed to completion on
+the run a required check is being judged against.
+
+`scripts/capability_receipts.py` closes that gap with a small,
+machine-written JSON fact per `gating: true` capability id
+(`status: passed | failed | skipped`, plus which workflow/job/run/sha
+produced it), written immediately after the step(s) that capability's
+entry describes and validated before anything downstream trusts it:
+
+- `scan`/`aggregate` in `abi-scan.yml` each emit their own receipt
+  (`scripts/emit_capability_receipt.py`) for `math-source-gate`/
+  `aggregate-multi-library` right after their own gating logic runs, in
+  every case — `status: skipped` (not a missing receipt) when a PR was
+  judged not ABI-relevant, so a validator can tell "genuinely nothing to
+  prove this run" apart from "the job silently produced nothing".
+- A new `verify_capability_receipts` job (`needs: [scan, aggregate]`,
+  `if: always()`) downloads both receipts and fails closed via
+  `scripts/validate_capability_receipts.py` if either is missing or not
+  `status: passed`.
+- `scenarios.yml`'s own `scenarios` job derives
+  `detection-correctness-scenarios-{castxml,clang}`'s receipts from
+  `run_scenario.py`'s existing `summary.json`
+  (`scripts/emit_scenario_receipts.py` — one receipt per header-frontend
+  profile: `passed` only if every result for that profile passed, `failed`
+  on any mismatch, `skipped` if the manifest currently declares no
+  scenario for that profile at all) and validates them in the same
+  "Enforce gate" step that already gates on `run_scenario.py`'s own exit
+  code.
+
+Deliberately scoped to today's 4 `gating: true` entries only, and
+deliberately minimal (status + provenance, no scanner ref, no
+effective-config digest, no semantic assertions on the underlying
+report's own findings) — a natural next phase for a fuller downstream
+conformance platform, not attempted here. `tests/` (run by
+`capability-matrix.yml`'s own `pytest tests/` step) covers the schema,
+both emitters' status derivation, and the validator's four failure modes
+(`MISSING_RECEIPT`, `NOT_PASSED`, `MALFORMED_RECEIPT`, an id filtered out
+of scope) directly, without needing Bazel/castxml to exercise them.
+
 ## Scenario validation (`scenarios.yml`)
 
 `abi-scan.yml`'s gate only ever exercises whatever a given PR's diff to

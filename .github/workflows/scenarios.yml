@@ -86,6 +86,8 @@ jobs:
           pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
 
       - name: Run scenarios against the manifest oracle
+        id: run_scenarios
+        continue-on-error: true
         run: python3 scripts/run_scenario.py
 
       - name: Upload scenario results
@@ -96,3 +98,60 @@ jobs:
           path: scenario-results/
           if-no-files-found: warn
           retention-days: 30
+
+      # Phase 5 (capability receipts, scripts/capability_receipts.py): this
+      # workflow's own `scenarios` job is what capabilities.yaml's
+      # detection-correctness-scenarios-{castxml,clang} entries name as
+      # `gating: true` -- run_scenario.py's own exit code already fails
+      # this job on any mismatch (unchanged, still the real oracle), but
+      # nothing before this recorded a machine-readable receipt proving
+      # each profile actually ran and passed *this run*, the same gap the
+      # identical mechanism closes for abi-scan.yml's math-source-gate/
+      # aggregate-multi-library. `always()`: a receipt is written whether
+      # run_scenario.py passed, failed, or (very unlikely, given the step
+      # above already writes it) never produced summary.json at all --
+      # scripts/emit_scenario_receipts.py degrades to status: failed for
+      # every profile in that last case rather than emitting nothing.
+      - name: Emit detection-correctness-scenarios capability receipts
+        id: emit_receipts
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/emit_scenario_receipts.py \
+            --summary scenario-results/summary.json \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --workflow scenarios.yml \
+            --job scenarios \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}"
+
+      - name: Upload detection-correctness-scenarios capability receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-scenarios
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Fail-closed on the receipts themselves, not just on
+      # run_scenario.py's own exit code (which "Run scenarios against the
+      # manifest oracle" above already surfaces via continue-on-error +
+      # this step) -- scoped to exactly the two ids this workflow can ever
+      # produce a receipt for, mirroring abi-scan.yml's own
+      # "verify_capability_receipts" job. This is the job's real gate:
+      # both steps above run with continue-on-error so evidence still
+      # publishes on a red result, and this step decides the job's actual
+      # outcome.
+      - name: Enforce gate (scenario oracle + capability receipts)
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.run_scenarios.outcome }}" != "success" ]; then
+            echo 'One or more scenarios did not match their expected outcome -- see the step log and scenario-results artifact above.' >&2
+          fi
+          python3 scripts/validate_capability_receipts.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id detection-correctness-scenarios-castxml \
+            --capability-id detection-correctness-scenarios-clang
+          test "${{ steps.run_scenarios.outcome }}" == "success"

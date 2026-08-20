@@ -544,6 +544,57 @@ jobs:
           fi
           exit 1
 
+      # Phase 5 (capability receipts, scripts/capability_receipts.py):
+      # capabilities.yaml's `math-source-gate` entry claims this job proves
+      # depth:source Bazel-evidence comparison against a trusted baseline --
+      # but scripts/check_capability_matrix.py can only check that the
+      # `scan` job/workflow this entry names *exists*, never that it
+      # actually ran to a passing result on a given PR. This step writes
+      # the receipt that closes that gap: `always()` so it runs whether the
+      # "Enforce gate" step above passed, failed, or was skipped (a
+      # not-ABI-relevant PR) -- a receipt is written in every case,
+      # `status: skipped` included, never silently omitted. Deliberately
+      # keyed on `steps.scan.outcome`/`steps.coverage_contract.outcome`
+      # directly rather than "Enforce gate"'s own outcome: that step only
+      # ever runs (and can only ever fail) when one of the two underlying
+      # gates already failed, so its own `outcome` is `skipped` on the
+      # common all-clear path and can't be read as "passed" the way a
+      # normal step's success could.
+      - name: Emit math-source-gate capability receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+            status=skipped
+            detail='PR judged not ABI-relevant by skip-check'
+          elif [ "${{ steps.scan.outcome }}" == "success" ] && [ "${{ steps.coverage_contract.outcome }}" == "success" ]; then
+            status=passed
+            detail=''
+          else
+            status=failed
+            detail="scan.outcome=${{ steps.scan.outcome }} coverage_contract.outcome=${{ steps.coverage_contract.outcome }}"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id math-source-gate \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job scan \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
+      - name: Upload math-source-gate capability receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-scan
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
   # Architecture review P1-5 (multi-library aggregate validation):
   # //strings_lib:strings is a second, deliberately independent library
   # (strings_lib/BUILD.bazel, its own Bazel package -- see that file's own
@@ -769,6 +820,7 @@ jobs:
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
 
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
+        id: aggregate_run
         # Same conditional posture as the install step immediately above,
         # and for the identical reason.
         continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
@@ -806,6 +858,92 @@ jobs:
           path: ${{ runner.temp }}/aggregate-report.json
           if-no-files-found: ignore
           retention-days: 30
+
+      # Phase 5 (capability receipts) -- see the identical mechanism/
+      # rationale on the `scan` job's "Emit math-source-gate capability
+      # receipt" step above. This job runs unconditionally (`if: always()`
+      # at the job level), so there is no "not relevant, skipped" status to
+      # distinguish here the way math-source-gate has: the aggregate step
+      # itself either genuinely ran the fail-closed manifest check (and
+      # either passed or found a real coverage gap) or fell back to
+      # --discovered-only on a PR with nothing declared -- both are a real
+      # `steps.aggregate_run.outcome` this receipt reports directly.
+      - name: Emit aggregate-multi-library capability receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.aggregate_run.outcome }}" == "success" ]; then
+            status=passed
+            detail=''
+          else
+            status=failed
+            detail="aggregate_run.outcome=${{ steps.aggregate_run.outcome }}"
+          fi
+          python3 scripts/emit_capability_receipt.py \
+            --receipts-dir "$RUNNER_TEMP/capability-receipts" \
+            --capability-id aggregate-multi-library \
+            --status "$status" \
+            --workflow abi-scan.yml \
+            --job aggregate \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --detail "$detail"
+
+      - name: Upload aggregate-multi-library capability receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: capability-receipts-aggregate
+          path: ${{ runner.temp }}/capability-receipts
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Phase 5 (capability receipts): a final, fail-closed check that every
+  # capabilities.yaml entry this workflow can prove (`gating: true` AND
+  # produced within abi-scan.yml itself -- the two detection-correctness-
+  # scenarios-* ids live in the separate scenarios.yml workflow run and
+  # validate their own receipts there, see that workflow's own
+  # "Enforce gate (scenario oracle + capability receipts)" step) actually
+  # wrote a `status: passed` receipt this run. `needs: [scan, aggregate]` +
+  # `if: always()`: both upstream jobs already emit their own receipt
+  # unconditionally (always(), even on their own gate failure), so this
+  # job must run regardless of either one's outcome to actually read them
+  # -- skipping it on a red `scan`/`aggregate` would silently exempt
+  # exactly the runs where a missing/failed receipt matters most.
+  verify_capability_receipts:
+    needs: [scan, aggregate]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install PyYAML (for validate_capability_receipts.py)
+        run: pip install --quiet pyyaml
+
+      - name: Download capability receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: capability-receipts-*
+          path: ${{ runner.temp }}/capability-receipts
+          merge-multiple: true
+
+      # Scoped to the two ids abi-scan.yml itself can ever produce a
+      # receipt for -- the full gating set also includes
+      # detection-correctness-scenarios-{castxml,clang}, which only ever
+      # run (and only ever get a receipt) inside scenarios.yml's own,
+      # separately-triggered workflow run; this job has no access to that
+      # run's artifacts and must not fail claiming a receipt that could
+      # never have been written here.
+      - name: Validate math-source-gate / aggregate-multi-library receipts
+        run: |
+          python3 scripts/validate_capability_receipts.py \
+            --receipts-dir "${{ runner.temp }}/capability-receipts" \
+            --capability-id math-source-gate \
+            --capability-id aggregate-multi-library
 
   # Architecture review P1-6 (consumer/app-scoped validation): //consumer's
   # `consumer_app` is a real, separately-built application binary that

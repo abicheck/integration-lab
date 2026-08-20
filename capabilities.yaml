@@ -180,6 +180,40 @@ capabilities:
       discovered but not required). A missing required report is a real
       coverage-axis failure (exit 1), not absorbed into --discovered-only.
 
+  # Phase 5 (capability receipts, scripts/capability_receipts.py): the
+  # `scan`/`aggregate` jobs above now each write a status:{passed,failed,
+  # skipped} receipt for their own `gating: true` entry immediately after
+  # running -- this job reads both back and fails closed if either is
+  # missing or not `passed`. Closes the gap phases 1-4 (this file +
+  # check_capability_matrix.py) cannot: those prove a `job`/`workflow`
+  # this file names *exists*, never that it actually ran to a passing
+  # result on the run being judged. `gating: false` here deliberately --
+  # this entry doesn't describe an evidence-depth/header-frontend/
+  # toolchain/scope/target-shape axis the way every other entry does, it
+  # describes the meta-property "did the two entries above actually prove
+  # what they claim this run" -- and scripts/validate_capability_receipts.py
+  # itself only ever iterates `gating: true` entries when deriving what a
+  # receipt directory must satisfy, so marking this one `gating: true` too
+  # would make it recursively require a receipt for itself.
+  - id: capability-receipt-verification
+    status: covered
+    gating: false
+    workflow: abi-scan.yml
+    job: verify_capability_receipts
+    dimensions:
+      evidence_depth: n/a
+      header_frontend: n/a
+      toolchain: n/a
+      scope: n/a
+      target_shape: n/a
+    note: >
+      Fail-closed check that math-source-gate and aggregate-multi-library
+      each wrote a status: passed receipt this run -- see
+      scripts/capability_receipts.py's module docstring for the full
+      rationale. detection-correctness-scenarios-{castxml,clang}'s own
+      receipts are validated inside scenarios.yml itself instead (a
+      separate workflow run this job has no artifact access to).
+
   - id: consumer-scoped-compare
     status: covered
     gating: false
