@@ -481,18 +481,30 @@ capabilities:
 
   # Known gaps -- deliberately no job/workflow (there is none to check).
   - id: cc-shared-library-target-shape
-    status: gap
+    status: covered
     gating: false
+    workflow: abi-scan.yml
+    job: scan_math_shared
     dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
-      toolchain: n/a
-      scope: n/a
+      evidence_depth: headers
+      header_frontend: clang
+      toolchain: pinned-default
+      scope: single_library
       target_shape: cc_shared_library
     note: >
-      README's "Known limitations": every fixture and the real :math
-      target use cc_binary(linkshared = True); nothing exercises a
-      genuine Bazel cc_shared_library target yet.
+      `//:math_shared` (root BUILD.bazel) -- a real `cc_shared_library`
+      wrapping a private `cc_library` (`math_impl`), coexisting with
+      `//:math`'s legacy `cc_binary(linkshared = True)` demo shape rather
+      than replacing it: every existing job's cache key, evidence pack,
+      and committed baseline (abi/math.abicheck.json) stay keyed to
+      `//:math` specifically. `scan_math_shared` builds and scans this
+      target's own genuinely different Bazel action graph (a real link
+      action producing the shared object, not `cc_binary`'s own implicit
+      link step) against its own committed baseline
+      (abi/math_shared.abicheck.json, collected the same headers-depth
+      way as strings.abicheck.json). Deliberately non-gating, same
+      posture as scan_strings -- this validates the target-shape
+      mechanism itself, not an additional required check on :math.
 
   - id: module-bazel-lock-pinning
     status: gap

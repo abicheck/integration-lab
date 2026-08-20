@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'abi/math.abicheck.json'
       - 'abi/strings.abicheck.json'
+      - 'abi/math_shared.abicheck.json'
       - 'README.md'
   workflow_dispatch:
 
@@ -48,6 +49,12 @@ jobs:
       # invocation/cache.
       - name: Build strings_lib shared library with Bazel
         run: bazel build //strings_lib:strings --disk_cache="$HOME/.cache/bazel-disk"
+
+      # cc-shared-library-target-shape (P1 follow-up): //:math_shared's own
+      # committed baseline, built alongside :math/:strings from the same
+      # Bazel invocation/cache -- same reasoning as strings_lib above.
+      - name: Build //:math_shared with Bazel
+        run: bazel build //:math_shared --disk_cache="$HOME/.cache/bazel-disk"
 
       # Same evidence pipeline as abi-scan.yml's `scan` job -- see that
       # workflow's comments for the full rationale. Deliberately NOT
@@ -172,6 +179,29 @@ jobs:
             "$RUNNER_TEMP/strings.raw.abicheck.json" \
             abi/strings.abicheck.json
 
+      # //:math_shared's own baseline: identical shape to strings_lib's
+      # above (plain headers-depth dump, ast-frontend clang) -- this
+      # target exists to validate a real cc_shared_library's own Bazel
+      # action graph/exports, not to duplicate :math's depth:source
+      # pipeline, so it gets the same lightweight collection strings_lib
+      # does rather than :math's own source-aware evidence pack.
+      - name: Collect math_shared ABI baseline (headers depth)
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        with:
+          mode: dump
+          new-library: bazel-bin/libmath_shared.so
+          header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          new-version: main-${{ github.sha }}
+          output-file: ${{ runner.temp }}/math_shared.raw.abicheck.json
+          fail-on-breaking: true
+
+      - name: Normalize math_shared baseline
+        run: |
+          python3 scripts/normalize_baseline.py \
+            "$RUNNER_TEMP/math_shared.raw.abicheck.json" \
+            abi/math_shared.abicheck.json
+
       # This is a direct push straight to main -- by design (see
       # .github/CODEOWNERS: "baseline.yml's bot-authored refresh commits are
       # the only unreviewed path this file can change through"). But a
@@ -190,8 +220,8 @@ jobs:
       # in README.md alongside the rest of the CODEOWNERS caveats.
       - name: Commit refreshed baseline
         run: |
-          git add -f abi/math.abicheck.json abi/strings.abicheck.json
-          if git diff --cached --quiet -- abi/math.abicheck.json abi/strings.abicheck.json; then
+          git add -f abi/math.abicheck.json abi/strings.abicheck.json abi/math_shared.abicheck.json
+          if git diff --cached --quiet -- abi/math.abicheck.json abi/strings.abicheck.json abi/math_shared.abicheck.json; then
             echo 'Baseline unchanged (no semantic ABI diff after normalization).'
             exit 0
           fi

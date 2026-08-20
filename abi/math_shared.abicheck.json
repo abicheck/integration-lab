@@ -1,0 +1,1009 @@
+{
+  "ast_compile_args": [],
+  "ast_cplusplus_macro": null,
+  "ast_fallback_reason": null,
+  "ast_producer": "clang",
+  "ast_resolved_standard": null,
+  "ast_sysroot": null,
+  "ast_toolchain": {
+    "abi_dialect": "gnu",
+    "compiler_mtime_ns": "1716798380000000000",
+    "compiler_realpath": "/usr/lib/llvm-18/bin/clang",
+    "compiler_selected": "/usr/bin/clang++",
+    "compiler_sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+    "compiler_size": "140592",
+    "compiler_target_triple": "x86_64-pc-linux-gnu",
+    "compiler_version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+    "mtime_ns": "1716798380000000000",
+    "producer": "clang",
+    "realpath": "/usr/lib/llvm-18/bin/clang",
+    "selected": "/usr/bin/clang++",
+    "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+    "size": "140592",
+    "target_triple": "x86_64-pc-linux-gnu",
+    "version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+  },
+  "ast_toolchain_supported": null,
+  "ast_toolchain_unsupported_reasons": [],
+  "build_context_defines": [],
+  "build_mode": null,
+  "build_source": {
+    "manifest": {
+      "abicheck_version": "",
+      "build_source_pack_version": 1,
+      "coverage": [
+        {
+          "compile_units": null,
+          "confidence": "unknown",
+          "detail": "",
+          "layer": "L3_build",
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "not_collected",
+          "transitive_targets": null
+        },
+        {
+          "compile_units": null,
+          "confidence": "unknown",
+          "detail": "",
+          "layer": "L4_source_abi",
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "not_collected",
+          "transitive_targets": null
+        },
+        {
+          "compile_units": null,
+          "confidence": "reduced",
+          "detail": "",
+          "layer": "L5_source_graph",
+          "link_units": null,
+          "requested_roots": [],
+          "resolved_roots": [],
+          "status": "present",
+          "transitive_targets": null
+        }
+      ],
+      "extractors": [],
+      "inputs": {},
+      "redaction": {},
+      "source_root": {
+        "path_redacted": true,
+        "repo_hash": ""
+      }
+    },
+    "source_graph": {
+      "coverage": {
+        "binary_symbol_mappings": 0,
+        "call_edges": {
+          "collected": false,
+          "count": 0
+        },
+        "compile_units": 0,
+        "edge_kinds": {
+          "SOURCE_DECLARES": 4,
+          "TYPE_HAS_FIELD_TYPE": 4
+        },
+        "include_edges": {
+          "collected": true,
+          "count": 0
+        },
+        "node_kinds": {
+          "header": 2,
+          "record_type": 8,
+          "source_decl": 4
+        },
+        "reference_edges": {
+          "collected": false,
+          "count": 0
+        },
+        "source_decls": 4,
+        "targets": 0,
+        "type_edges": {
+          "collected": true,
+          "count": 4
+        }
+      },
+      "degraded_passes": {},
+      "edges": [
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "decl://_ZN12abicheck_lab10CalculatorC1Ev",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "decl://_ZNK12abicheck_lab10Calculator3addEii",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "decl://_ZNK12abicheck_lab10Calculator8multiplyEii",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "decl://_ZN12abicheck_lab11api_versionEv",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "confidence": "reduced",
+          "conflicts": [],
+          "dst": "type://__int128",
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "type_graph",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "src": "type://__int128_t"
+        },
+        {
+          "attrs": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "confidence": "reduced",
+          "conflicts": [],
+          "dst": "type://unsigned __int128",
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "type_graph",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "src": "type://__uint128_t"
+        },
+        {
+          "attrs": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "confidence": "reduced",
+          "conflicts": [],
+          "dst": "type://__NSConstantString_tag",
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "type_graph",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "src": "type://__NSConstantString"
+        },
+        {
+          "attrs": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "confidence": "reduced",
+          "conflicts": [],
+          "dst": "type://__va_list_tag",
+          "edge": "TYPE_HAS_FIELD_TYPE",
+          "facts": [
+            {
+              "attrs": {
+                "resolution": "unresolved",
+                "role": "alias"
+              },
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "type_graph",
+          "resolved": {
+            "resolution": "unresolved",
+            "role": "alias"
+          },
+          "src": "type://__builtin_va_list"
+        }
+      ],
+      "external_graph_refs": [],
+      "extractor_passes": {
+        "header_call_graph": true,
+        "header_include_graph": true,
+        "header_type_graph": true,
+        "header_type_graph:DECL_HAS_TYPE:default_template_arg": true,
+        "header_type_graph:DECL_HAS_TYPE:param": true,
+        "header_type_graph:DECL_HAS_TYPE:return": true,
+        "header_type_graph:DECL_HAS_TYPE:template_param": true,
+        "header_type_graph:DECL_HAS_TYPE:var": true,
+        "header_type_graph:DECL_REFERENCES_DECL:ref": true,
+        "header_type_graph:TYPE_HAS_FIELD_TYPE:alias": true,
+        "header_type_graph:TYPE_HAS_FIELD_TYPE:default_template_arg": true,
+        "header_type_graph:TYPE_HAS_FIELD_TYPE:enum_underlying": true,
+        "header_type_graph:TYPE_HAS_FIELD_TYPE:field": true,
+        "header_type_graph:TYPE_HAS_FIELD_TYPE:template_param": true,
+        "header_type_graph:TYPE_INHERITS:base": true
+      },
+      "indexes": {
+        "by_binary_symbol": {},
+        "by_file": {},
+        "by_source_decl": {
+          "decl://_ZN12abicheck_lab10CalculatorC1Ev": [
+            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          ],
+          "decl://_ZN12abicheck_lab11api_versionEv": [
+            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          ],
+          "decl://_ZNK12abicheck_lab10Calculator3addEii": [
+            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          ],
+          "decl://_ZNK12abicheck_lab10Calculator8multiplyEii": [
+            "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h"
+          ]
+        },
+        "by_target": {}
+      },
+      "narrowed_passes": {},
+      "narrowed_scope": {},
+      "nodes": [
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "header://include/abicheck_lab/math.h",
+          "kind": "header",
+          "label": "include/abicheck_lab/math.h",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "decl://_ZN12abicheck_lab10CalculatorC1Ev",
+          "kind": "source_decl",
+          "label": "Calculator",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "header:///home/user/abicheck-bazel-lab/include/abicheck_lab/math.h",
+          "kind": "header",
+          "label": "/home/user/abicheck-bazel-lab/include/abicheck_lab/math.h",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "decl://_ZNK12abicheck_lab10Calculator3addEii",
+          "kind": "source_decl",
+          "label": "add",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "decl://_ZNK12abicheck_lab10Calculator8multiplyEii",
+          "kind": "source_decl",
+          "label": "multiply",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "decl://_ZN12abicheck_lab11api_versionEv",
+          "kind": "source_decl",
+          "label": "api_version",
+          "provenance": "header_ast_l2",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__int128_t",
+          "kind": "record_type",
+          "label": "__int128_t",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__int128",
+          "kind": "record_type",
+          "label": "__int128",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__uint128_t",
+          "kind": "record_type",
+          "label": "__uint128_t",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://unsigned __int128",
+          "kind": "record_type",
+          "label": "unsigned __int128",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__NSConstantString",
+          "kind": "record_type",
+          "label": "__NSConstantString",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__NSConstantString_tag",
+          "kind": "record_type",
+          "label": "__NSConstantString_tag",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__builtin_va_list",
+          "kind": "record_type",
+          "label": "__builtin_va_list",
+          "provenance": "type_graph",
+          "resolved": {}
+        },
+        {
+          "attrs": {},
+          "confidence": "reduced",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "reduced",
+              "producer": "type_graph"
+            }
+          ],
+          "id": "type://__va_list_tag",
+          "kind": "record_type",
+          "label": "__va_list_tag",
+          "provenance": "type_graph",
+          "resolved": {}
+        }
+      ],
+      "schema_version": 2
+    }
+  },
+  "build_source_pack": null,
+  "castxml_var_access_facts_reliable": true,
+  "clang_deprecation_facts_reliable": true,
+  "clang_field_initializer_facts_reliable": true,
+  "clang_restrict_facts_reliable": true,
+  "clang_va_list_facts_reliable": true,
+  "clang_vtable_facts_reliable": true,
+  "conditional_fields": {},
+  "constants": {},
+  "contract": {
+    "profile_fields": {
+      "abi_dialect": "gnu",
+      "compiler_family": "clang",
+      "compiler_version": "[\"clang\", \"Ubuntu clang version 18.1.3 (1ubuntu1)\\nTarget: x86_64-pc-linux-gnu\\nThread model: posix\\nInstalledDir: /usr/bin\", \"Ubuntu clang version 18.1.3 (1ubuntu1)\\nTarget: x86_64-pc-linux-gnu\\nThread model: posix\\nInstalledDir: /usr/bin\"]",
+      "endianness": "",
+      "frontend_context_kind": "",
+      "header_sequence": "[\"<single-header>\"]",
+      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\", \"1:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\"]",
+      "language_standard": "",
+      "macro_ops": "[]",
+      "pass_through_flags": "[]",
+      "pointer_width": "",
+      "target_triple": ""
+    },
+    "profile_fingerprint": "sha256:124eda06f483bc64b425119093923eead9be2bef59fd3134689b713109d5187a",
+    "scope_fields": {
+      "headers": "[\"<single-header>\"]",
+      "public_header_dirs": "[]",
+      "translation_units": "[]"
+    },
+    "scope_fingerprint": "sha256:0758e2c146f837acd76eb608384b65c91d5b9ae0701d4297fb099008342e6798"
+  },
+  "dependency_info": null,
+  "dependency_scope": "filtered",
+  "dump_provenance": {
+    "ast_fallback_reason": null,
+    "ast_toolchain": {
+      "abi_dialect": "gnu",
+      "compiler_mtime_ns": "1716798380000000000",
+      "compiler_realpath": "/usr/lib/llvm-18/bin/clang",
+      "compiler_selected": "/usr/bin/clang++",
+      "compiler_sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "compiler_size": "140592",
+      "compiler_target_triple": "x86_64-pc-linux-gnu",
+      "compiler_version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+      "mtime_ns": "1716798380000000000",
+      "producer": "clang",
+      "realpath": "/usr/lib/llvm-18/bin/clang",
+      "selected": "/usr/bin/clang++",
+      "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "size": "140592",
+      "target_triple": "x86_64-pc-linux-gnu",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+    },
+    "degraded": false,
+    "effective_depth": "headers",
+    "frontend": "clang",
+    "requested_depth": null,
+    "source_scope": null
+  },
+  "dwarf": {
+    "base_types": {},
+    "enums": {},
+    "has_dwarf": false,
+    "structs": {}
+  },
+  "dwarf_advanced": {
+    "all_struct_names": [],
+    "callee_saved_regs": {},
+    "calling_conventions": {},
+    "frame_registers": {},
+    "has_dwarf": false,
+    "packed_structs": [],
+    "return_memory_classified": [],
+    "return_value_sizes": {},
+    "target_arch": "",
+    "toolchain": {
+      "abi_flags": [],
+      "compiler": "",
+      "producer_string": "",
+      "vector_abi_flags": [],
+      "version": "",
+      "wchar_flags": []
+    },
+    "value_abi_traits": {}
+  },
+  "dwarf_layout_coherence": "unavailable",
+  "dwarf_layout_coherence_mismatches": [],
+  "elf": {
+    "abi_flags": [],
+    "bind_now": true,
+    "dynamic_flags": [],
+    "e_flags": 0,
+    "ei_data": "LSB",
+    "elf_class": 64,
+    "gnu_properties": [
+      "IBT",
+      "SHSTK"
+    ],
+    "has_dt_relr": false,
+    "has_executable_stack": false,
+    "has_fini": true,
+    "has_fortify_source": false,
+    "has_init": true,
+    "has_stack_canary": false,
+    "has_static_tls": false,
+    "has_textrel": false,
+    "has_tls_symbols": false,
+    "has_writable_executable_segment": false,
+    "hash_styles": [
+      "gnu"
+    ],
+    "imports": [
+      {
+        "binding": "weak",
+        "is_default": true,
+        "name": "__gmon_start__",
+        "sym_type": "notype",
+        "version": "",
+        "version_soname": ""
+      },
+      {
+        "binding": "weak",
+        "is_default": true,
+        "name": "_ITM_deregisterTMCloneTable",
+        "sym_type": "notype",
+        "version": "",
+        "version_soname": ""
+      },
+      {
+        "binding": "weak",
+        "is_default": true,
+        "name": "_ITM_registerTMCloneTable",
+        "sym_type": "notype",
+        "version": "",
+        "version_soname": ""
+      },
+      {
+        "binding": "weak",
+        "is_default": true,
+        "name": "__cxa_finalize",
+        "sym_type": "func",
+        "version": "GLIBC_2.2.5",
+        "version_soname": "libc.so.6"
+      }
+    ],
+    "interpreter": "",
+    "is_pie": false,
+    "is_symbolic": false,
+    "machine": "EM_X86_64",
+    "min_kernel_version": "",
+    "needed": [
+      "libc.so.6"
+    ],
+    "osabi": "ELFOSABI_SYSV",
+    "pointer_size": 8,
+    "relro": "full",
+    "rpath": "",
+    "runpath": "",
+    "soname": "",
+    "symbols": [
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "_ZNK12abicheck_lab10Calculator3addEii",
+        "origin_lib": null,
+        "size": 28,
+        "sym_type": "func",
+        "value_alignment": 2,
+        "version": "",
+        "visibility": "default"
+      },
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "_ZNK12abicheck_lab10Calculator8multiplyEii",
+        "origin_lib": null,
+        "size": 27,
+        "sym_type": "func",
+        "value_alignment": 2,
+        "version": "",
+        "visibility": "default"
+      },
+      {
+        "binding": "global",
+        "is_default": true,
+        "name": "_ZN12abicheck_lab11api_versionEv",
+        "origin_lib": null,
+        "size": 15,
+        "sym_type": "func",
+        "value_alignment": 1,
+        "version": "",
+        "visibility": "default"
+      }
+    ],
+    "versions_defined": [],
+    "versions_required": {
+      "libc.so.6": [
+        "GLIBC_2.2.5"
+      ]
+    }
+  },
+  "elf_only_mode": false,
+  "enums": [],
+  "fact_provenance": {},
+  "from_headers": true,
+  "frontend_context_kind": null,
+  "functions": [
+    {
+      "access": "public",
+      "contract_attributes": [],
+      "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": null,
+      "elf_visibility": null,
+      "exception_spec": "",
+      "hidden_friend_owner": null,
+      "is_const": false,
+      "is_deleted": false,
+      "is_explicit": false,
+      "is_extern_c": false,
+      "is_hidden_friend": false,
+      "is_inline": false,
+      "is_noexcept": false,
+      "is_override": null,
+      "is_pure_virtual": false,
+      "is_static": false,
+      "is_variadic": false,
+      "is_virtual": false,
+      "is_volatile": false,
+      "mangled": "_ZN12abicheck_lab10CalculatorC1Ev",
+      "name": "Calculator",
+      "origin": "unknown",
+      "params": [],
+      "ref_qualifier": "",
+      "return_pointer_depth": 0,
+      "return_type": "void",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:8",
+      "visibility": "hidden",
+      "vtable_index": null
+    },
+    {
+      "access": "public",
+      "contract_attributes": [],
+      "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
+      "elf_visibility": "default",
+      "exception_spec": "",
+      "hidden_friend_owner": null,
+      "is_const": true,
+      "is_deleted": false,
+      "is_explicit": null,
+      "is_extern_c": false,
+      "is_hidden_friend": false,
+      "is_inline": false,
+      "is_noexcept": false,
+      "is_override": false,
+      "is_pure_virtual": false,
+      "is_static": false,
+      "is_variadic": false,
+      "is_virtual": false,
+      "is_volatile": false,
+      "mangled": "_ZNK12abicheck_lab10Calculator3addEii",
+      "name": "add",
+      "origin": "unknown",
+      "params": [
+        {
+          "default": null,
+          "is_restrict": false,
+          "is_va_list": false,
+          "kind": "value",
+          "name": "left",
+          "pointer_depth": 0,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "is_restrict": false,
+          "is_va_list": false,
+          "kind": "value",
+          "name": "right",
+          "pointer_depth": 0,
+          "type": "int"
+        }
+      ],
+      "ref_qualifier": "",
+      "return_pointer_depth": 0,
+      "return_type": "int",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:9",
+      "visibility": "public",
+      "vtable_index": null
+    },
+    {
+      "access": "public",
+      "contract_attributes": [],
+      "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
+      "elf_visibility": "default",
+      "exception_spec": "",
+      "hidden_friend_owner": null,
+      "is_const": true,
+      "is_deleted": false,
+      "is_explicit": null,
+      "is_extern_c": false,
+      "is_hidden_friend": false,
+      "is_inline": false,
+      "is_noexcept": false,
+      "is_override": false,
+      "is_pure_virtual": false,
+      "is_static": false,
+      "is_variadic": false,
+      "is_virtual": false,
+      "is_volatile": false,
+      "mangled": "_ZNK12abicheck_lab10Calculator8multiplyEii",
+      "name": "multiply",
+      "origin": "unknown",
+      "params": [
+        {
+          "default": null,
+          "is_restrict": false,
+          "is_va_list": false,
+          "kind": "value",
+          "name": "left",
+          "pointer_depth": 0,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "is_restrict": false,
+          "is_va_list": false,
+          "kind": "value",
+          "name": "right",
+          "pointer_depth": 0,
+          "type": "int"
+        }
+      ],
+      "ref_qualifier": "",
+      "return_pointer_depth": 0,
+      "return_type": "int",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:10",
+      "visibility": "public",
+      "vtable_index": null
+    },
+    {
+      "access": "public",
+      "contract_attributes": [],
+      "deleted_from_dwarf": false,
+      "deprecated": null,
+      "elf_binding": "global",
+      "elf_visibility": "default",
+      "exception_spec": "",
+      "hidden_friend_owner": null,
+      "is_const": false,
+      "is_deleted": false,
+      "is_explicit": null,
+      "is_extern_c": false,
+      "is_hidden_friend": false,
+      "is_inline": false,
+      "is_noexcept": false,
+      "is_override": null,
+      "is_pure_virtual": false,
+      "is_static": false,
+      "is_variadic": false,
+      "is_virtual": false,
+      "is_volatile": false,
+      "mangled": "_ZN12abicheck_lab11api_versionEv",
+      "name": "api_version",
+      "origin": "unknown",
+      "params": [],
+      "ref_qualifier": "",
+      "return_pointer_depth": 0,
+      "return_type": "int",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:13",
+      "visibility": "public",
+      "vtable_index": null
+    }
+  ],
+  "git_tag": null,
+  "header_cv_facts_reliable": true,
+  "kabi": null,
+  "language_profile": null,
+  "library": "libmath_shared.so",
+  "macho": null,
+  "numpy_capi": {
+    "capi_target_version": null,
+    "consumes_array_api": false,
+    "consumes_ufunc_api": false
+  },
+  "parsed_with_build_context": false,
+  "pe": null,
+  "platform": "elf",
+  "python_api": null,
+  "python_ext": null,
+  "schema_version": 25,
+  "scope_fallback": null,
+  "source_path": "bazel-out/k8-fastbuild/bin/libmath_shared.so",
+  "sycl": null,
+  "typedefs": {},
+  "typedefs_qualified": {},
+  "types": [
+    {
+      "alignment_bits": null,
+      "base_offsets": {},
+      "bases": [],
+      "data_size_bits": null,
+      "deprecated": null,
+      "fields": [],
+      "has_anonymous_aggregate_fields": false,
+      "is_abstract": false,
+      "is_final": false,
+      "is_opaque": false,
+      "is_standard_layout": true,
+      "is_template_pattern": false,
+      "is_trivially_copyable": true,
+      "is_union": false,
+      "kind": "class",
+      "name": "Calculator",
+      "origin": "unknown",
+      "qualified_name": "abicheck_lab::Calculator",
+      "size_bits": null,
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
+      "virtual_bases": [],
+      "vptr_offset_bits": null,
+      "vtable": []
+    }
+  ],
+  "variables": [],
+  "version": "main"
+}

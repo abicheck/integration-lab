@@ -727,6 +727,107 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # cc-shared-library-target-shape (P1 follow-up to the capability-receipts
+  # PR): `//:math_shared` (root BUILD.bazel) is a real `cc_shared_library`
+  # wrapping a private `cc_library`, coexisting with `//:math`'s own legacy
+  # `cc_binary(linkshared = True)` demo shape rather than replacing it --
+  # every OTHER job in this workflow, and the committed
+  # abi/math.abicheck.json baseline, stay keyed to `//:math` exactly as
+  # before. Its own Bazel action graph (a real link action producing the
+  # shared object, as opposed to cc_binary's implicit one) and exports were
+  # verified byte-identical to :math's for the current, unchanged source
+  # (nm -D on both .so's lists the same three symbols) -- this job is what
+  # keeps that true going forward, scanning //:math_shared's own committed
+  # baseline (abi/math_shared.abicheck.json, collected the identical
+  # headers-depth way strings.abicheck.json is -- see baseline.yml).
+  # Mirrors scan_strings exactly in shape and posture: deliberately
+  # non-gating (continue-on-error throughout, no "Enforce gate" step) --
+  # this validates the target-shape mechanism itself, not an additional
+  # required check on :math's own ABI.
+  scan_math_shared:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip if nothing ABI-relevant changed
+        id: relevance
+        uses: ./.github/actions/skip-check
+
+      - name: Resolve trusted baseline from PR base SHA
+        id: resolve_baseline
+        if: steps.relevance.outputs.relevant == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/math_shared.abicheck.json
+          baseline-temp-filename: math_shared.base.abicheck.json
+
+      - name: Set up Bazel disk cache
+        if: steps.resolve_baseline.outcome == 'success'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-math_shared-${{ github.run_id }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '.bazelversion', '.bazelrc', 'BUILD.bazel') }}-
+            bazel-disk-${{ runner.os }}-
+
+      - name: Build candidate //:math_shared with Bazel
+        id: build
+        if: steps.resolve_baseline.outcome == 'success'
+        continue-on-error: true
+        run: bazel build //:math_shared --disk_cache="$HOME/.cache/bazel-disk"
+
+      - name: ABICheck compare (math_shared, non-gating, artifact only)
+        id: compare
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/math_shared.base.abicheck.json
+          new-library: bazel-bin/libmath_shared.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          format: json
+          output-file: abi-report-math-shared.json
+          fail-on-breaking: false
+          fail-on-api-break: false
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Upload abi-report-math-shared artifact
+        if: always() && steps.compare.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abi-report-math-shared
+          path: abi-report-math-shared.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Report math_shared target-shape profile status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### math_shared target-shape profile (cc_shared_library, best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.relevance.outputs.relevant }}" != "true" ]; then
+              echo 'No ABI-relevant paths changed -- skipped.'
+            elif [ "${{ steps.resolve_baseline.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not resolve abi/math_shared.abicheck.json from the PR base SHA.'
+            elif [ "${{ steps.build.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: `bazel build //:math_shared` failed.'
+            elif [ "${{ steps.compare.outcome }}" != "success" ]; then
+              echo '⚠️ Build succeeded but the abicheck compare step failed -- see the job log above.'
+            else
+              echo '✅ Ran successfully -- see the `abi-report-math-shared` artifact for the report.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Architecture review P1-5, hardened per the P0 follow-up in
   # UPSTREAM_TO_ABICHECK.md's "P0.6 Fail-closed expected-check aggregation":
   # `abicheck aggregate` now gates against a *declared* expected-target

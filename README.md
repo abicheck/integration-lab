@@ -456,6 +456,51 @@ own required gate (the `scan` job's "Enforce gate" step) is unaffected
 either way; this job additionally validates that the aggregate CLI's own
 plumbing produced the report `scan` was actually supposed to produce.
 
+## `cc_shared_library` target shape (`capabilities.yaml`: `cc-shared-library-target-shape`)
+
+Every other target in this repo — `//:math`, `//strings_lib:strings`,
+every `fixtures/*` scenario pair — is built as `cc_binary(linkshared =
+True)`: a `cc_binary` whose `linkshared` attribute makes Bazel emit a
+`.so` instead of an executable. That's a real, common way to produce a
+shared library with Bazel, but it isn't the *only* one, and a review of
+this lab's own coverage flagged it as a gap: nothing exercised a genuine
+`cc_shared_library` target — the rule Bazel actually documents for a
+shared library assembled from one or more `cc_library` dependencies, with
+its own distinct action graph (a real link action producing the shared
+object, not `cc_binary`'s implicit one) and its own export-surface
+semantics.
+
+`//:math_shared` (root `BUILD.bazel`) closes that gap, deliberately by
+addition rather than by migration: `math_impl` is an ordinary, private
+`cc_library` (the same `src/math.cc` `//:math` already builds, just never
+linked into a binary on its own), and `math_shared` is a `cc_shared_library`
+wrapping it. `//:math` itself is untouched — every existing job's cache
+key, evidence pack, and committed baseline (`abi/math.abicheck.json`)
+stay keyed to `//:math` exactly as before; migrating the required gate's
+own target shape is a separate, much larger decision this PR doesn't
+make. Verified directly (not assumed) that the two shapes currently
+produce an identical export surface for the same source:
+`nm -D bazel-bin/libmath.so` and `nm -D bazel-bin/libmath_shared.so` list
+the same three defined symbols (`Calculator::add`, `Calculator::multiply`,
+`api_version`) for unchanged `src/math.cc`.
+
+`abi-scan.yml`'s `scan_math_shared` job builds `//:math_shared` and
+`compare`s it (headers-depth, `ast-frontend: clang`) against its own
+committed baseline, `abi/math_shared.abicheck.json` — collected by
+`baseline.yml` the identical, lightweight way `abi/strings.abicheck.json`
+is (no Bazel evidence pack, no `depth: source` replay; this target
+exists to validate the target-shape mechanism, not to duplicate `:math`'s
+own full source-evidence pipeline). Deliberately non-gating, same posture
+as `scan_strings`: continue-on-error throughout, no "Enforce gate" step,
+never able to block a PR that never touched `//:math_shared`.
+
+Still open, and deliberately not attempted here (see "Known limitations"
+below): `scenarios/manifest.yaml`'s own detection-correctness fixture
+pairs (`fixtures/*`) are still all `cc_binary(linkshared = True)`-shaped
+— proving abicheck's *detectors* behave identically against a
+`cc_shared_library`-shaped target, not just that one such target can be
+built and scanned, is a separate, still-open axis.
+
 ## Consumer/app-scoped validation (architecture review P1-6)
 
 `consumer/` (`consumer/BUILD.bazel`) is a real, separately-built
@@ -572,14 +617,20 @@ This lab currently validates one `cc_library` + `cc_binary(linkshared =
 True)` target (`//:math`) with the full `depth: source` gate pipeline,
 a second, independent library (`//strings_lib:strings`, see
 "Multi-library aggregate gate" above) exercising the `abicheck aggregate`
-CLI at a deliberately scoped-down `depth: headers`, and a real consumer
+CLI at a deliberately scoped-down `depth: headers`, a real consumer
 application (`//consumer:consumer_app`, see "Consumer/app-scoped
-validation" above) exercising `compare --used-by`. The known axes it does
+validation" above) exercising `compare --used-by`, and — since the
+`cc-shared-library-target-shape` capability closed — a genuine `cc_shared_library`
+target (`//:math_shared`, root `BUILD.bazel`) wrapping a private
+`cc_library`, coexisting with `//:math`'s own `cc_binary(linkshared =
+True)` shape rather than replacing it, scanned (headers-depth,
+non-gating) by `abi-scan.yml`'s `scan_math_shared` job against its own
+committed baseline (`abi/math_shared.abicheck.json`, refreshed by
+`baseline.yml` the same way `abi/strings.abicheck.json` is). The known axes it does
 not yet cover are generated from `capabilities.yaml` below (see
 "Capability matrix"), not hand-typed here, so the two cannot disagree:
 
 <!-- capability-matrix:gaps:start -->
-- **cc-shared-library-target-shape** (`gap`): README's "Known limitations": every fixture and the real :math target use cc_binary(linkshared = True); nothing exercises a genuine Bazel cc_shared_library target yet.
 - **module-bazel-lock-pinning** (`gap`): README's "Known limitations": MODULE.bazel.lock (dependency pinning) is not part of any covered axis yet.
 <!-- capability-matrix:gaps:end -->
 
@@ -804,7 +855,11 @@ desired detector improvement, not necessarily a bug), not "this repo is
 broken."
 
 **Not yet covered** (explicitly out of scope for this initial slice, not
-silently dropped): a `cc_shared_library` scenario and `MODULE.bazel.lock`
+silently dropped): a `cc_shared_library` *detection-correctness scenario*
+(fixtures/`scenarios/manifest.yaml`'s own `v1`/`v2` compare pairs are
+still all `cc_binary(linkshared = True)`-shaped, unlike root
+`BUILD.bazel`'s standalone `//:math_shared` target above, which the
+capability matrix now covers) and `MODULE.bazel.lock`
 pinning. `fixtures/`/`scenarios/` themselves are still single-library
 `v1`/`v2` compare fixtures — the multi-library *aggregate-plumbing* gap
 is covered separately by `strings_lib/`'s own CI wiring (see
