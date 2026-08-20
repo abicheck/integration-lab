@@ -138,11 +138,44 @@ def _workflow_legs(workflow: dict[str, Any]) -> tuple[set[tuple[str, str, str]],
         return set(), errors
 
     legs: set[tuple[str, str, str]] = set()
+    seen_ids: set[str] = set()
     for i, leg in enumerate(include):
-        if not isinstance(leg, dict) or not _REQUIRED_LEG_KEYS <= set(leg):
+        if not isinstance(leg, dict) or not ({"id", *_REQUIRED_LEG_KEYS} <= set(leg)):
             errors.append(
                 f"{WORKFLOW_PATH}: strategy.matrix.include[{i}]={leg!r} is "
-                f"missing one of {sorted(_REQUIRED_LEG_KEYS)}"
+                f"missing one of {sorted({'id', *_REQUIRED_LEG_KEYS})}"
+            )
+            continue
+        # Codex review, PR #16: `id` is operational in abi-scan.yml itself
+        # (it names output files/artifacts/cache keys/summaries), but this
+        # checker previously discarded it and compared only the raw
+        # (cc, cxx, std) set -- so a duplicated id (two legs racing to name
+        # the same artifact) or an id swapped onto the wrong compiler
+        # triple (mislabeling which leg a report actually came from) both
+        # passed silently as long as the overall triple set matched.
+        # Reuses the same family/std parser the capabilities.yaml side
+        # already uses, since a workflow leg's own `id` (e.g. "gcc-cxx17")
+        # is spelled with the identical <family>-cxx<NN> shape as
+        # capabilities.yaml's `dimensions.toolchain` enum.
+        leg_id = leg["id"]
+        if not isinstance(leg_id, str) or not leg_id:
+            errors.append(
+                f"{WORKFLOW_PATH}: strategy.matrix.include[{i}].id={leg_id!r} "
+                "must be a non-empty string"
+            )
+            continue
+        if leg_id in seen_ids:
+            errors.append(
+                f"{WORKFLOW_PATH}: strategy.matrix.include has a duplicate "
+                f"id {leg_id!r}"
+            )
+            continue
+        seen_ids.add(leg_id)
+        if not _leg_matches_toolchain_axis(leg_id, leg):
+            errors.append(
+                f"{WORKFLOW_PATH}: strategy.matrix.include[{i}] has "
+                f"id={leg_id!r} but cc/cxx/std={leg!r} doesn't match that "
+                "id's own family/standard (id and compiler triple disagree)"
             )
             continue
         legs.add((leg["cc"], leg["cxx"], leg["std"]))

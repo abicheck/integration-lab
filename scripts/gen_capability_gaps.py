@@ -97,7 +97,18 @@ def render_block(matrix: dict[str, Any]) -> str:
         # silently rendering empty (and therefore looking generated-but-
         # trivial) if every known gap is ever closed without anyone
         # updating this script.
-        lines.append("_No known gaps -- every declared capability axis is covered._")
+        #
+        # Deliberately does NOT claim "every axis is covered" (Codex
+        # review, PR #16): this script only knows that no entry currently
+        # has status gap/planned -- it never checks that every possible
+        # dimension combination actually has a covered/non_gating_watch
+        # entry naming it, so an accidental deletion of the two real gap
+        # entries would make this line assert a completeness this script
+        # never verified. States only what's actually true instead.
+        lines.append(
+            "_No `gap`/`planned` entries are currently declared in "
+            "`capabilities.yaml`._"
+        )
     else:
         for entry in gaps:
             note = (entry.get("note") or "").strip()
