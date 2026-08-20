@@ -44,3 +44,6 @@ jobs:
 
       - name: Check README.md's gap list against capabilities.yaml
         run: python3 scripts/gen_capability_gaps.py --check
+
+      - name: Check toolchain_matrix's compiler legs against capabilities.yaml
+        run: python3 scripts/check_toolchain_matrix_sync.py

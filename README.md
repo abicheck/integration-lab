@@ -635,13 +635,20 @@ job in `abi-scan.yml`/`scenarios.yml`/`scenarios-canary.yml` that no entry
 documents.
 
 Deliberately staged, not built all at once. Phase 1 (this file + its
-validator) and phase 2 (generating the "Known limitations" gap list above
+validator), phase 2 (generating the "Known limitations" gap list above
 from this file — `scripts/gen_capability_gaps.py`, checked in CI the same
-way, so the two literally cannot disagree) are both done. Two later,
-separately-scoped follow-ups remain: a shared reusable-workflow leg
-replacing the boilerplate `abi-scan.yml`'s jobs currently duplicate, and
-driving `toolchain_matrix`'s own `strategy.matrix` from this file
-dynamically.
+way, so the two literally cannot disagree), and phase 4 (each
+`toolchain_matrix` entry's `matrix_leg` — its real `cc`/`cxx`/`std` —
+checked against `abi-scan.yml`'s actual `strategy.matrix.include` by
+`scripts/check_toolchain_matrix_sync.py`, so a repointed compiler can't
+drift from what this file claims either) are done. Deliberately a
+consistency *check* rather than a live GitHub Actions dynamic matrix (a
+prior job emitting JSON consumed via `fromJson()`): that would restructure
+a real, already-working job in the workflow this repo protects most
+carefully, with no way to dry-run the result outside an actual Actions
+run — this gets the same "can't silently drift" property without that
+risk. One follow-up remains: a shared reusable-workflow leg (phase 3)
+replacing the boilerplate `abi-scan.yml`'s jobs currently duplicate.
 
 ## Scenario validation (`scenarios.yml`)
 
