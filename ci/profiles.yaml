@@ -69,6 +69,19 @@ profiles:
       - include
       - strings_lib/include
     build_command: "bazel build //:math //:math_shared //strings_lib:strings //consumer:consumer_app"
+    # PR2 item 4 (ci/check_profile_coverage.py): profile-appropriate
+    # coverage requirements, read alongside this profile's own
+    # `evidence.backend_evidence` shape (see collect_evidence() in
+    # ci/backends/bazel.py -- `kind: bazel-cquery`, a `targets` list).
+    # `min_resolved_targets` is Bazel-specific (cmake/make have no
+    # equivalent target-resolution concept -- see their own
+    # `min_compile_units` below instead), matching
+    # scripts/check_coverage_contract.py's own `require_bazel_target`
+    # precedent for this backend.
+    coverage:
+      checked_targets: [math, strings]
+      require_public_headers: true
+      min_resolved_targets: 1
 
   - id: linux-x86_64-gcc14-cxx17-cmake-ninja
     backend: cmake
@@ -96,6 +109,15 @@ profiles:
       - include
       - strings_lib/include
     build_command: "cmake --preset gcc14-cxx17 && cmake --build --preset gcc14-cxx17"
+    # See the bazel profile's own `coverage` comment above for the general
+    # shape. `min_compile_units` here reads
+    # `evidence/compile_commands.json` (staged by ci/emit_build_output.py
+    # from CMake's own generated compile_commands.json) -- one entry per
+    # translation unit Ninja actually compiled.
+    coverage:
+      checked_targets: [math, strings]
+      require_public_headers: true
+      min_compile_units: 1
 
   - id: linux-x86_64-gcc14-cxx17-make-bear
     backend: make
@@ -118,3 +140,15 @@ profiles:
       - include
       - strings_lib/include
     build_command: "make -C buildsystems/make CC=gcc-14 CXX=g++-14"
+    # See the bazel profile's own `coverage` comment above. `bear` is
+    # optional on this backend (make.py's own verify_environment() note),
+    # so `require_compile_commands: false` -- a runner without `bear`
+    # degrades to "no compile_commands.json evidence" (a coverage note),
+    # not a coverage failure, matching make.py's existing best-effort
+    # posture for it. When compile_commands.json IS present (bear
+    # installed), min_compile_units still applies to it.
+    coverage:
+      checked_targets: [math, strings]
+      require_public_headers: true
+      min_compile_units: 1
+      require_compile_commands: false

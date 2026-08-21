@@ -64,7 +64,75 @@ and `buildsystems/make/` for the two new build definitions, and
 `UPSTREAM_TO_ABICHECK.md`'s 2026-08-21 entry for a build-system-identity
 gap this staging work surfaced upstream. Wiring an ABICheck scan into the
 CMake/Make profiles, and deciding whether either should ever become
-`contract: true`, is explicitly out of scope for this PR.
+`contract: true`, was explicitly out of scope for that PR -- see below.
+
+### PR2: per-profile ABI checks, receipts, and an advisory integration gate
+
+PR2 wires an actual ABI comparison into all three profiles' staged output,
+still advisory only (`.github/workflows/abi-scan.yml`'s own required Bazel
+gate is completely untouched).
+
+**The real `abicheck` scanner is not available in this sandbox** -- it's an
+external package (`pip install abicheck @ git+https://github.com/abicheck/
+abicheck.git@...`, the same one `abi-scan.yml` installs), and there is no
+network access here to fetch it (verified: a `pip download` against that
+exact URL times out with no response). `tools/abicheck/facts.bzl` is Bazel
+glue that *feeds* the external scanner a source-fact pack -- it is not a
+vendored copy of the scanner and has no standalone comparison logic. Rather
+than fake or stub the scanner, `ci/check_profile.py` implements a real,
+honest, narrower ABI signal instead: a diff of each staged shared library's
+**dynamic symbol table** (`nm -D`/`readelf`, present on every runner, no
+install needed) between a committed baseline and the freshly built
+candidate, plus a content-hash diff of the target's staged public headers.
+This catches the class of change the lab's own `fixtures/remove_function`/
+`fixtures/add_function` scenarios exercise (an exported symbol
+removed/added) but, unlike the real `abicheck`, cannot see a change that's
+invisible at the binary symbol-table level (a struct layout change, a
+default-argument change, an inline body change) -- see that script's own
+module docstring for the full accounting, and `UPSTREAM_TO_ABICHECK.md`'s
+PR2 entry for what a future PR should do once a real scanner is reachable.
+
+Applied uniformly across all three profiles (including Bazel) rather than
+only the two new ones -- this is what lets PR2 demonstrate the actual goal
+of this whole effort on its own happy path: the same source produces a
+`NO_CHANGE` verdict against each profile's own baseline, independently,
+under Bazel, CMake+Ninja, and Make. (Cross-build-system *equivalence*
+checking -- comparing the three profiles' own reports against each other,
+not just each against its own baseline -- is explicitly PR3+ scope, not
+attempted here.)
+
+- **`ci/check_profile.py`** -- `dump` (write a baseline from a staged
+  profile build) and `check` (compare a staged build against a committed
+  baseline, write a report, exit non-zero on `BREAKING`/`NOT_COMPARABLE`).
+- **`abi/profiles/<profile-id>/{math,strings}.abicheck.json`** -- the
+  seeded, reviewed baselines for all three profiles (including a new,
+  parallel Bazel one -- this PR's own baseline schema and mechanism, kept
+  entirely separate from and never replacing `abi/math.abicheck.json`/
+  `abi/strings.abicheck.json`, which `abi-scan.yml` still reads unchanged).
+- **`ci/emit_profile_receipt.py`** -- one receipt per profile per run
+  (schema `abicheck.integration-profile-receipt/v1`,
+  `ci/schemas/profile-receipt.schema.json`): build/check/coverage status,
+  per-target report digests and verdicts, build-output digest, scanner
+  mechanism note.
+- **`ci/check_profile_coverage.py`** -- a profile-aware coverage contract
+  (`ci/profiles.yaml`'s new `coverage` block per profile): candidate
+  artifact exists and its digest matches what was staged, public headers
+  are actually present, and a backend-appropriate compile-evidence signal
+  (Bazel: `bazel cquery` resolved targets; CMake/Make: a non-empty
+  `compile_commands.json`) was actually collected.
+- **`integration_gate` job** (`.github/workflows/integration-shadow.yml`) --
+  runs after all three profiles' build+check+receipt steps, downloads every
+  profile's receipt, validates each against the schema, confirms each
+  receipt's own embedded `profile_id` matches the profile it was expected
+  for, and requires `status: passed` with clean per-target verdicts (the
+  per-target completeness and digest cross-checks themselves run earlier,
+  in `ci/check_profile_coverage.py`, whose result the receipt already
+  carries -- this job doesn't re-derive them), rendering a
+  `profile | build | evidence | verdict | status` step-summary table. This
+  job is real (it fails if a receipt is missing, invalid, or reports a
+  breaking/incomparable verdict) but stays advisory: like the rest of this
+  workflow, it is never added to branch-protection required status checks
+  -- promotion is explicitly PR3+ scope.
 
 ## Gate / PR-comment architecture
 

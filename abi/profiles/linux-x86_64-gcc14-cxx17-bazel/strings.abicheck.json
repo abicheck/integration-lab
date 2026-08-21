@@ -1,0 +1,34 @@
+{
+  "backend": "bazel",
+  "dynamic_symbols": [
+    {
+      "name": "_ZN12abicheck_lab19strings_api_versionEv",
+      "size": 15,
+      "type": "T"
+    },
+    {
+      "name": "_ZN12abicheck_lab6JoinerC1Ev",
+      "size": 15,
+      "type": "T"
+    },
+    {
+      "name": "_ZN12abicheck_lab6JoinerC2Ev",
+      "size": 15,
+      "type": "T"
+    },
+    {
+      "name": "_ZNK12abicheck_lab6Joiner12total_lengthEPKcS2_",
+      "size": 59,
+      "type": "T"
+    }
+  ],
+  "kind": "abicheck.lab-symbol-baseline/v1",
+  "library_filename": "libstrings.so",
+  "profile_id": "linux-x86_64-gcc14-cxx17-bazel",
+  "public_headers": {
+    "headers/strings_lib/include/abicheck_lab/strings.h": "a28a33593284b90156d6d5b1f7840734946122329334ddee975cd744c01b91b4"
+  },
+  "schema_version": 1,
+  "soname": null,
+  "target": "strings"
+}
