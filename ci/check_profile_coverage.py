@@ -215,10 +215,12 @@ def evaluate(
                 failures.append(f"report for target {target!r} at {report_path} is missing/invalid JSON")
                 continue
             candidate_rel = report.get("candidate_library_path")
+            candidate_sha256 = report.get("candidate_library_sha256")
             target_facts = artifact_facts.get(target)
             report_facts[target] = {
                 "report_path": str(report_path),
                 "candidate_library_path": candidate_rel,
+                "candidate_library_sha256": candidate_sha256,
                 "report_profile_id": report.get("profile_id"),
                 "report_target": report.get("target"),
             }
@@ -254,6 +256,32 @@ def evaluate(
                 failures.append(
                     f"report for target {target!r} checked {candidate_rel!r}, but "
                     f"build-output.json staged this target at {expected_rel!r}"
+                )
+                continue
+            # Path identity alone isn't evidence identity: every profile
+            # always stages a given target at the same relative path
+            # across rebuilds, so a stale report from an earlier build of
+            # this exact profile/target -- already ruled comparable by the
+            # identity checks above -- could still carry a clean verdict
+            # for bytes that no longer exist at that path. Binding the
+            # report's own recorded candidate digest to the artifact's
+            # independently recomputed one (artifact_facts, above) is what
+            # actually proves this report analyzed THESE bytes, not merely
+            # a report that once looked at this path (Codex review, PR #20;
+            # follow-up to the profile_id/target identity fix above --
+            # check_profile.py now records candidate_library_sha256 for
+            # exactly this purpose).
+            expected_sha256 = target_facts.get("recomputed_sha256")
+            if not candidate_sha256:
+                failures.append(
+                    f"report for target {target!r} has no candidate_library_sha256 to cross-check "
+                    "(stale report from before this field existed?)"
+                )
+            elif expected_sha256 is None or candidate_sha256 != expected_sha256:
+                failures.append(
+                    f"report for target {target!r} analyzed digest {candidate_sha256!r}, but "
+                    f"the staged artifact at {candidate_rel!r} now recomputes to {expected_sha256!r} -- "
+                    "stale report, not evidence for the current build"
                 )
         facts["report_cross_check"] = report_facts
 

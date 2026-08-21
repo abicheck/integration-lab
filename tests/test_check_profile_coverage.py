@@ -108,10 +108,38 @@ def _write_report(staged, name, **fields):
 
 
 def test_report_cross_check_passes_with_matching_identity(tmp_path):
+    staged, real_sha = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    report_path = _write_report(
+        staged, "report.json", profile_id="p-bazel", target="math", candidate_library_sha256=real_sha
+    )
+    result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
+    assert result["gate_status"] == "PASS", result["failures"]
+
+
+def test_report_cross_check_fails_on_missing_digest(tmp_path):
+    # A report predating the candidate_library_sha256 field (or one that
+    # otherwise omits it) must not be trusted just because its path and
+    # identity match -- there's nothing here proving it analyzed the
+    # current bytes.
     staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
     report_path = _write_report(staged, "report.json", profile_id="p-bazel", target="math")
     result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
-    assert result["gate_status"] == "PASS", result["failures"]
+    assert result["gate_status"] == "FAIL"
+    assert any("no candidate_library_sha256" in f for f in result["failures"])
+
+
+def test_report_cross_check_fails_on_stale_digest(tmp_path):
+    # Same profile, same target, same path -- but the report's own
+    # recorded digest doesn't match what's staged now (a stale report
+    # from an earlier build of this exact profile/target, which every
+    # other check here would otherwise accept purely on path/identity).
+    staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    report_path = _write_report(
+        staged, "report.json", profile_id="p-bazel", target="math", candidate_library_sha256="0" * 64
+    )
+    result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
+    assert result["gate_status"] == "FAIL"
+    assert any("stale report" in f for f in result["failures"])
 
 
 def test_report_cross_check_fails_on_wrong_profile_id(tmp_path):

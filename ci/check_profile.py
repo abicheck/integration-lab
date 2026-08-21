@@ -132,7 +132,17 @@ _NM_LINE_RE = re.compile(r"^(?P<name>\S+)\s+(?P<type>[A-Za-z])(?:\s+(?P<value>[0
 # (a struct/array a consumer links against grew or shrank). Comparing size
 # for every symbol regardless of type flagged ordinary recompiles as
 # BREAKING (Codex review, PR #20); type changes are still always compared.
-_CODE_SYMBOL_TYPES = frozenset({"T", "t", "W", "w"})
+# "i" (GNU indirect function / IFUNC -- man nm: "For ELF format files this
+# indicates that the symbol is an indirect function") is code, exactly
+# like T/t/W/w: its exported ABI is the resolved function's signature, not
+# the resolver's own byte size, which legitimately changes on every
+# ordinary recompile of the resolver just like any other function body.
+# Previously excluded, so an implementation-only resolver change was
+# flagged as a resized *data* object and reported BREAKING even though
+# nothing about the IFUNC's exported ABI changed (Codex review, PR #20;
+# verified locally against a real gcc-compiled __attribute__((ifunc(...)))
+# library -- `nm -D --defined-only -P` reports it as type `i`).
+_CODE_SYMBOL_TYPES = frozenset({"T", "t", "W", "w", "i"})
 
 
 class CheckProfileError(RuntimeError):
@@ -471,6 +481,17 @@ def compare_profile(
         public_headers_changed=headers_changed,
         candidate_library_path=str(library_path.relative_to(staged_dir)),
         candidate_soname=candidate_soname,
+        # The candidate identity was previously only a path -- a stale
+        # report from an earlier build of the SAME profile/target (already
+        # rejected when the profile/target itself differs -- see the
+        # identity checks above) could still carry a clean NO_CHANGE
+        # verdict for a candidate that no longer exists at that path with
+        # those bytes, since every profile always stages the same target
+        # at the same relative path across rebuilds. Recording the actual
+        # analyzed bytes' digest lets a caller (check_profile_coverage.py)
+        # bind this report to the specific artifact it claims to describe,
+        # not just its path (Codex review, PR #20).
+        candidate_library_sha256=_sha256_file(library_path),
     )
     return facts
 
