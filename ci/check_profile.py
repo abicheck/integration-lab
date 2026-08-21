@@ -278,6 +278,28 @@ def compare_profile(
         )
         return facts
 
+    # Confirm this baseline is actually FOR this profile/target -- kind
+    # alone doesn't rule out an accidentally copy-pasted or wrong-flag
+    # baseline (e.g. the cmake profile's math baseline passed to a make
+    # run, or math's baseline passed for strings). Since the three
+    # profiles' math/strings surfaces are nearly identical and function
+    # code size is deliberately ignored, a mismatched baseline could
+    # otherwise report NO_CHANGE and silently defeat the whole per-profile
+    # contract (Codex review, PR #20).
+    baseline_profile_id = baseline.get("profile_id")
+    baseline_target = baseline.get("target")
+    if baseline_profile_id != profile_id or baseline_target != target:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"baseline is for profile_id={baseline_profile_id!r} target={baseline_target!r}, "
+                f"not the requested profile_id={profile_id!r} target={target!r}"
+            ),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
     try:
         build_output = _load_build_output(staged_dir)
         library_path = _target_library_path(staged_dir, build_output, target)
