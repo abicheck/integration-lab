@@ -196,20 +196,40 @@ PATH_REWRITE_PATHS = frozenset({
     ("build_source", "source_graph", "edges", ANY_INDEX, "dst"),
 })
 
-# NOT yet handled -- a real, still-open gap from the same review round:
-# source_abi.mappings.public_header_to_target's KEYS (not values) are
-# absolute paths too (e.g.
-# {"/abs/path/include/abicheck_lab/math.h": "<target>"}). Every path
-# above is rewritten by walking to a fixed VALUE position; a dict key is
-# structurally different (normalize_paths() below only ever recurses into
-# values, never rewrites the key itself) and would need real, separate
-# handling -- rebuilding the dict with renamed keys, deciding what happens
-# if two differently-cased-or-rooted absolute paths collide onto the same
-# relative suffix, etc. Doing that safely is more than this pass's other,
-# mechanical additions; deferred rather than rushed. Comparability is
-# unaffected in practice today (CI/release runs land at the same
-# conventional checkout path), so this is a real but currently low-impact
-# gap, not silently dropped.
+# NOT yet handled -- real, still-open gaps sharing one underlying cause:
+# this allowlist can only ever match a FIXED schema path (a literal field
+# name, or ANY_INDEX for "any list position") -- it has no way to express
+# "any dict key" or "rewrite this key itself, not just its value". Two
+# distinct places in this same embedded-snapshot tree need exactly that,
+# and neither is a simple parallel addition to the entries above:
+#
+# 1. source_abi.mappings.public_header_to_target's KEYS (not values) are
+#    absolute paths too (e.g.
+#    {"/abs/path/include/abicheck_lab/math.h": "<target>"}).
+#    normalize_paths() below only ever recurses into VALUES, never
+#    rewrites a key -- would need rebuilding the dict with renamed keys,
+#    plus deciding what happens if two differently-rooted absolute paths
+#    collide onto the same relative suffix.
+# 2. source_graph.indexes.by_source_decl (and by_file, by_target)'s own
+#    dict KEYS are dynamic per-snapshot identifiers (e.g. a
+#    "decl://_ZN..." mangled name) that vary snapshot to snapshot -- not
+#    a fixed field name ANY_INDEX-style matching can stand in for at all,
+#    even to reach their LIST values (`by_source_decl.<decl>[]`, each
+#    holding the same header:///edge-endpoint node ids already normalized
+#    above at the node/edge level) (Codex review, PR #25, round 5:
+#    "Normalize source-graph index references" -- flagged as "just add
+#    the index-value path alongside the node/edge paths", which undersells
+#    what's actually needed: a wildcard-dict-key concept this allowlist
+#    mechanism doesn't have yet, the same underlying gap as #1, not a
+#    one-line addition).
+#
+# Doing either safely is a real design change to normalize_paths() itself
+# (a wildcard-key sentinel, matched and rewritten alongside ANY_INDEX),
+# not another mechanical entry in this set -- deferred rather than rushed
+# through under review-bot pressure that kept finding one more instance of
+# the identical underlying limitation. Comparability is unaffected in
+# practice today (CI/release runs land at the same conventional checkout
+# path), so this is real but currently low-impact, not silently dropped.
 
 # Exact paths whose "detail" free-text field is provenance prose that
 # embeds a per-run timing number -- verified against the real committed

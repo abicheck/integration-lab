@@ -536,3 +536,57 @@ def test_compare_profile_falls_back_to_nm_readelf_when_bear_legitimately_absent(
     result = compare_profile("p1", "math", candidate_staged, baseline)
     assert result["verdict"] == "NO_CHANGE"
     assert "bear is not installed" in result["mechanism"]
+
+
+def test_compare_profile_falls_back_when_candidate_legitimately_lacks_bear(tmp_path):
+    # The inverse of the case above: profile-baseline.yml installs bear,
+    # so the COMMITTED baseline normally carries a real abicheck_snapshot
+    # -- but a local/custom runner comparing against it can still
+    # legitimately lack bear itself. The first bear-absent fix only
+    # checked the baseline's own abicheck_snapshot_skipped_reason; a
+    # baseline WITH a real snapshot compared against a bear-absent
+    # candidate fell straight into the generic real-scan-failed except
+    # branch and was always forced to NOT_COMPARABLE, so
+    # coverage.require_compile_commands: false still could never produce a
+    # passing comparison on such a runner (Codex review, PR #25, round 2:
+    # "Fall back when the candidate legitimately lacks Bear").
+    lib_before = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so")
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    baseline_build_output = json.loads((baseline_staged / "build-output.json").read_text())
+    baseline_build_output["profile"]["backend"] = "make"
+    # Bear-absent on THIS build_output too, purely so build_baseline() (this
+    # fixture has no real compile_commands.json to give it) degrades
+    # gracefully instead of crashing -- overwritten with a fake real
+    # snapshot right below to actually simulate the "dumped WITH bear
+    # available elsewhere" scenario this test targets.
+    baseline_build_output["evidence"] = {
+        "backend_evidence": {
+            "kind": "make+bear",
+            "compile_commands_present": False,
+            "note": "bear not installed on this runner -- compile_commands.json not generated",
+        }
+    }
+    (baseline_staged / "build-output.json").write_text(json.dumps(baseline_build_output))
+    baseline = build_baseline("p1", "math", baseline_staged)
+    # Simulate a baseline dumped WITH bear available (a real, non-null
+    # snapshot) -- content doesn't matter, since a bear-absent candidate
+    # must never reach the point of actually reading it.
+    baseline["abicheck_snapshot"] = {"fake": "snapshot"}
+    del baseline["abicheck_snapshot_skipped_reason"]
+
+    lib_after = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_after.so")
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="libmath.so")
+    candidate_build_output = json.loads((candidate_staged / "build-output.json").read_text())
+    candidate_build_output["profile"]["backend"] = "make"
+    candidate_build_output["evidence"] = {
+        "backend_evidence": {
+            "kind": "make+bear",
+            "compile_commands_present": False,
+            "note": "bear not installed on this runner -- compile_commands.json not generated",
+        }
+    }
+    (candidate_staged / "build-output.json").write_text(json.dumps(candidate_build_output))
+
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+    assert result["verdict"] == "NO_CHANGE"
+    assert "bear is not installed" in result["mechanism"]

@@ -883,23 +883,30 @@ def _apply_real_scan_verdict(
     - the real dump/compare invocation itself fails (missing castxml, a
       header-context ambiguity, etc.) -- see real_scan.py's own docstring.
 
-    The ONE exception to that fail-closed rule: a baseline whose missing
-    snapshot is the documented, non-failing bear-absent degrade
-    (build_baseline()'s abicheck_snapshot_skipped_reason -- see
-    _bear_legitimately_absent()) is not the same as a baseline that simply
-    predates this integration or a genuine scanner failure. That
-    configuration is explicitly supported (ci/profiles.yaml's
+    The ONE exception to that fail-closed rule: EITHER side's missing
+    real-scan evidence being the documented, non-failing bear-absent
+    degrade (_bear_legitimately_absent()) is not the same as a baseline
+    that simply predates this integration or a genuine scanner failure.
+    That configuration is explicitly supported (ci/profiles.yaml's
     coverage.require_compile_commands: false); forcing NOT_COMPARABLE for
     it would mean it could never pass a check or receipt at all, on either
     side of the fail-closed intent above (Codex review, PR #25: "Keep
-    Bear-less baselines comparable"). The nm/readelf-derived verdict
-    facts.update() already wrote earlier in compare_profile() -- which
-    already folds in the loader-break conditions itself -- is used as-is
-    instead.
+    Bear-less baselines comparable" -- and its own round-2 follow-up,
+    "Fall back when the candidate legitimately lacks Bear": the first fix
+    only covered the baseline's own bear-absent snapshot; a baseline
+    dumped WITH bear available compared against a candidate build on a
+    runner that legitimately lacks it hit this function's OTHER fail-closed
+    branch below unchanged). The nm/readelf-derived verdict facts.update()
+    already wrote earlier in compare_profile() -- which already folds in
+    the loader-break conditions itself -- is used as-is instead, whichever
+    side is missing it.
     """
+    backend = build_output.get("profile", {}).get("backend")
+    candidate_bear_absent = _bear_legitimately_absent(backend, build_output)
+
     baseline_snapshot = baseline.get("abicheck_snapshot")
-    if not isinstance(baseline_snapshot, dict):
-        if "abicheck_snapshot_skipped_reason" in baseline:
+    if not isinstance(baseline_snapshot, dict) or candidate_bear_absent:
+        if "abicheck_snapshot_skipped_reason" in baseline or candidate_bear_absent:
             facts.update(mechanism=BEAR_ABSENT_MECHANISM_NOTE)
             return
         verdict, detail = _combine_with_loader_break(
