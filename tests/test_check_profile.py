@@ -112,6 +112,29 @@ def test_compare_profile_compatible_on_added_symbol(tmp_path):
     assert "bar" in result["symbols"]["added"]
 
 
+def test_compare_profile_compatible_on_added_symbol_with_matching_header_update(tmp_path):
+    # The realistic case: adding a public function almost always means
+    # declaring it in the header too. headers_changed being non-empty here
+    # must not override the COMPATIBLE verdict the symbol table itself
+    # already proves -- the previous check order (header-only fallback
+    # checked before "added") made this overwhelmingly common, safe case
+    # incorrectly report NOT_COMPARABLE (Codex review, PR #20). The
+    # existing test_compare_profile_compatible_on_added_symbol above never
+    # actually exercised this since it doesn't change header_text between
+    # before/after.
+    lib_before = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so")
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, header_text="int foo(void);\n")
+    baseline = build_baseline("p1", "math", baseline_staged)
+
+    lib_after = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\nint bar(void) { return 2; }\n", name="lib_after.so")
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, header_text="int foo(void);\nint bar(void);\n")
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "COMPATIBLE"
+    assert "bar" in result["symbols"]["added"]
+    assert result["public_headers_changed"]
+
+
 def test_compare_profile_not_comparable_on_header_only_change(tmp_path):
     lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
     baseline_staged = _stage_profile(tmp_path / "before", lib, header_text="int foo(void); // v1\n")

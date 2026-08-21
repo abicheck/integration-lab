@@ -487,27 +487,42 @@ def compare_profile(
                 f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
             )
         detail = "; ".join(detail_parts)
+    elif added:
+        # Checked before the header-only NOT_COMPARABLE fallback below --
+        # an ordinary, safe additive API change (a new public function)
+        # almost always touches its header too, to declare the new
+        # symbol. Checking headers_changed first meant this overwhelmingly
+        # common, genuinely-safe case fell into NOT_COMPARABLE (and
+        # therefore failing, per ci/emit_profile_receipt.py's status
+        # rule) purely because it also touched a header, even though the
+        # symbol table itself proves the addition (Codex review, PR #20;
+        # follow-up to the header-only-change fix just above -- that fix
+        # correctly stopped silently vouching for a header-only edit with
+        # no symbol evidence at all, but it also swallowed the addition
+        # case, which does have symbol evidence). This mechanism still
+        # can't rule out an unrelated hidden change sharing the same
+        # header edit (documented, pre-existing limitation of a symbol-
+        # table-only signal -- see this module's own docstring) -- but
+        # that risk existed before this PR's header-only-NOT_COMPARABLE
+        # fix too, and failing every ordinary addition to guard against it
+        # is a worse trade than accepting the same documented limitation
+        # this mechanism already carries everywhere else.
+        verdict = "COMPATIBLE"
+        detail = f"{len(added)} new exported symbol(s): {', '.join(added)}"
     elif headers_changed:
-        # A public header edit that doesn't touch the exported symbol
-        # table can still be a real ABI break this mechanism has no way
-        # to detect -- e.g. adding a data member to a class, changing a
-        # struct's layout/size, or widening an inline function's return
-        # type. Previously bundled into "added or headers_changed" ->
-        # COMPATIBLE, a claim of proven compatibility this symbol-table-
-        # only mechanism cannot actually back up for a header-only edit;
-        # the receipt/gate then treated it as clean (exit 0) despite a
-        # known-but-unclassified change (Codex review, PR #20). Report
-        # NOT_COMPARABLE instead: honest about what wasn't checked,
-        # rather than silently vouching for it.
+        # A public header edit with NO accompanying symbol addition has no
+        # symbol-table evidence explaining it at all -- it can still be a
+        # real ABI break this mechanism has no way to detect on its own,
+        # e.g. adding a data member to a class, changing a struct's
+        # layout/size, or widening an inline function's return type.
+        # Report NOT_COMPARABLE: honest about what wasn't checked, rather
+        # than silently vouching for it (Codex review, PR #20).
         verdict = "NOT_COMPARABLE"
         detail = (
             f"{len(headers_changed)} public header(s) changed content: "
             f"{', '.join(headers_changed)} -- not classified by this symbol-table-only "
             "mechanism (see module docstring); cannot confirm compatibility"
         )
-    elif added:
-        verdict = "COMPATIBLE"
-        detail = f"{len(added)} new exported symbol(s): {', '.join(added)}"
     else:
         verdict = "NO_CHANGE"
         detail = "dynamic symbol table and public header digests are identical to the baseline"
