@@ -87,9 +87,16 @@ jobs:
     continue-on-error: true
     name: build (${{ matrix.profile }})
     steps:
+      # fetch-depth: 0 (full history) -- needed so the "Resolve trusted
+      # baseline" steps below can `git show <base-sha>:<path>` on a
+      # pull_request event; the default shallow checkout doesn't have the
+      # base commit at all (Codex review, PR #20 -- see those steps'
+      # own comment for why the baseline can't be read from the working
+      # tree in the first place). Matches abi-scan.yml's own checkout.
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - run: pip install --quiet pyyaml jsonschema
 
@@ -150,34 +157,82 @@ jobs:
       # of this workflow, a check failure never fails the job itself; the
       # `integration_gate` job below is what turns a real red result into a
       # visible (still advisory) gate outcome.
+      #
+      # On pull_request events the checkout above is the PR HEAD, so the
+      # candidate library is always built from the PR's own diff -- but
+      # the baseline it gets compared against must come from the PR's
+      # exact base commit, read straight out of git history, never from
+      # the working tree: otherwise a PR could edit
+      # abi/profiles/<profile-id>/<target>.abicheck.json in the same diff
+      # that breaks the ABI and have this check compare the candidate
+      # against itself, reporting NO_CHANGE (Codex review, PR #20; same
+      # reasoning and mechanism -- .github/actions/resolve-baseline -- as
+      # abi-scan.yml's own required gate already uses). `push`/
+      # `workflow_dispatch` events have no PR base to resolve, and no
+      # PR diff to launder against, so those keep reading the baseline
+      # straight from the working tree as before.
+      - name: Resolve trusted math baseline from PR base SHA
+        id: resolve_baseline_math
+        if: steps.run_profile.outcome == 'success' && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/profiles/${{ matrix.profile }}/math.abicheck.json
+          baseline-temp-filename: math.base.abicheck.json
+
+      - name: Resolve trusted strings baseline from PR base SHA
+        id: resolve_baseline_strings
+        if: steps.run_profile.outcome == 'success' && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/resolve-baseline
+        with:
+          baseline-git-path: abi/profiles/${{ matrix.profile }}/strings.abicheck.json
+          baseline-temp-filename: strings.base.abicheck.json
+
       - name: Run ABI check (math)
         id: check_math
-        if: steps.run_profile.outcome == 'success'
+        if: >-
+          steps.run_profile.outcome == 'success' &&
+          (github.event_name != 'pull_request' || steps.resolve_baseline_math.outcome == 'success')
         continue-on-error: true
         shell: bash
         env:
           PROFILE_ID: ${{ matrix.profile }}
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
+          if [ "$IS_PULL_REQUEST" = "true" ]; then
+            baseline="$RUNNER_TEMP/math.base.abicheck.json"
+          else
+            baseline="abi/profiles/$PROFILE_ID/math.abicheck.json"
+          fi
           python3 ci/check_profile.py check \
             --profile-id "$PROFILE_ID" --target math \
             --staged-dir "abicheck-build-$PROFILE_ID" \
-            --baseline "abi/profiles/$PROFILE_ID/math.abicheck.json" \
+            --baseline "$baseline" \
             --out "$RUNNER_TEMP/report-math.json"
 
       - name: Run ABI check (strings)
         id: check_strings
-        if: steps.run_profile.outcome == 'success'
+        if: >-
+          steps.run_profile.outcome == 'success' &&
+          (github.event_name != 'pull_request' || steps.resolve_baseline_strings.outcome == 'success')
         continue-on-error: true
         shell: bash
         env:
           PROFILE_ID: ${{ matrix.profile }}
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
+          if [ "$IS_PULL_REQUEST" = "true" ]; then
+            baseline="$RUNNER_TEMP/strings.base.abicheck.json"
+          else
+            baseline="abi/profiles/$PROFILE_ID/strings.abicheck.json"
+          fi
           python3 ci/check_profile.py check \
             --profile-id "$PROFILE_ID" --target strings \
             --staged-dir "abicheck-build-$PROFILE_ID" \
-            --baseline "abi/profiles/$PROFILE_ID/strings.abicheck.json" \
+            --baseline "$baseline" \
             --out "$RUNNER_TEMP/report-strings.json"
 
       - name: Check profile coverage contract
