@@ -45,6 +45,17 @@ class BazelBackend(BuildBackend):
                 missing.append(tool)
             else:
                 tool_versions[role] = tool_version
+        # stage() requires patchelf to give the staged consumer_app a
+        # RUNPATH that resolves outside Bazel's own bazel-bin/_solib_*/
+        # tree (see stage()'s own comment) -- check it here too so a
+        # runner missing it reports ok=False instead of only failing (now
+        # closed, not silently) once staging runs (Codex review, PR #19
+        # follow-up).
+        patchelf_version = self._tool_version("patchelf")
+        if patchelf_version is None:
+            missing.append("patchelf")
+        else:
+            tool_versions["patchelf"] = patchelf_version
         if missing:
             return EnvironmentCheck(ok=False, missing=missing, tool_versions=tool_versions)
         return EnvironmentCheck(ok=True, tool_versions=tool_versions)
@@ -180,23 +191,40 @@ class BazelBackend(BuildBackend):
                 # original workspace (Codex review, PR #19). Rewrite the
                 # *staged copy only* (never bazel-bin's own output) via
                 # patchelf; never rewrite the original Bazel build tree.
+                # No magic fallback: a missing patchelf or a failed rewrite
+                # must not silently report this executable as successfully
+                # staged with a RUNPATH that can't find libmath.so -- that
+                # was exactly the previous version's gap (Codex review,
+                # PR #19 follow-up). verify_environment() now requires
+                # patchelf too, but stage() re-checks and fails closed
+                # regardless of whether verify_environment() ran first.
                 patchelf = shutil.which("patchelf")
+                rewrite_failed = patchelf is None
                 if patchelf:
-                    self._run(
+                    proc = self._run(
                         [patchelf, "--set-rpath", "$ORIGIN/../lib", str(dest)],
                         check=False,
                     )
-                    # patchelf rewrites dest's bytes in place, so target's
-                    # sha256/size_bytes (computed from the pre-patch
-                    # bazel-bin file) would otherwise no longer match what's
-                    # actually staged -- build_result.targets[name] feeds
-                    # emit_build_output.py's targets_doc sha256/size_bytes
-                    # directly, not this method's own manifest dict, so
-                    # update it here (TargetResult isn't frozen) rather than
-                    # let build-output.json assert a digest for bytes that
-                    # aren't what's on disk.
-                    target = TargetResult.from_path(target.name, target.kind, dest)
-                    build_result.targets[name] = target
+                    rewrite_failed = proc.returncode != 0
+                if rewrite_failed:
+                    detail = "patchelf not found" if patchelf is None else "patchelf --set-rpath failed"
+                    build_result.success = False
+                    build_result.diagnostics.append(
+                        f"could not rewrite RUNPATH for staged executable {name!r}: {detail}"
+                    )
+                    manifest[name] = {"staged": False, "error": detail}
+                    continue
+                # patchelf rewrites dest's bytes in place, so target's
+                # sha256/size_bytes (computed from the pre-patch
+                # bazel-bin file) would otherwise no longer match what's
+                # actually staged -- build_result.targets[name] feeds
+                # emit_build_output.py's targets_doc sha256/size_bytes
+                # directly, not this method's own manifest dict, so
+                # update it here (TargetResult isn't frozen) rather than
+                # let build-output.json assert a digest for bytes that
+                # aren't what's on disk.
+                target = TargetResult.from_path(target.name, target.kind, dest)
+                build_result.targets[name] = target
             manifest[name] = {
                 "staged": True,
                 "path": str(dest.relative_to(dest_dir)),
