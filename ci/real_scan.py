@@ -178,8 +178,26 @@ def filter_compile_db_for_target(compile_db: Path, target: str, out_path: Path) 
     return out_path
 
 
+# Generous enough for a real source-depth dump on a cold runner (CastXML
+# parsing headers, source replay), bounded enough that a wedged
+# CastXML/abicheck process fails closed instead of hanging the calling CI
+# job until the workflow-level timeout kills it -- every other failure
+# mode in this module already raises RealScanError; an unbounded
+# subprocess.run was the one way to defeat that fail-closed contract
+# silently (CodeRabbit review, PR #25).
+_SUBPROCESS_TIMEOUT_SECONDS = 900
+
+
 def _run(cmd: List[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        return subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RealScanError(
+            f"{' '.join(cmd)} timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s"
+        ) from exc
 
 
 def dump_real_snapshot(
@@ -216,26 +234,40 @@ def dump_real_snapshot(
         "-o", str(out_path),
     ]
     proc = _run(cmd)
+    # Checked BEFORE trusting out_path's own existence/content: out_path is
+    # a deterministic path under staged_dir (not a fresh tempdir -- see
+    # ci/check_profile.py's own _real_dump_for_target comment for why), so
+    # a failed invocation that doesn't touch the file at all would
+    # otherwise leave a PRIOR run's stale dump.json sitting there, and
+    # out_path.is_file() alone can't tell "fresh, valid output" apart from
+    # "stale leftover from before this exact invocation" (CodeRabbit
+    # review, PR #25: "a non-zero dump currently passes when it leaves
+    # valid JSON").
+    if proc.returncode != 0:
+        raise RealScanError(
+            f"abicheck dump exited {proc.returncode}: {proc.stdout}"
+        )
     if not out_path.is_file():
         raise RealScanError(
-            f"abicheck dump did not produce {out_path} (exit={proc.returncode}): {proc.stdout}"
+            f"abicheck dump exited 0 but did not produce {out_path}: {proc.stdout}"
         )
     try:
         snapshot = json.loads(out_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise RealScanError(f"abicheck dump wrote non-JSON output to {out_path}: {exc}") from exc
 
-    resolved_depth = None
-    m = None
-    for line in proc.stdout.splitlines():
-        if line.startswith("Resolved evidence depth:"):
-            m = line.split(":", 1)[1].strip()
-    resolved_depth = m
+    # Read the structured dump_provenance.effective_depth field abicheck
+    # itself writes into the snapshot, not the human-readable "Resolved
+    # evidence depth: ..." stdout banner -- the banner is prose meant for
+    # a terminal, not a stable machine-readable contract (CodeRabbit
+    # review, PR #25).
+    dump_provenance = snapshot.get("dump_provenance")
+    resolved_depth = dump_provenance.get("effective_depth") if isinstance(dump_provenance, dict) else None
     if resolved_depth != "source":
         raise RealScanError(
-            f"abicheck dump did not reach source depth (resolved: {resolved_depth!r}); "
-            f"refusing to use a lower-depth snapshot as a source-depth baseline. "
-            f"Full output:\n{proc.stdout}"
+            f"abicheck dump did not reach source depth (dump_provenance.effective_depth: "
+            f"{resolved_depth!r}); refusing to use a lower-depth snapshot as a source-depth "
+            f"baseline. Full output:\n{proc.stdout}"
         )
     # Strip volatile fields (created_at, source_mtime, ...) and normalize
     # absolute source paths -- see this module's own docstring for why.

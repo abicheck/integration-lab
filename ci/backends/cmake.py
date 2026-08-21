@@ -90,18 +90,23 @@ class CMakeBackend(BuildBackend):
         if kind == "executable":
             candidate = self._build_dir / cmake_target
             return candidate
-        # Shared libraries are versioned (lib<target>.so.1.0.0 with a
-        # lib<target>.so symlink). Return the symlink path itself, not its
-        # resolved target: TargetResult.from_path()/stage() read file bytes
-        # (sha256/copy2) by following it, which yields the real content, but
-        # keep the *name* the canonical, unversioned "lib<target>.so" --
-        # matching the Bazel/Make backends' staged filename (see BuildBackend
-        # design note: canonical candidate paths must be identical across
-        # build systems, e.g. artifacts/lib/libmath.so). Resolving the
-        # symlink here previously staged the versioned real filename
-        # (libmath.so.1.0.0) instead, diverging from bazel.py/make.py.
-        symlink = self._build_dir / f"lib{cmake_target}.so"
-        return symlink
+        # This candidate path is always "lib<target>.so" -- the canonical,
+        # unversioned filename matching the Bazel/Make backends' staged
+        # filename (see BuildBackend design note: canonical candidate
+        # paths must be identical across build systems, e.g.
+        # artifacts/lib/libmath.so). What that path actually IS on disk
+        # depends on whether math/strings set a SOVERSION/VERSION: with
+        # NO_SONAME TRUE and neither set (their current CMakeLists.txt
+        # shape -- see that file's own comment), it's a plain regular
+        # file. If SOVERSION/VERSION were reintroduced, CMake would instead
+        # make this path a symlink to a versioned real file
+        # (lib<target>.so.<SOVERSION>.<...>) -- TargetResult.from_path()/
+        # stage() read file bytes (sha256/copy2) by following a symlink
+        # either way, so this path stays correct in both shapes; only
+        # stage()'s own SONAME-companion-staging block (see its own
+        # comment) would start doing real work again instead of its
+        # current no-op.
+        return self._build_dir / f"lib{cmake_target}.so"
 
     def collect_evidence(self, build_result: BuildResult) -> Dict[str, Any]:
         generator = self.profile.get("generator", "Ninja") or "Ninja"

@@ -118,10 +118,11 @@ BASELINE_KIND = "abicheck.lab-symbol-baseline/v1"
 REPORT_KIND = "abicheck.lab-symbol-report/v1"
 
 MECHANISM_NOTE = (
-    "nm/readelf dynamic-symbol-table + public-header-digest diff (lab-only "
-    "simplification -- NOT the full abicheck source-level ABI scanner, which "
-    "is unavailable in this sandbox; see this script's own module docstring "
-    "and UPSTREAM_TO_ABICHECK.md's PR2 entry)"
+    "nm/readelf dynamic-symbol-table + public-header-digest diff -- the "
+    "bazel backend's own mechanism (real abicheck now runs for cmake/make; "
+    "see this module's own docstring). A lab-only simplification, not the "
+    "full abicheck source-level ABI scanner -- see UPSTREAM_TO_ABICHECK.md's "
+    "PR2 entry for what this simplifies versus that scanner."
 )
 
 # The mechanism string _apply_real_scan_verdict() records for cmake/make
@@ -698,18 +699,11 @@ def compare_profile(
             detail_parts.append(f"{len(removed)} exported symbol(s) removed: {', '.join(removed)}")
         if changed:
             detail_parts.append(f"{len(changed)} exported symbol(s) changed type/size: {', '.join(c['name'] for c in changed)}")
-        if soname_changed:
-            detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
-        if filename_changed:
-            detail_parts.append(
-                f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
-            )
-        if soname_file_missing:
-            detail_parts.append(
-                f"candidate's own embedded SONAME is {candidate_soname!r}, but no file named that exists "
-                f"alongside {library_path.name!r} in the staged output -- consumers linked against this "
-                "SONAME cannot resolve it at runtime"
-            )
+        # Same three loader facts computed above (loader_detail_parts) --
+        # reused here rather than rebuilt from the same three conditions,
+        # so the two report paths can never drift into different detail
+        # text for the same fact (CodeRabbit review, PR #25).
+        detail_parts.extend(loader_detail_parts)
         detail = "; ".join(detail_parts)
     elif added:
         # Checked before the header-only NOT_COMPARABLE fallback below --

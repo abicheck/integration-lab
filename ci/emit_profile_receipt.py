@@ -45,11 +45,19 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-CI_DIR = Path(__file__).resolve().parent
-if str(CI_DIR) not in sys.path:
-    sys.path.insert(0, str(CI_DIR))
-
-from real_scan import REAL_SCAN_BACKENDS as _REAL_SCAN_BACKENDS  # noqa: E402
+# Deliberately NOT imported from ci/real_scan.py, even though that module
+# defines the identical REAL_SCAN_BACKENDS frozenset: real_scan.py itself
+# imports scripts/normalize_baseline.py at module load time (appends to
+# sys.path and imports it), so importing real_scan here would make this
+# always-running receipt emitter (invoked under `if: always()` in every
+# workflow specifically so a failed run still produces a receipt) fail at
+# import time if that unrelated module ever moves or breaks -- silently
+# losing the receipt entirely instead of recording a failure (CodeRabbit
+# review, PR #25: "Importing real_scan for one constant couples this
+# always-running step to the scanner's own import chain"). This set only
+# needs to match ci/real_scan.py's own REAL_SCAN_BACKENDS/ci/check_profile.py's
+# REAL_SCAN_BACKENDS-gated branch, not literally share the import.
+_REAL_SCAN_BACKENDS = frozenset({"cmake", "make"})
 
 SCHEMA_VERSION = 1
 KIND = "abicheck.integration-profile-receipt/v1"

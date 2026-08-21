@@ -191,7 +191,7 @@ transferring a repository as part of a code-only PR.
   `abicheck/bazel-lab`) AND the bare old repo name by itself (e.g.
   `abicheck-bazel-lab`, which appears with no org prefix in `ci/schemas/
   *.json`'s own `$id`/`title` fields) — before closing out a transfer:
-  ```
+  ```shell
   grep -rln '<old-org>/<old-repo>' . ; grep -rln '<old-repo-bare-name>' .
   ```
   Replace both placeholders with this repository's actual previous
