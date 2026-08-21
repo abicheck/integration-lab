@@ -80,10 +80,11 @@ _MUST_MATCH_FIELDS = (
 
 # Fields the assessment itself names as *expected* to differ between a
 # dump baseline step and a scan candidate step -- not compared at all, so a
-# mismatch here is never even considered.
+# mismatch here is never even considered. `mode` is handled specially
+# (below, not through this set): it must always differ, but only as the
+# exact ("dump", "scan") pair -- see `known`'s own comment.
 _EXPECTED_TO_DIFFER_FIELDS = frozenset(
     {
-        "mode",
         "against",
         "since",
         "changed-path",
@@ -178,6 +179,24 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             "the canonical PR gate must run the identical abicheck version"
         )
 
+    # mode: must be exactly the (dump, scan) pair, not merely "differs"
+    # (Codex review, fresh evidence: a bare inequality check would accept
+    # baseline.yml's collector being accidentally changed to `mode: scan`
+    # -- a real misconfiguration `check_recipe_parity.py`'s own
+    # `_abicheck_steps` step-shape scan wouldn't catch either, since the
+    # step would still be a syntactically valid `abicheck/abicheck` call.
+    # `baseline.yml` doesn't run on pull requests, so this static check is
+    # the only thing that would catch it before it broke the real baseline
+    # job on the next push to `main`).
+    dump_mode = dump_with.get("mode")
+    scan_mode = scan_with.get("mode")
+    if (dump_mode, scan_mode) != ("dump", "scan"):
+        errors.append(
+            f"MODE_MISMATCH: expected baseline.yml's dump step to have mode='dump' "
+            f"and abi-scan.yml's scan step to have mode='scan', got "
+            f"({dump_mode!r}, {scan_mode!r})"
+        )
+
     for field in _MUST_MATCH_FIELDS:
         dump_val = dump_with.get(field)
         scan_val = scan_with.get(field)
@@ -220,6 +239,30 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             "candidate-sided spelling of dump's `header` -- the values themselves "
             "must still agree (including both being unset)."
         )
+    # Role-invalid spellings: a plain `header:` on the *scan* step (rather
+    # than `new-header:`) still reaches the Action as a real `-H` root --
+    # action.yml doesn't reject it -- so it would change scan's effective
+    # header roots exactly like a `new-header:` would, but silently, since
+    # the check above only ever reads scan_with["new-header"] (Codex
+    # review, fresh evidence: "both values compared here remain None, and
+    # the parity check therefore passes even though the Action forwards
+    # the generic typed header... changing the scan's effective header
+    # roots without a matching dump-side change"). The converse
+    # (`new-header:` on the *dump* step, which has no old/new side at all)
+    # is equally role-invalid. Both are rejected outright, independent of
+    # value, rather than folded into the normalized comparison above --
+    # each is a usage error on its own step, not a cross-step drift.
+    if "header" in scan_with:
+        errors.append(
+            f"{ABI_SCAN_PATH}: scan step sets header={scan_with['header']!r} -- "
+            "scan's own candidate-sided input is `new-header:`, not the generic "
+            "`header:` (which the Action still forwards as a real -H root)"
+        )
+    if "new-header" in dump_with:
+        errors.append(
+            f"{BASELINE_PATH}: dump step sets new-header={dump_with['new-header']!r} "
+            "-- dump has no old/new side; its own input is the generic `header:`"
+        )
     # `old-header` never applies to either canonical step (dump has no old
     # side; scan's canonical step compares against a persisted JSON
     # baseline, never an `old-header`-parsed live binary) -- flagged as a
@@ -236,12 +279,14 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # this script (either checked for equality, or explicitly named as
     # expected to differ) -- an unrecognized key silently skips both,
     # which would make this check quietly incomplete as new inputs are
-    # added to either step over time. `build-info`/`header`/`new-header`/
-    # `old-header` are handled specially above (their literal values
-    # can't be compared through the generic equality loop, or need
-    # cross-field normalization) -- still "accounted for", so they're
-    # excluded here rather than falling through as unclassified.
-    known = set(_MUST_MATCH_FIELDS) | _EXPECTED_TO_DIFFER_FIELDS | {"build-info", "header", "new-header", "old-header"}
+    # added to either step over time. `mode`/`build-info`/`header`/
+    # `new-header`/`old-header` are all handled specially above (`mode`
+    # needs the exact-pair assertion, not mere inequality; the header
+    # fields need cross-field/role normalization; `build-info`'s literal
+    # value can't be compared through the generic equality loop) -- still
+    # "accounted for", so they're excluded here rather than falling
+    # through as unclassified.
+    known = set(_MUST_MATCH_FIELDS) | _EXPECTED_TO_DIFFER_FIELDS | {"mode", "build-info", "header", "new-header", "old-header"}
     unaccounted = (set(dump_with) | set(scan_with)) - known
     for field in sorted(unaccounted):
         errors.append(

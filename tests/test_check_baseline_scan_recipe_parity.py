@@ -135,6 +135,35 @@ class TestCheck:
         errors = check(_dump_wf(dump_with), _scan_wf(scan_with))
         assert any("RECIPE_FIELD_MISMATCH" in e and "header" in e for e in errors)
 
+    def test_scan_step_setting_generic_header_instead_of_new_header_is_caught(self):
+        # Fresh evidence (Codex review): the Action still forwards a plain
+        # `header:` on the scan step as a real -H root, changing scan's
+        # effective header roots exactly like a redundant `new-header:`
+        # would -- but silently, since the normalized comparison above
+        # only ever reads scan_with["new-header"]. Rejected outright,
+        # independent of value.
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["header"] = "include/abicheck_lab/math.h"
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any(str(ABI_SCAN_PATH) in e and "header" in e for e in errors)
+
+    def test_dump_step_setting_new_header_instead_of_header_is_caught(self):
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["new-header"] = "include/abicheck_lab/math.h"
+        errors = check(_dump_wf(dump_with), _scan_wf())
+        assert any(str(BASELINE_PATH) in e and "new-header" in e for e in errors)
+
+    def test_mode_pair_is_asserted_exactly(self):
+        # A bare inequality check would accept baseline.yml's collector
+        # being accidentally changed to `mode: scan` -- baseline.yml
+        # doesn't run on pull requests, so this static check is the only
+        # thing that would catch it before it broke the real baseline job
+        # on the next push to main (Codex review, fresh evidence).
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["mode"] = "scan"
+        errors = check(_dump_wf(dump_with), _scan_wf())
+        assert any("MODE_MISMATCH" in e for e in errors)
+
     def test_old_header_on_either_canonical_step_is_flagged(self):
         dump_with = dict(_GOOD_DUMP_WITH)
         dump_with["old-header"] = "include/abicheck_lab/math.h"
