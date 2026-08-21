@@ -366,17 +366,27 @@ def compare_profile(
         if soname_changed:
             detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
         detail = "; ".join(detail_parts)
-    elif added or headers_changed:
+    elif headers_changed:
+        # A public header edit that doesn't touch the exported symbol
+        # table can still be a real ABI break this mechanism has no way
+        # to detect -- e.g. adding a data member to a class, changing a
+        # struct's layout/size, or widening an inline function's return
+        # type. Previously bundled into "added or headers_changed" ->
+        # COMPATIBLE, a claim of proven compatibility this symbol-table-
+        # only mechanism cannot actually back up for a header-only edit;
+        # the receipt/gate then treated it as clean (exit 0) despite a
+        # known-but-unclassified change (Codex review, PR #20). Report
+        # NOT_COMPARABLE instead: honest about what wasn't checked,
+        # rather than silently vouching for it.
+        verdict = "NOT_COMPARABLE"
+        detail = (
+            f"{len(headers_changed)} public header(s) changed content: "
+            f"{', '.join(headers_changed)} -- not classified by this symbol-table-only "
+            "mechanism (see module docstring); cannot confirm compatibility"
+        )
+    elif added:
         verdict = "COMPATIBLE"
-        detail_parts = []
-        if added:
-            detail_parts.append(f"{len(added)} new exported symbol(s): {', '.join(added)}")
-        if headers_changed:
-            detail_parts.append(
-                f"{len(headers_changed)} public header(s) changed content (not itself "
-                "classified by this symbol-table-only mechanism -- see module docstring)"
-            )
-        detail = "; ".join(detail_parts)
+        detail = f"{len(added)} new exported symbol(s): {', '.join(added)}"
     else:
         verdict = "NO_CHANGE"
         detail = "dynamic symbol table and public header digests are identical to the baseline"
