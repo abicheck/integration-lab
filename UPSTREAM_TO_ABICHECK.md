@@ -853,3 +853,65 @@ family/version/standard identity. Once that lands, this lab's own
 by reading the field directly out of whatever evidence object a future
 PR's ABICheck-scanning phase actually feeds into `abicheck scan`/`compare`
 for the CMake/Make profiles.
+
+---
+
+# 2026-08-21 follow-up: PR2's ABI check is a symbol-table diff, not the real scanner -- because the real scanner is unreachable, not by choice
+
+**Context:** PR2 of the multi-build-system integration effort wires an
+actual ABI comparison into all three `ci/profiles.yaml` profiles
+(`ci/check_profile.py`, per-profile receipts via
+`ci/emit_profile_receipt.py`, a profile-aware coverage contract via
+`ci/check_profile_coverage.py`, and an advisory `integration_gate` job in
+`.github/workflows/integration-shadow.yml`), still entirely non-gating
+(`.github/workflows/abi-scan.yml`'s own required Bazel gate is untouched).
+
+**Gap:** the real `abicheck` scanner this lab otherwise depends on
+everywhere else (`abi-scan.yml`'s `pip install abicheck @ git+https://
+github.com/abicheck/abicheck.git@...`) requires network access to install,
+and this PR's own development/validation sandbox has none (verified, not
+assumed: `pip download` against that exact git+https URL times out with no
+response, and `python3 -c "import abicheck"` fails -- nothing under
+`tools/abicheck/` is a vendored copy of the scanner itself, only Bazel glue
+that *feeds* the external CLI a source-fact pack). A real CI run of this
+repo's own GitHub Actions runners does have network access and could
+install the real scanner, but PR2's own local validation could not depend
+on that, and the task that produced it was explicit: do not fake or stub
+the real scanner's behavior.
+
+**What PR2 does instead, honestly:** `ci/check_profile.py` diffs each
+staged shared library's **dynamic symbol table** (`nm -D`/`readelf`,
+present on every runner already, no install needed) between a committed,
+per-profile baseline and the freshly built candidate, plus a content-hash
+diff of the target's staged public headers. This is a real, source-of-truth
+ABI compatibility signal -- not a mock -- verified end-to-end against real
+compiled output for all three profiles (Bazel, CMake+Ninja, Make), on both
+the happy path (identical source -> `NO_CHANGE` against every profile's own
+baseline) and a real regression (a function removed from `src/math.cc`/
+`include/abicheck_lab/math.h` -> `BREAKING`, symbol correctly named in the
+report). It catches exactly one class of ABI change (an exported
+function/data symbol added, removed, or changed in ELF type/size) and
+cannot catch anything invisible at that level -- a struct/class layout
+change with no symbol rename, a default-argument change, an inline-body
+change, a template instantiation change. `ci/check_profile.py`'s own module
+docstring documents this in full; `public_headers_changed` in every report
+is the honest "something in the API surface changed that this mechanism
+cannot itself classify" signal, always surfaced, never folded into the
+verdict on its own.
+
+**What upstream/this lab should do once a real scanner is reachable from
+this integration's own CI/dev environment (a later PR, not blocked on
+anything upstream -- this is purely an environment gap, not a product
+gap):** replace `ci/check_profile.py`'s nm/readelf mechanism with a real
+`abicheck compare`/`scan` invocation for the CMake/Make profiles too (the
+same P0.2/P0.7 profile-fingerprint and root-target-scoping asks already
+listed above apply directly -- CMake's `compile_commands.json` and Make's
+`bear`-generated equivalent are both legitimate `--build-info`-shaped
+inputs once abicheck accepts a non-Bazel build-evidence source), and retire
+the symbol-table-only baselines under `abi/profiles/<id>/` in favor of real
+`abicheck dump` snapshots, the same way `abi/math.abicheck.json` already
+is for Bazel. `ci/check_profile.py`'s own `dump`/`check` CLI shape (and
+`ci/emit_profile_receipt.py`/`ci/render_integration_gate.py`'s receipt/gate
+plumbing around it) should stay useful as the integration seam either way --
+only the comparison mechanism inside `check_profile.py` needs replacing,
+not the profile/receipt/gate architecture built around it.

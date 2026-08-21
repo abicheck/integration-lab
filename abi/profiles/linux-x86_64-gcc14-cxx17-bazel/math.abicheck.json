@@ -1,0 +1,29 @@
+{
+  "backend": "bazel",
+  "dynamic_symbols": [
+    {
+      "name": "_ZN12abicheck_lab11api_versionEv",
+      "size": 15,
+      "type": "T"
+    },
+    {
+      "name": "_ZNK12abicheck_lab10Calculator3addEii",
+      "size": 28,
+      "type": "T"
+    },
+    {
+      "name": "_ZNK12abicheck_lab10Calculator8multiplyEii",
+      "size": 27,
+      "type": "T"
+    }
+  ],
+  "kind": "abicheck.lab-symbol-baseline/v1",
+  "library_filename": "libmath.so",
+  "profile_id": "linux-x86_64-gcc14-cxx17-bazel",
+  "public_headers": {
+    "headers/include/abicheck_lab/math.h": "5b0c25c0d4fa78a84873dfd6e2f0d4e3a7a3074be201901bca89a82660f35afc"
+  },
+  "schema_version": 1,
+  "soname": null,
+  "target": "math"
+}
