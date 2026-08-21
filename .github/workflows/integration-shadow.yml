@@ -1,18 +1,21 @@
 name: Multi-build-system integration shadow
 
-# PR1 of the multi-build-system integration plan (see
-# UPSTREAM_TO_ABICHECK.md and README.md's "ABICheck Integration Lab:
-# multi-build-system profiles" section). Proves the SAME source
-# (include/, src/, strings_lib/, consumer/) builds cleanly under three
-# independent build systems -- Bazel (the existing, unchanged, required
-# gate), CMake+Ninja, and a handwritten Makefile -- and stages each into
-# the canonical abicheck-build-<profile-id>/ output shape
-# (ci/emit_build_output.py). It does NOT run any ABICheck scan (that is a
-# later PR's scope) and it NEVER fails the overall required-check surface:
-# every per-profile job step below runs `continue-on-error: true`, and
-# this workflow is deliberately never added to branch-protection required
-# status checks. .github/workflows/abi-scan.yml's own Bazel gate is
-# completely untouched by this file.
+# The multi-build-system integration lab workflow (see docs/integration-profiles.md
+# and README.md's "Multi-build-system profiles" section). Proves the SAME
+# source (include/, src/, strings_lib/, consumer/) builds cleanly under
+# three independent build systems -- Bazel (the existing, unchanged,
+# required gate), CMake+Ninja, and a handwritten Makefile -- stages each
+# into the canonical abicheck-build-<profile-id>/ output shape
+# (ci/emit_build_output.py), and runs a lab-specific per-profile ABI signal
+# (ci/check_profile.py: an ELF dynamic-symbol/SONAME/header-digest diff,
+# NOT the real ABICheck source-level scanner -- see that script's own
+# module docstring) against each profile's own committed baseline. It
+# NEVER fails the overall required-check surface: every per-profile job
+# step below runs `continue-on-error: true`, and despite the fail-closed
+# `integration_gate` fan-in job at the bottom of this file, this workflow
+# is deliberately never added to branch-protection required status checks.
+# .github/workflows/abi-scan.yml's own Bazel gate is completely untouched
+# by this file.
 on:
   pull_request: {}
   push:
