@@ -351,18 +351,34 @@ def _real_dump_for_target(
     library_path = _target_library_path(staged_dir, build_output, target)
     header_dir = staged_dir / "headers" / _header_root_prefix(target)
     compile_db = staged_dir / "evidence" / "compile_commands.json"
+    # A deterministic path under staged_dir, NOT a random tempfile.mkdtemp()
+    # directory: the filtered compile-db's own path is recorded verbatim
+    # inside the dumped snapshot (manifest.inputs.build_info,
+    # manifest.extractors[].inputs[]) -- a random temp-dir name there would
+    # make two dumps of the identical, unchanged source differ from each
+    # other for no reason other than which random directory happened to
+    # hold the filtered database that run, defeating
+    # ci/apply_profile_baselines.py's own byte-for-byte "did the ABI
+    # actually change" comparison (Codex review, PR #25, discovered while
+    # verifying the fix for a related finding -- two same-path rebuilds of
+    # identical source produced non-identical embedded snapshots because
+    # of exactly this). ci/real_scan.py's own normalize() call (via
+    # scripts/normalize_baseline.py) still handles every OTHER volatile
+    # field (timestamps, mtimes); this one is specific to this module's
+    # own plumbing, not something a general-purpose normalizer should have
+    # to know about.
+    tmp_path = staged_dir / "evidence" / f".real-scan-tmp-{target}"
+    tmp_path.mkdir(parents=True, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix="abicheck-real-scan-") as tmp:
-            tmp_path = Path(tmp)
-            filtered_db = real_scan.filter_compile_db_for_target(compile_db, target, tmp_path / "compile_commands.json")
-            return real_scan.dump_real_snapshot(
-                library_path=library_path,
-                header_dir=header_dir,
-                compile_db=filtered_db,
-                sources_root=REPO_ROOT,
-                version=f"{profile_id}-{target}",
-                out_path=tmp_path / "dump.json",
-            )
+        filtered_db = real_scan.filter_compile_db_for_target(compile_db, target, tmp_path / "compile_commands.json")
+        return real_scan.dump_real_snapshot(
+            library_path=library_path,
+            header_dir=header_dir,
+            compile_db=filtered_db,
+            sources_root=REPO_ROOT,
+            version=f"{profile_id}-{target}",
+            out_path=tmp_path / "dump.json",
+        )
     except real_scan.RealScanError as exc:
         raise CheckProfileError(f"real abicheck dump failed for {profile_id}/{target}: {exc}") from exc
 

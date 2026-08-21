@@ -48,28 +48,34 @@ this the same way Bazel's own target-scoped `cquery`/`aquery` already does
 for that profile -- this repo's own fixed target->source-file layout
 (`TARGET_SOURCE_FILE` below), not a generic build-system inference.
 
-## Known limitation: embedded snapshots carry the checkout's absolute paths
+## Normalization: every dumped snapshot is normalized before use
 
-A real `abicheck dump` snapshot embeds the absolute source paths from the
-compile database it was fed (e.g. `/home/runner/work/integration-lab/
-integration-lab/src/math.cc` in a GitHub-hosted runner, a different
-absolute path in any other checkout location) -- unlike
-`scripts/normalize_baseline.py`'s own Bazel-snapshot normalization, this
-module does NOT strip or rewrite them before `ci/check_profile.py dump`
-writes a committed baseline. This is deliberate for now, not an oversight:
-this repo's own accepted-main baseline refresh
-(`.github/workflows/profile-baseline.yml`) always both produces AND
-commits from the same GitHub-hosted runner checkout path, so every
-comparison this lab actually runs in CI (PR check against the committed
-baseline, or the next refresh against the previous one) compares two
-snapshots from the identical absolute path -- consistent, just not
-portable. A baseline produced by hand in a different local checkout path
-(as this PR's own development sandbox would have produced) is NOT
-guaranteed to compare cleanly against a CI-produced candidate for this
-reason, which is exactly why this PR does not hand-commit freshly dumped
-`abi/profiles/<id>/{math,strings}.abicheck.json` baselines itself -- it
-lets `profile-baseline.yml`'s own next push-to-main refresh produce the
-first real ones, from inside CI, where the path is actually consistent.
+A raw `abicheck dump` snapshot embeds several volatile fields that differ
+on every single invocation even for byte-identical source and an
+unchanged ABI -- `created_at` (a wall-clock timestamp), `source_mtime`/
+`source_mtime_epoch` (the source file's own mtime, which changes on every
+fresh checkout), and absolute source paths from the compile database it
+was fed (e.g. `/home/runner/work/integration-lab/integration-lab/
+src/math.cc` on a GitHub-hosted runner, a different absolute path in any
+other checkout location). Left as-is, embedding the raw snapshot into a
+COMMITTED baseline (`build_baseline()` in `ci/check_profile.py`) would
+make `ci/apply_profile_baselines.py`'s byte-for-byte comparison see a
+"changed" baseline on every single `profile-baseline.yml` refresh, even
+when nothing about the library's ABI changed at all -- and the same
+volatile fields would make `release.yml`'s `--verify-only` reproducibility
+check report false drift too (Codex review, PR #25: "Normalize embedded
+snapshots before committing them").
+
+`dump_real_snapshot()` below normalizes every snapshot it produces through
+`scripts/normalize_baseline.py`'s own `normalize()` -- the exact same
+volatile-field stripping and absolute-path normalization the Bazel gate's
+own committed baselines (`abi/math.abicheck.json`, etc.) already go
+through via `baseline.yml`. This is applied uniformly to every dump this
+module produces (both the one embedded in a committed baseline and the
+one re-dumped for a live PR comparison), not just the committed-baseline
+path, so both sides of any `compare_real_snapshots()` call are normalized
+the same way and a purely environmental difference (timestamp, checkout
+path) can never show up as a spurious finding.
 """
 from __future__ import annotations
 
@@ -78,6 +84,18 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from normalize_baseline import normalize as _normalize_snapshot  # noqa: E402
+
+# Matches scripts/normalize_baseline.py's own --repo-root-marker default --
+# see that script's own docstring/CLI help for why this is the checkout
+# directory's own name, not a git remote or org/repo string.
+_REPO_ROOT_MARKER = "integration-lab"
 
 # This repo's own fixed target->source-file layout (same convention
 # ci/check_profile.py's _public_headers_for_target already uses for
@@ -219,7 +237,12 @@ def dump_real_snapshot(
             f"refusing to use a lower-depth snapshot as a source-depth baseline. "
             f"Full output:\n{proc.stdout}"
         )
-    return snapshot
+    # Strip volatile fields (created_at, source_mtime, ...) and normalize
+    # absolute source paths -- see this module's own docstring for why.
+    # Applied here, unconditionally, so every caller (baseline embedding
+    # AND candidate re-dump for a live comparison) gets the same
+    # normalized shape without having to remember to do it themselves.
+    return _normalize_snapshot(snapshot, _REPO_ROOT_MARKER)
 
 
 def compare_real_snapshots(old_snapshot: Path, new_snapshot: Path, out_path: Path) -> Dict[str, Any]:
