@@ -179,6 +179,16 @@ class BazelBackend(BuildBackend):
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
             if target.kind == "executable":
+                # bazel-bin/ outputs are read-only (mode 0555 -- Bazel's own
+                # convention for action outputs), and shutil.copy2 preserves
+                # that mode on the staged copy. patchelf then needs to write
+                # to it: this was invisible locally (root bypasses Unix
+                # permission checks) but failed for real on GitHub Actions'
+                # non-root runner user -- "patchelf --set-rpath failed" with
+                # no further detail (real CI run, PR #19). Make this
+                # profile's own staged copy writable first; never touches
+                # bazel-bin's own read-only output.
+                dest.chmod(0o755)
                 # Bazel gives consumer_app a RUNPATH pointing at its own
                 # generated _solib_*/ tree (relative to bazel-bin/, via
                 # cc_import -- see consumer/BUILD.bazel), not at this
