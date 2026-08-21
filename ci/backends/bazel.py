@@ -167,6 +167,36 @@ class BazelBackend(BuildBackend):
             out_subdir = bin_dir if target.kind == "executable" else lib_dir
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
+            if target.kind == "executable":
+                # Bazel gives consumer_app a RUNPATH pointing at its own
+                # generated _solib_*/ tree (relative to bazel-bin/, via
+                # cc_import -- see consumer/BUILD.bazel), not at this
+                # profile's canonical artifacts/lib/ layout. Once staged
+                # (and especially once the original bazel-bin/ output tree
+                # is gone, e.g. downloaded from a CI artifact elsewhere), the
+                # dynamic linker can't resolve libmath.so at all -- unlike
+                # the cmake/make profiles' $ORIGIN mistake, this isn't just
+                # "wrong once relocated", it never worked outside the
+                # original workspace (Codex review, PR #19). Rewrite the
+                # *staged copy only* (never bazel-bin's own output) via
+                # patchelf; never rewrite the original Bazel build tree.
+                patchelf = shutil.which("patchelf")
+                if patchelf:
+                    self._run(
+                        [patchelf, "--set-rpath", "$ORIGIN/../lib", str(dest)],
+                        check=False,
+                    )
+                    # patchelf rewrites dest's bytes in place, so target's
+                    # sha256/size_bytes (computed from the pre-patch
+                    # bazel-bin file) would otherwise no longer match what's
+                    # actually staged -- build_result.targets[name] feeds
+                    # emit_build_output.py's targets_doc sha256/size_bytes
+                    # directly, not this method's own manifest dict, so
+                    # update it here (TargetResult isn't frozen) rather than
+                    # let build-output.json assert a digest for bytes that
+                    # aren't what's on disk.
+                    target = TargetResult.from_path(target.name, target.kind, dest)
+                    build_result.targets[name] = target
             manifest[name] = {
                 "staged": True,
                 "path": str(dest.relative_to(dest_dir)),

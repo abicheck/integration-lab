@@ -98,14 +98,17 @@ jobs:
       # Bazel doesn't consult $PATH for its own toolchain -- see that
       # profile's own comment) is not preinstalled on ubuntu-24.04 runners;
       # gcc-13 is. bear (for the make profile's optional compile_commands.json)
-      # is not preinstalled either. Installed here, once, for whichever
-      # profile this matrix leg runs -- a no-op for the bazel profile's own
-      # actual build (Bazel resolves its own toolchain independently), but
-      # keeps its describe()/provenance output accurate.
-      - name: Install gcc-14/g++-14 and bear
+      # and patchelf (bazel.py's stage() uses it to rewrite the staged
+      # consumer_app's RUNPATH so it can find libmath.so without Bazel's own
+      # bazel-bin/_solib_*/ tree -- Codex review, PR #19) aren't preinstalled
+      # either. Installed here, once, for whichever profile this matrix leg
+      # runs -- a no-op for the bazel profile's own actual build (Bazel
+      # resolves its own toolchain independently), but keeps its
+      # describe()/provenance output accurate and patchelf available.
+      - name: Install gcc-14/g++-14, bear, and patchelf
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y gcc-14 g++-14 bear
+          sudo apt-get install -y gcc-14 g++-14 bear patchelf
 
       - name: Set up Ninja
         if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
