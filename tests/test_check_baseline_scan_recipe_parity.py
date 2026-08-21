@@ -250,6 +250,23 @@ class TestCheck:
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_in_a_second_reinstall_is_caught(self):
+        # Fresh evidence beyond the preliminary-command fix above (Codex
+        # review): a step with TWO abicheck installs on separate lines --
+        # both sides share the identical first install, but one side later
+        # reinstalls a different ref. pip install reinstalls/overwrites, so
+        # the LATER ref is the one that's actually installed and runs
+        # build_bazel_evidence_pack.py; a first-match search would keep
+        # comparing the shared, stale first install and miss this entirely.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        drifted_second_install = (
+            'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"'
+        )
+        drifted = f"{shared_first_install}\n{drifted_second_install}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_evidence_pack_bazel_pack_script_drift_is_caught(self):
         # A structural difference in the bazel_pack invocation itself
         # (beyond --root-target, which is checked separately) -- e.g. one

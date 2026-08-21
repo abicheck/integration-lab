@@ -191,15 +191,23 @@ def _bazel_query_commands(workflow: dict[str, Any], job_id: str) -> dict[str, st
 
 def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     """The normalized `pip install ...` line from the job's own
-    `abicheck_pip` step -- the abicheck git ref used to *run
-    build_bazel_evidence_pack.py*, independent of the scanner Action's own
-    `uses: abicheck/abicheck@<sha>` pin checked above."""
+    `abicheck_pip` step that actually determines what's installed -- the
+    abicheck git ref used to *run build_bazel_evidence_pack.py*,
+    independent of the scanner Action's own `uses: abicheck/abicheck@<sha>`
+    pin checked above.
+
+    Uses `finditer` and takes the LAST match, not the first (Codex review,
+    fresh evidence): a step containing two `abicheck @ git+...` installs on
+    separate lines has its *later* one win (pip install reinstalls/
+    overwrites), so a `.search()`-based first match would keep comparing a
+    stale earlier pin while the ref that actually runs the evidence-pack
+    helper script -- the later one -- went unchecked."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
         return None
-    m = _PIP_INSTALL_RE.search(run)
-    return _normalize_shell(m.group(0)) if m else None
+    matches = list(_PIP_INSTALL_RE.finditer(run))
+    return _normalize_shell(matches[-1].group(0)) if matches else None
 
 
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
