@@ -92,10 +92,21 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from normalize_baseline import normalize as _normalize_snapshot  # noqa: E402
 
-# Matches scripts/normalize_baseline.py's own --repo-root-marker default --
-# see that script's own docstring/CLI help for why this is the checkout
-# directory's own name, not a git remote or org/repo string.
-_REPO_ROOT_MARKER = "integration-lab"
+# Same "checkout directory's own name, not a git remote or org/repo
+# string" marker scripts/normalize_baseline.py's own --repo-root-marker
+# CLI flag defaults to -- see that script's own docstring/CLI help for
+# why. Derived from REPO_ROOT (already computed above) rather than a
+# second hardcoded literal: a hardcoded copy here was a second place a
+# repository rename/transfer had to remember to update, and the transfer
+# checklist (docs/operations.md) only ever told operators to update
+# normalize_baseline.py's own default -- this call site would silently
+# keep normalizing against the OLD name forever after a rename, embedding
+# unstripped checkout-specific absolute paths in every cmake/make
+# baseline refreshed from the new checkout (Codex review, PR #25:
+# "derive it from REPO_ROOT.name or expose one shared configured
+# marker"). REPO_ROOT.name always matches the actual checkout directory
+# at runtime, so there is nothing left to keep in sync here.
+_REPO_ROOT_MARKER = REPO_ROOT.name
 
 # This repo's own fixed target->source-file layout (same convention
 # ci/check_profile.py's _public_headers_for_target already uses for

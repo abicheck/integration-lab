@@ -187,6 +187,12 @@ transferring a repository as part of a code-only PR.
   (`abi/*.abicheck.json`, `abi/profiles/*/*.abicheck.json`) — a stale
   marker doesn't break comparability, it just leaves host-specific
   absolute-path fragments un-stripped in freshly generated snapshots.
+  `ci/real_scan.py`'s own marker (used for the cmake/make profiles'
+  embedded `abicheck_snapshot`) needs nothing here: it's derived from
+  `REPO_ROOT.name` at runtime, not a second hardcoded copy of this
+  default, so it always matches the actual checkout directory on its own
+  (Codex review, PR #25 — this was a real second place to forget on a
+  rename before that fix).
 - [ ] Grep for the literal old slug — both `<old-org>/<old-repo>` (e.g.
   `abicheck/bazel-lab`) AND the bare old repo name by itself (e.g.
   `abicheck-bazel-lab`, which appears with no org prefix in `ci/schemas/
