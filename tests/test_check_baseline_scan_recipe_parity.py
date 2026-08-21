@@ -95,16 +95,51 @@ class TestCheck:
         assert any("BUILD_EVIDENCE_ROOT_TARGET_MISMATCH" in e for e in errors)
 
     def test_expected_differences_are_not_flagged(self):
-        # mode, against, since, output-file, header/new-header spelling --
-        # all legitimately differ between a dump baseline step and a scan
-        # candidate step; none of these alone should produce an error.
+        # mode, against, since, output-file -- all legitimately differ
+        # between a dump baseline step and a scan candidate step; none of
+        # these alone should produce an error. header/new-header spelling
+        # is *not* an unconditional pass -- see the dedicated header tests
+        # below -- but agreeing on the same (here: unset) value is fine.
         dump_with = dict(_GOOD_DUMP_WITH)
-        dump_with["header"] = "include/abicheck_lab/math.h"
         dump_with["output-file"] = "${{ runner.temp }}/math.raw.abicheck.json"
         scan_with = dict(_GOOD_SCAN_WITH)
         scan_with["since"] = "${{ github.event.pull_request.base.sha }}"
         scan_with["output-file"] = "abicheck-report.json"
         assert check(_dump_wf(dump_with), _scan_wf(scan_with)) == []
+
+    def test_header_and_new_header_agreeing_on_the_same_value_is_fine(self):
+        # A real, if currently unused, legitimate shape: both sides name
+        # the identical explicit header path, just spelled through their
+        # own side's typed input (dump's `header`, scan's `new-header`).
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["header"] = "include/abicheck_lab/math.h"
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["new-header"] = "include/abicheck_lab/math.h"
+        assert check(_dump_wf(dump_with), _scan_wf(scan_with)) == []
+
+    def test_a_one_sided_new_header_is_caught(self):
+        # The exact regression a prior revision of this script would have
+        # missed (Codex review): re-adding a redundant new-header only to
+        # the scan step, with the dump step's header left unset, recreates
+        # the include_sequence/NOT_COMPARABLE bug this repo is named for.
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["new-header"] = "include/abicheck_lab/math.h"
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any("RECIPE_FIELD_MISMATCH" in e and "header" in e for e in errors)
+
+    def test_differing_header_values_are_caught(self):
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["header"] = "include/abicheck_lab/math.h"
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["new-header"] = "include/abicheck_lab/other.h"
+        errors = check(_dump_wf(dump_with), _scan_wf(scan_with))
+        assert any("RECIPE_FIELD_MISMATCH" in e and "header" in e for e in errors)
+
+    def test_old_header_on_either_canonical_step_is_flagged(self):
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["old-header"] = "include/abicheck_lab/math.h"
+        errors = check(_dump_wf(dump_with), _scan_wf())
+        assert any("old-header" in e for e in errors)
 
     def test_an_unclassified_field_is_flagged(self):
         dump_with = dict(_GOOD_DUMP_WITH)

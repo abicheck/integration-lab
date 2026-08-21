@@ -91,9 +91,6 @@ _EXPECTED_TO_DIFFER_FIELDS = frozenset(
         "old-version",
         "new-version",
         "output-file",
-        "header",
-        "old-header",
-        "new-header",
         "budget",
         "format",
         "fail-on-breaking",
@@ -193,16 +190,58 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             "with a comment explaining why; otherwise fix the drift."
         )
 
+    # Header roots: dump-side spells the single-sided input `header:`,
+    # scan-side spells its candidate-sided equivalent `new-header:`
+    # (action.yml's own documented convention -- see abi-scan.yml's scan
+    # step comment) -- a real, legitimate spelling difference, but NOT a
+    # license to ignore the *value*. An earlier revision of this script
+    # classified all three header inputs as unconditionally expected to
+    # differ, which would have silently accepted a future PR re-adding a
+    # redundant `new-header:` to abi-scan.yml alone -- recreating the
+    # exact `include_sequence`/`NOT_COMPARABLE` bug this whole repo is
+    # named for, undetected, since only abi-scan.yml would have changed
+    # (Codex review, fresh evidence: "adding a redundant new-header only
+    # to abi-scan.yml recreates the documented failure... the baseline
+    # workflow's self-scan cannot detect the cross-workflow drift" --
+    # true of the round-trip certification step too, since that step only
+    # scans against abi-scan.yml's own baseline dump on the *same* side of
+    # the drift, not against a second, independently-derived recipe).
+    # Normalize dump's `header` against scan's `new-header` and compare
+    # the values directly -- covers both currently unset (today's fixed
+    # state) and both set to the identical explicit path; a one-sided or
+    # differing value on either is a real mismatch.
+    dump_header = dump_with.get("header")
+    scan_header = scan_with.get("new-header")
+    if dump_header != scan_header:
+        errors.append(
+            "RECIPE_FIELD_MISMATCH: header roots -- baseline.yml's dump step has "
+            f"header={dump_header!r}, abi-scan.yml's scan step has "
+            f"new-header={scan_header!r}. `new-header` is scan's documented "
+            "candidate-sided spelling of dump's `header` -- the values themselves "
+            "must still agree (including both being unset)."
+        )
+    # `old-header` never applies to either canonical step (dump has no old
+    # side; scan's canonical step compares against a persisted JSON
+    # baseline, never an `old-header`-parsed live binary) -- flagged as a
+    # real, unexpected usage-drift if it ever appears on either.
+    for step_path, step_with in ((BASELINE_PATH, dump_with), (ABI_SCAN_PATH, scan_with)):
+        if step_with.get("old-header") is not None:
+            errors.append(
+                f"{step_path}: canonical step unexpectedly sets old-header="
+                f"{step_with['old-header']!r} -- neither the dump baseline step nor "
+                "the scan candidate step has an old-side live binary to parse"
+            )
+
     # Every key actually present on either side must be accounted for by
     # this script (either checked for equality, or explicitly named as
     # expected to differ) -- an unrecognized key silently skips both,
     # which would make this check quietly incomplete as new inputs are
-    # added to either step over time. `build-info` is handled specially
-    # below (its literal value can't be compared textually across two
-    # workflows with independent step namespaces), not through the
-    # generic equality loop -- still "accounted for", so it's excluded
-    # here rather than falling through as unclassified.
-    known = set(_MUST_MATCH_FIELDS) | _EXPECTED_TO_DIFFER_FIELDS | {"build-info"}
+    # added to either step over time. `build-info`/`header`/`new-header`/
+    # `old-header` are handled specially above (their literal values
+    # can't be compared through the generic equality loop, or need
+    # cross-field normalization) -- still "accounted for", so they're
+    # excluded here rather than falling through as unclassified.
+    known = set(_MUST_MATCH_FIELDS) | _EXPECTED_TO_DIFFER_FIELDS | {"build-info", "header", "new-header", "old-header"}
     unaccounted = (set(dump_with) | set(scan_with)) - known
     for field in sorted(unaccounted):
         errors.append(
