@@ -61,7 +61,13 @@ def _wf(
                 "steps": [
                     {"id": "bazel_queries", "run": bazel_queries_run if bazel_queries_run is not None else _bazel_queries_run()},
                     {"id": "abicheck_pip", "run": abicheck_pip_run if abicheck_pip_run is not None else _PIP_LINE},
-                    {"id": "bazel_pack", "run": f'python3 x.py --root-target "{root_target}"'},
+                    {
+                        "id": "bazel_pack",
+                        "run": (
+                            f'python3 x.py --cquery "$RUNNER_TEMP/bazel-cquery.json" '
+                            f'--aquery "$RUNNER_TEMP/bazel-aquery.json" --root-target "{root_target}"'
+                        ),
+                    },
                     step,
                 ]
             }
@@ -247,6 +253,39 @@ class TestCheck:
         errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
         assert any("BUILD_EVIDENCE_QUERY_MISMATCH" in e and "cquery" in e for e in errors)
 
+    def test_a_diagnostic_query_of_the_same_kind_writing_a_different_file_is_ignored(self):
+        # Fresh evidence (Codex review): a step can legitimately contain
+        # more than one `cquery`/`aquery` invocation of the same kind --
+        # e.g. an extra diagnostic query -- writing to a DIFFERENT file
+        # than the one bazel_pack actually consumes. Selecting "the last
+        # invocation of that kind" rather than "the one whose redirect
+        # matches bazel_pack's own --cquery/--aquery input" would let a
+        # drifted diagnostic query silently become "the" compared command.
+        # The real evidence-defining query here is unchanged and must
+        # still be recognized as matching.
+        extra_diagnostic = (
+            "bazel cquery --output=jsonproto 'deps(//:other)' > \"$RUNNER_TEMP/bazel-cquery-diagnostic.json\""
+        )
+        drifted = _bazel_queries_run(extra=extra_diagnostic)
+        errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
+        assert not any("BUILD_EVIDENCE_QUERY_MISMATCH" in e for e in errors)
+        assert not any("could not find a 'bazel cquery' command" in e for e in errors)
+
+    def test_a_drifted_query_of_the_same_kind_writing_the_consumed_file_is_still_caught(self):
+        # The converse of the case above: if the invocation that redirects
+        # to the path bazel_pack actually reads IS the drifted one (an
+        # earlier, unchanged query writes an unrelated diagnostic file
+        # instead), the mismatch must still be caught.
+        harmless_diagnostic = (
+            "bazel cquery --output=jsonproto 'deps(//:math)' > \"$RUNNER_TEMP/bazel-cquery-diagnostic.json\""
+        )
+        drifted_real_query = "bazel cquery --output=jsonproto 'deps(//:other)' > \"$RUNNER_TEMP/bazel-cquery.json\""
+        drifted = (
+            f"{harmless_diagnostic}\n{drifted_real_query}\n{_AQUERY_CMD} > \"$RUNNER_TEMP/bazel-aquery.json\""
+        )
+        errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
+        assert any("BUILD_EVIDENCE_QUERY_MISMATCH" in e and "cquery" in e for e in errors)
+
     def test_evidence_pack_aquery_drift_is_caught(self):
         drifted = _bazel_queries_run(aquery="bazel aquery --output=jsonproto \"mnemonic('CppLink', deps(//:math))\"")
         errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
@@ -289,6 +328,23 @@ class TestCheck:
             'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"'
         )
         drifted = f"{shared_first_install}\n{drifted_second_install}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_drift_via_bare_vcs_url_reinstall_is_caught(self):
+        # Fresh evidence beyond the PEP-508-only pattern (Codex review):
+        # `pip install <vcs project url>` (no `package @ ` prefix at all)
+        # is an equally real, pip-documented spelling. A later bare-URL
+        # reinstall using this spelling must still be recognized as the
+        # effective pin, not silently ignored because it doesn't match the
+        # `abicheck @ git+...` form.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        bare_url_reinstall = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"
+        )
+        drifted = f"{shared_first_install}\n{bare_url_reinstall}"
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 

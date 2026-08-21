@@ -163,34 +163,48 @@ def _bazel_pack_root_target(workflow: dict[str, Any], job_id: str) -> str | None
     return m.group(1) if m else None
 
 
-# Matches a `bazel cquery`/`bazel aquery` invocation and everything up to
-# (but not including) the redirect that ends it -- both real commands are
+# Matches a `bazel cquery`/`bazel aquery` invocation and captures both the
+# command itself and its full redirect target -- both real commands are
 # multi-line, backslash-continued shell, so this spans lines. Normalized by
 # collapsing all whitespace before comparison, since line-wrapping/
 # indentation differences between the two workflows' `run:` blocks are not
 # themselves a recipe drift.
-_BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?\$RUNNER_TEMP", re.DOTALL)
+_BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER_TEMP/\S+?)\"?\s*(?:\n|$)", re.DOTALL)
 # The pip install line -- captures the whole `pip install ...` invocation,
 # which is where the abicheck git ref used to *build the evidence pack
 # itself* (a separate pin from the `uses: abicheck/abicheck@<sha>` scanner
-# Action pin already checked above) lives. Matches specifically the line
-# naming the `abicheck @ git+...` requirement, not merely the first `pip
-# install` line in the step (Codex review, fresh evidence: a step could
-# gain an identical preliminary command, e.g. `pip install wheel`, ahead of
-# the real abicheck install on only one side, and a first-match search
-# would silently keep comparing that identical preliminary line while the
-# real, differing abicheck pin went unchecked).
-_PIP_INSTALL_RE = re.compile(r"pip install\b.*abicheck @ git\+\S*")
+# Action pin already checked above) lives. Matches any `pip install` line
+# whose eventual VCS requirement resolves the `abicheck` repo at a ref --
+# both the PEP 508 form (`abicheck @ git+https://.../abicheck.git@<sha>`)
+# and a bare VCS-URL reinstall (`pip install --force-reinstall
+# git+https://.../abicheck.git@<sha>`, which pip's own `<vcs project url>`
+# operand accepts identically -- Codex review, fresh evidence: the PEP-508-
+# only pattern silently ignored this second, equally-real spelling, so a
+# later bare-URL reinstall replacing the package actually used to build
+# the evidence pack went unchecked). Doesn't require the literal
+# `abicheck @ ` prefix -- only that the URL eventually names the
+# `abicheck` repo at a hex ref, which both spellings share.
+_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?:\.git)?@[0-9a-f]{7,40}\S*", re.IGNORECASE)
 
 
 def _normalize_shell(text: str) -> str:
     return " ".join(text.split())
 
 
-def _bazel_query_commands(workflow: dict[str, Any], job_id: str) -> dict[str, str]:
+def _bazel_query_commands(workflow: dict[str, Any], job_id: str, *, expected_paths: dict[str, str]) -> dict[str, str]:
     """The normalized `bazel cquery`/`bazel aquery` command lines from the
     job's own `bazel_queries` step, keyed by query kind ('cquery'/
-    'aquery'). Empty dict if the step or a query is missing."""
+    'aquery') -- selecting, for each kind, the invocation whose redirect
+    matches `expected_paths[kind]` (the exact path the job's own
+    `bazel_pack` step consumes as its `--cquery`/`--aquery` input), not
+    merely the last invocation of that kind (Codex review, fresh evidence:
+    a step containing an extra diagnostic query of the same kind writing a
+    *different* file -- e.g. abi-scan.yml's own trailing `buildfiles(...)`
+    query is a `bazel query`, not `cquery`/`aquery`, but a hypothetical
+    same-kind diagnostic would reproduce this -- must not silently become
+    "the" compared command just because it appears later in the script).
+    Empty dict if the step is missing; a kind absent from the result means
+    no invocation of that kind redirected to the expected path."""
     step = _find_step(workflow, job_id, step_id="bazel_queries")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
@@ -198,8 +212,10 @@ def _bazel_query_commands(workflow: dict[str, Any], job_id: str) -> dict[str, st
     commands: dict[str, str] = {}
     for m in _BAZEL_QUERY_RE.finditer(run):
         normalized = _normalize_shell(m.group(1))
+        redirect = m.group(2)
         kind = "cquery" if normalized.startswith("bazel cquery") else "aquery"
-        commands[kind] = normalized
+        if expected_paths.get(kind) is not None and redirect == expected_paths[kind]:
+            commands[kind] = normalized
     return commands
 
 
@@ -211,17 +227,35 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     pin checked above.
 
     Uses `finditer` and takes the LAST match, not the first (Codex review,
-    fresh evidence): a step containing two `abicheck @ git+...` installs on
-    separate lines has its *later* one win (pip install reinstalls/
-    overwrites), so a `.search()`-based first match would keep comparing a
-    stale earlier pin while the ref that actually runs the evidence-pack
-    helper script -- the later one -- went unchecked."""
+    fresh evidence): a step containing two abicheck installs on separate
+    lines has its *later* one win (pip install reinstalls/overwrites), so
+    a `.search()`-based first match would keep comparing a stale earlier
+    pin while the ref that actually runs the evidence-pack helper script
+    -- the later one -- went unchecked."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
         return None
     matches = list(_PIP_INSTALL_RE.finditer(run))
     return _normalize_shell(matches[-1].group(0)) if matches else None
+
+
+def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str, str]:
+    """The `--cquery`/`--aquery` path arguments the job's own `bazel_pack`
+    step passes to `build_bazel_evidence_pack.py` -- the exact evidence
+    files it actually consumes, used to pick out which `bazel_queries`
+    invocation of each kind is "the" one being compared (see
+    `_bazel_query_commands`'s own docstring)."""
+    step = _find_step(workflow, job_id, step_id="bazel_pack")
+    run = step.get("run") if isinstance(step, dict) else None
+    if not isinstance(run, str):
+        return {}
+    paths: dict[str, str] = {}
+    for kind in ("cquery", "aquery"):
+        m = re.search(rf"--{kind}\s+\"([^\"]+)\"", run)
+        if m:
+            paths[kind] = m.group(1)
+    return paths
 
 
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
@@ -459,15 +493,25 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # mode has no use for -- dump never runs crosschecks) -- that's why
     # the two steps' cquery/aquery commands are compared individually
     # rather than as whole-script text.
-    dump_queries = _bazel_query_commands(baseline_wf, "collect")
-    scan_queries = _bazel_query_commands(abi_scan_wf, "scan")
+    dump_query_inputs = _bazel_pack_query_inputs(baseline_wf, "collect")
+    scan_query_inputs = _bazel_pack_query_inputs(abi_scan_wf, "scan")
+    dump_queries = _bazel_query_commands(baseline_wf, "collect", expected_paths=dump_query_inputs)
+    scan_queries = _bazel_query_commands(abi_scan_wf, "scan", expected_paths=scan_query_inputs)
     for kind in ("cquery", "aquery"):
         dump_q = dump_queries.get(kind)
         scan_q = scan_queries.get(kind)
         if dump_q is None:
-            errors.append(f"{BASELINE_PATH}: could not find a 'bazel {kind}' command in job 'collect''s bazel_queries step")
+            errors.append(
+                f"{BASELINE_PATH}: could not find a 'bazel {kind}' command in job 'collect''s "
+                f"bazel_queries step that redirects to {dump_query_inputs.get(kind)!r} (the path "
+                f"its own bazel_pack step reads as --{kind})"
+            )
         if scan_q is None:
-            errors.append(f"{ABI_SCAN_PATH}: could not find a 'bazel {kind}' command in job 'scan''s bazel_queries step")
+            errors.append(
+                f"{ABI_SCAN_PATH}: could not find a 'bazel {kind}' command in job 'scan''s "
+                f"bazel_queries step that redirects to {scan_query_inputs.get(kind)!r} (the path "
+                f"its own bazel_pack step reads as --{kind})"
+            )
         if dump_q is not None and scan_q is not None and dump_q != scan_q:
             errors.append(
                 f"BUILD_EVIDENCE_QUERY_MISMATCH: baseline.yml's and abi-scan.yml's 'bazel {kind}' "
