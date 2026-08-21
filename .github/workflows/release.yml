@@ -30,6 +30,18 @@ name: Release-contract baseline publication
 # is never silently republished from a stale/edited value. See that
 # script's own module docstring for the verify/drift contract this relies
 # on.
+#
+# Two-job split (`certify` then `publish`), deliberately, not one
+# `certify_and_publish` job (Codex review, PR #23, P1): a single job that
+# both grants `contents: write` AND runs the release commit's own build
+# definitions (`ci/run_profile.py`, arbitrary `pip install`s) would hand a
+# repository-content-and-release-writing credential to every one of those
+# steps -- a compromised dependency or a malicious build script committed
+# into the release itself could use that token before certification ever
+# finishes. `certify` stays `contents: read` for its entire duration,
+# including the build; only `publish` (a separate job, running only after
+# `certify` succeeds, executing none of the release commit's own build
+# definitions) ever sees a write-capable token.
 on:
   release:
     types: [published]
@@ -77,23 +89,21 @@ jobs:
           fi
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
 
-  certify_and_publish:
+  # Entirely read-only: builds the release commit's own source (arbitrary
+  # code from that commit), dumps a fresh baseline, and verifies it
+  # reproduces what's already committed. No token capable of writing
+  # repository contents or release assets is ever available to any step
+  # in this job -- see this file's own header comment for why that split
+  # matters here specifically (a release commit is, by definition,
+  # less-reviewed-in-the-moment than a PR head).
+  certify:
     needs: plan
     runs-on: ubuntu-24.04
     permissions:
-      # Only this job, and only for the asset-upload step specifically,
-      # needs write access -- matching profile-baseline.yml's own
-      # minimum-permission split (design doc section 25 item 2).
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
-    env:
-      # gh CLI's own token env var -- required for every `gh release ...`
-      # call below; github.token is this job's own scoped GITHUB_TOKEN,
-      # never a broader PAT.
-      GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       # No explicit `ref:` -- a `release: published` event's default
       # GITHUB_SHA/checkout already resolves to the release's own target
@@ -148,7 +158,13 @@ jobs:
       # byte-for-byte. No continue-on-error -- a mismatch here means this
       # release should NOT get a published baseline at all, and this job
       # failing is the visible signal for that (design doc's own "fail
-      # closed" principle, applied to a release, not just a PR).
+      # closed" principle, applied to a release, not just a PR). Since
+      # this passed, `abi/profiles/$PROFILE_ID/{math,strings}.abicheck.json`
+      # in this checkout are themselves now the certified assets -- the
+      # `publish` job re-downloads them fresh from a NEW checkout of the
+      # same commit rather than trusting anything staged by this job, so
+      # there is nothing here for a compromised step to tamper with even
+      # if it tried.
       - name: Verify this release commit reproduces its own committed baseline
         shell: bash
         env:
@@ -161,6 +177,33 @@ jobs:
             --committed-dir "abi/profiles/$PROFILE_ID" \
             --verify-only \
             -o "$RUNNER_TEMP/verify-result.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The only job in this workflow with `contents: write` -- and the only
+  # one whose steps are limited to "checkout (read-only clone, no build
+  # definitions executed), emit a manifest from files already certified
+  # by `certify`, upload to the release". `needs: certify` means this job
+  # never starts unless every matrix leg of `certify` succeeded.
+  publish:
+    needs: [plan, certify]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      # gh CLI's own token env var -- required for every `gh release ...`
+      # call below; github.token is this job's own scoped GITHUB_TOKEN,
+      # never a broader PAT, and it is never exposed to `certify`'s own
+      # build steps.
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml
 
       # generation: this workflow run's own attempt number for this
       # release tag -- a plain, honest, monotonic integer scoped to "how
@@ -182,14 +225,26 @@ jobs:
             --baseline "strings=abi/profiles/$PROFILE_ID/strings.abicheck.json" \
             -o "$RUNNER_TEMP/manifest.json"
 
-      # Idempotent, collision-safe publish: stage every asset under its
-      # final, exact release-asset filename first (gh release upload
-      # always names an asset after the local file's own basename), then
-      # for each one -- if an asset by that name already exists on this
-      # release, compare content by digest before deciding whether to
-      # skip (identical content: a safe retry, per design doc section
-      # 9.3 item 6) or fail closed (different content: never silently
-      # overwritten, per that same section's item 5).
+      # Idempotent, collision-safe publish: stage the two BASELINE assets
+      # (math/strings) under their final, exact release-asset filenames
+      # first (gh release upload always names an asset after the local
+      # file's own basename), then for each -- if an asset by that name
+      # already exists on this release, compare content by digest before
+      # deciding whether to skip (identical content: a safe retry, per
+      # design doc section 9.3 item 6) or fail closed (different content:
+      # never silently overwritten, per that same section's item 5).
+      #
+      # The manifest asset is handled separately, NOT subject to that
+      # same digest-must-match-or-fail rule (Codex review, PR #23, P2):
+      # `github.run_attempt`/`generated_at` make every regenerated
+      # manifest differ from the last even when both baselines it
+      # describes are byte-identical, so a strict digest compare would
+      # reject every legitimate retry (including recovery from a
+      # partially completed upload) with a false "different content"
+      # failure. The manifest is provenance/metadata, not a security-
+      # sensitive baseline -- it's always safe to republish with
+      # `--clobber` once the two baseline assets it describes have
+      # already passed their own strict check.
       - name: Publish release baseline assets (idempotent)
         shell: bash
         env:
@@ -200,7 +255,6 @@ jobs:
           mkdir -p "$stage_dir"
           cp "abi/profiles/$PROFILE_ID/math.abicheck.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-math.abicheck.json"
           cp "abi/profiles/$PROFILE_ID/strings.abicheck.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-strings.abicheck.json"
-          cp "$RUNNER_TEMP/manifest.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-manifest.json"
 
           existing_names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
 
@@ -219,3 +273,7 @@ jobs:
             gh release upload "$RELEASE_TAG" "$asset_path"
             echo "$asset_name: published"
           done
+
+          manifest_name="abicheck-baseline-$PROFILE_ID-manifest.json"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/manifest.json#$manifest_name" --clobber
+          echo "$manifest_name: published (always overwritten -- provenance metadata, not a security-sensitive baseline)"

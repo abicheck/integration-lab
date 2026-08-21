@@ -368,6 +368,28 @@ jobs:
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
+      # Same pinned CastXML install scenarios.yml/scenarios_cmake both use
+      # (see scenarios_cmake's own comment for the full rationale) --
+      # without it, `ci/compare_build_outputs.py`'s optional deep check
+      # (`abicheck compare`, defaulting to CastXML, no --ast-frontend
+      # override) can install abicheck fine but every actual compare call
+      # then errors with "castxml not found in PATH", so the "when
+      # abicheck is on PATH" deep check this job advertises silently
+      # never actually exercises real DWARF/header-AST comparison --
+      # `_try_abicheck_compare()`'s own `outcome: error` records this
+      # honestly (never a false "ran and agreed"), but the deep check
+      # itself was never actually being exercised in CI before this
+      # (Codex review, PR #23). continue-on-error: true, matching the
+      # abicheck install step above -- this deep check is best-effort by
+      # design; a failed install here degrades it, it doesn't fail the job.
+      - name: Install pinned CastXML (for the optional deep cross-check)
+        continue-on-error: true
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
       - name: Download every profile's staged build output
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
@@ -398,6 +420,20 @@ jobs:
             echo "::error::select job produced no matrix -- cannot resolve which profiles to compare" >&2
             exit 1
           fi
+          # expected_count is the size of THIS run's own selected matrix
+          # (e.g. a workflow_dispatch with the documented single `profile`
+          # input legitimately selects exactly one) -- distinct from
+          # resolved_count (how many of those actually produced staged
+          # output). Only expected_count decides SKIP vs ERROR when fewer
+          # than two are available to compare; resolved_count alone can't
+          # tell "nothing was ever supposed to be compared" apart from "a
+          # build silently failed" (Codex review, PR #23).
+          expected_count="$(python3 -c "import json, os; print(len(json.loads(os.environ['MATRIX_JSON'])['profile']))")"
+          if [ "$expected_count" -lt 2 ]; then
+            echo "Fewer than two profiles were selected for this run (expected_count=$expected_count) -- nothing to compare pairwise. Skipping, not failing: a single-profile workflow_dispatch is a legitimate, deliberate selection, not an incomplete one."
+            exit 0
+          fi
+
           build_dir_args=()
           resolved_count=0
           missing=0
@@ -413,7 +449,7 @@ jobs:
           done < <(python3 -c "import json, os; print('\n'.join(json.loads(os.environ['MATRIX_JSON'])['profile']))")
 
           if [ "$resolved_count" -lt 2 ]; then
-            echo "::error::fewer than two profiles produced staged output -- nothing to compare" >&2
+            echo "::error::fewer than two of the $expected_count expected profiles produced staged output -- nothing to compare" >&2
             exit 1
           fi
 
@@ -423,7 +459,17 @@ jobs:
             --output-md "$RUNNER_TEMP/cross-build-equivalence.md" | tee -a "$GITHUB_STEP_SUMMARY"
           compare_exit=$?
           if [ "$missing" -eq 1 ]; then
-            echo "::warning::at least one profile's staged output was missing -- cross-build-equivalence result is incomplete" >&2
+            # An expected profile's staged output was missing -- the
+            # comparison that DID run may have reported EQUIVALENT
+            # (compare_exit 0), but that's not the same fact as "every
+            # expected profile was actually checked". Force a real
+            # failure here rather than letting a partial, incomplete
+            # comparison masquerade as a clean equivalence result
+            # (Codex review, PR #23: "makes a failed profile
+            # indistinguishable from a complete successful equivalence
+            # run").
+            echo "::error::at least one expected profile's staged output was missing -- cross-build-equivalence result is INCOMPLETE, not a valid EQUIVALENT" >&2
+            exit 1
           fi
           exit "$compare_exit"
 

@@ -126,6 +126,7 @@ if str(CI_DIR) not in sys.path:
 
 from check_profile import (  # noqa: E402
     CheckProfileError,
+    _CODE_SYMBOL_TYPES,
     _load_build_output,
     _public_headers_for_target,
     _soname,
@@ -218,10 +219,17 @@ def _compare_symbol_sets(
     # comparison -- ci/check_profile.py's own dynamic_symbols() docstring
     # notes recompiled code size varies normally by toolchain/optimization
     # and is not itself ABI-relevant; only a data symbol's size changing
-    # is. A T/t/W/w (code) type change between two build systems' compile
+    # is. A T/t/W/w/i (code) type change between two build systems' compile
     # of the identical source would still be a real, reportable ABI
-    # difference, so `type` is always compared.
-    _CODE_TYPES = {"T", "t", "W", "w"}
+    # difference, so `type` is always compared. Reuses
+    # ci/check_profile.py's own _CODE_SYMBOL_TYPES (which includes "i",
+    # GNU IFUNC -- man nm: the resolver's own implementation-defined code
+    # size varies by build-system/compiler flags without that being an
+    # ABI break) rather than a locally redefined, incomplete copy that
+    # dropped "i" and would misreport an IFUNC's own varying resolver
+    # code size as a data-object ABI divergence (CodeRabbit/Codex review,
+    # PR #23).
+    _CODE_TYPES = _CODE_SYMBOL_TYPES
     for name in sorted(set(by_name_a) & set(by_name_b)):
         a, b = by_name_a[name], by_name_b[name]
         if a["type"] != b["type"]:
