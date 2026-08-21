@@ -49,7 +49,13 @@ class MakeBackend(BuildBackend):
         return EnvironmentCheck(ok=not missing, tool_versions=versions, missing=missing, notes=notes)
 
     def clean(self) -> None:
-        self._run(["make", "clean"], check=False)
+        # check=False previously discarded a failed `make clean` (e.g. a
+        # permission/ownership error on a stale build/ tree from a prior
+        # run) -- build() would then silently reuse/consider-up-to-date
+        # the old outputs instead of failing, staging stale binaries
+        # rather than the current source (Codex review, PR #19). _run()'s
+        # default check=True raises BackendError instead.
+        self._run(["make", "clean"])
 
     def configure(self) -> str:
         return ""  # Make has no separate configure step.
