@@ -62,6 +62,17 @@ jobs:
       - name: Check toolchain_matrix's compiler legs against capabilities.yaml
         run: python3 scripts/check_toolchain_matrix_sync.py
 
+      # Static guard against the recipe-mismatch class of bug that caused
+      # the recurring NOT_COMPARABLE/include_sequence divergence between
+      # the committed baseline and the canonical PR scan (see abi-scan.yml
+      # scan step's own comment, and scripts/check_recipe_parity.py's
+      # module docstring for the full history): an `abicheck/abicheck`
+      # step passing a contract-defining flag (e.g.
+      # `--public-header-dir`) through `extra-args` instead of its typed
+      # input.
+      - name: Check for contract-defining flags shadowed via extra-args
+        run: python3 scripts/check_recipe_parity.py
+
       # Phase 5 (capability receipts): unit tests for the receipt schema
       # (scripts/capability_receipts.py), the emitters, and the validator
       # -- pure-Python logic, so these run here rather than needing

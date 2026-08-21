@@ -195,23 +195,29 @@ jobs:
       # action/run.sh's add_single_flag), so an empty value here is exactly
       # equivalent to omitting build-info and falling back to auto-inference.
       #
-      # public-header-dir: not a typed action input in v0.5.0 (added later,
-      # main-only) but the underlying CLI flag exists at this pin too
-      # (verified against cli_scan.py) and extra-args passes it through --
-      # this is what turns the four provenance-gated crosschecks from
-      # "skipped: no public-header provenance" into real evidence.
-      # This step (and the `aggregate`/`verify_capability_receipts` jobs
-      # downstream of it) fail with NOT_COMPARABLE against the committed
-      # baseline regardless of which abicheck pin is used here -- confirmed
-      # by checking PR #16/#17's own CI, both on the OLDER pin, both
-      # already red for the identical reason (see PR #17's own comment
-      # thread). This is not a regression this pin bump introduces: it's a
-      # pre-existing, upstream-tracked issue (abicheck's own AGENTS.md
-      # "Known gaps": dump's baseline and scan's `--depth source` candidate
-      # resolution disagree on include_sequence via two structurally
-      # different channels). Staying on an older pin buys nothing here --
-      # it only forgoes the two other real bugs 6fb8536 fixes (see this
-      # PR's own description) while leaving this same failure in place.
+      # public-header-dir: use the TYPED `public-header-dir:` input, not
+      # `extra-args`. This used to be `extra-args: '--public-header-dir
+      # include'`, which was the actual root cause of the recurring
+      # NOT_COMPARABLE/include_sequence mismatch against the committed
+      # baseline (previously mis-attributed here to an upstream,
+      # abicheck-core "known gap" -- see abicheck's own AGENTS.md "Known
+      # gaps" entry on dump-vs-scan `include_sequence` divergence, and the
+      # extensive fix history recorded there). At this pin, abicheck's
+      # `scan` mode's typed `public-header-dir` input forwards it BOTH as
+      # `--public-header-dir` (provenance scope) AND as a candidate-sided
+      # `-H new=...` header root (action.yml's own doc for this input:
+      # "keeping a `scan --against` a fresh `dump` baseline of the same
+      # inputs comparable instead of drifting apart on `include_sequence`
+      # for no real recipe difference (lab report)" -- literally this
+      # repo's own report). Passing the identical flag through raw
+      # `extra-args` instead skips that second, candidate-sided `-H`
+      # forward entirely, so `scan`'s own header extraction never expands
+      # `include/` the way `dump`'s baseline (below, and in baseline.yml,
+      # both already using the typed input) does -- an avoidable recipe
+      # mismatch between baseline and candidate, not a genuine ABI-context
+      # difference. `baseline.yml` already made this exact switch (see its
+      # own comment on `public-header-dir`); this fixes the corresponding
+      # `scan`-mode steps in this workflow to match.
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
@@ -221,9 +227,9 @@ jobs:
           mode: scan
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
+          public-header-dir: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
-          extra-args: '--public-header-dir include'
           against: ${{ runner.temp }}/math.base.abicheck.json
           since: ${{ github.event.pull_request.base.sha }}
           depth: source
@@ -533,10 +539,10 @@ jobs:
           mode: scan
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
+          public-header-dir: include
           sources: .
           build-info: ${{ steps.l4_replay_bazel_pack.outputs.pack_dir }}
           ast-frontend: clang
-          extra-args: '--public-header-dir include'
           against: ${{ runner.temp }}/math.base.abicheck.json
           depth: source
           budget: 10m
