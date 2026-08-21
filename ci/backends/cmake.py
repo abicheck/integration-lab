@@ -129,16 +129,21 @@ class CMakeBackend(BuildBackend):
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
             if target.kind == "shared_library":
-                # target.path is the bare "lib<name>.so" dev symlink (see
-                # _resolve_output_path); consumer_app is linked against the
-                # *SONAME* ("lib<name>.so.<SOVERSION>", e.g. libmath.so.1 --
-                # SOVERSION 1 in CMakeLists.txt), not the bare name, so the
-                # staged directory needs that file too or a staged-only
-                # consumer_app can't resolve its dependency at runtime
-                # (Codex review, PR #19). CMake's own symlink chain already
-                # names it -- readlink the bare symlink's immediate target
-                # (one hop: "lib<name>.so" -> "lib<name>.so.<SOVERSION>")
-                # rather than re-deriving SOVERSION from CMakeLists.txt.
+                # CMakeLists.txt now sets NO_SONAME TRUE for math/strings
+                # (aligning with Bazel's own no-SONAME `math` shape -- see
+                # that file's own comment for why), so target.path is a
+                # plain regular file, not a dev symlink, and this block is
+                # a no-op (readlink() raises OSError -> soname=None ->
+                # nothing extra staged). Kept, rather than removed
+                # outright, for the general case: a future CMakeLists.txt
+                # change reintroducing SOVERSION/VERSION would make
+                # target.path a "lib<name>.so" symlink again, and
+                # consumer_app would then need the SONAME-named
+                # ("lib<name>.so.<SOVERSION>") companion file staged
+                # alongside it too, exactly as this block already handles
+                # (Codex review, PR #19, historical: this omission is what
+                # originally made a staged-only consumer_app unable to
+                # resolve its dependency at runtime).
                 try:
                     soname = target.path.readlink().name
                 except OSError:

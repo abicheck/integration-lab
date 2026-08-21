@@ -207,13 +207,29 @@ the symbol-table diff — it can notice a struct-layout or default-argument
 difference the ELF-level diff structurally cannot. It records `not_run`,
 never a silent "equivalent", when the CLI isn't reachable.
 
-**A real finding, left as a finding, not "fixed" here:** run against this
-repo's own three profiles, this check found that Bazel's `//:math` sets no
-SONAME at all, CMake's build sets `libmath.so.1`, and Make's build sets
-`libmath.so` — three different answers for the identical source. That's
-exactly the class of divergence this check exists to surface; aligning it
-is a build-definition decision for a future change, not something this
-comparison tooling should paper over.
+**A real finding, found and then fixed, not papered over:** run against
+this repo's own three profiles, this check found that Bazel's `//:math`
+set no SONAME at all, CMake's build set `libmath.so.1` (via `SOVERSION`),
+and Make's build set `libmath.so` (via `-Wl,-soname`) — three different
+answers for the identical source. Exactly the class of divergence this
+check exists to surface. Fixed by aligning CMake (`NO_SONAME TRUE`) and
+Make (dropped `-Wl,-soname` entirely) to Bazel's existing no-SONAME
+shape, rather than the reverse: Bazel's `//:math` is deliberately the one
+target this repo never changes casually (see `BUILD.bazel`'s own
+comment — every existing job's cache key, evidence pack, and committed
+baseline are keyed to it, and it's the required `abi-scan.yml` gate's own
+target), so alignment went the direction that doesn't touch it.
+`ci/backends/{cmake,make}.py`'s own SONAME-companion staging logic
+(needed when a backend's SONAME differs from its on-disk filename) is
+now dormant for these two targets but left in place, documented, for a
+future build-definition change that reintroduces a SONAME.
+
+A separate, still-open finding from the same check: the opportunistic
+real `abicheck compare` between Bazel's and CMake/Make's own built
+`libmath.so` reports `COMPATIBLE_WITH_RISK` — a DWARF/source-level
+difference the SONAME/symbol-table diff above cannot see on its own.
+Left as a finding, not fixed here — a separate investigation from the
+SONAME alignment above.
 
 `cross_build_equivalence` runs this after every profile's build, uploads
 `cross-build-equivalence.{json,md}`, and `integration_gate` notes its

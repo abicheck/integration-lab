@@ -28,22 +28,35 @@ get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 # ---- math -------------------------------------------------------------
 # Mirrors BUILD.bazel's `math` cc_binary(linkshared = True): same
 # src/math.cc, same public header include/abicheck_lab/math.h.
+#
+# NO_SONAME TRUE (dropping the previous SOVERSION/VERSION pair): the
+# cross_build_equivalence job (ci/compare_build_outputs.py) found a real
+# public_contract_mismatch here -- SOVERSION 1 gave this profile's
+# libmath.so an embedded SONAME of "libmath.so.1", while Bazel's `math`
+# cc_binary(linkshared=True) target embeds no SONAME at all and Make's
+# own build (buildsystems/make/Makefile) used unversioned
+# -Wl,-soname,libmath.so. Bazel's `math` is deliberately the ONE target
+# kept unchanged here (BUILD.bazel's own comment: every existing job's
+# cache key, evidence pack, and committed baseline -- abi/math.abicheck.json
+# -- are keyed to it, and it's the required abi-scan.yml gate's own
+# target), so alignment goes the other direction: CMake and Make both
+# drop their own SONAME to match Bazel's existing no-SONAME shape,
+# instead of adding SONAME handling to the required gate's own target.
 add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
-    SOVERSION 1
-    VERSION 1.0.0
+    NO_SONAME TRUE
 )
 
 # ---- strings ------------------------------------------------------------
 # Mirrors strings_lib/BUILD.bazel's `strings` cc_binary(linkshared = True).
+# NO_SONAME TRUE -- same reasoning as `math` above.
 add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
-    SOVERSION 1
-    VERSION 1.0.0
+    NO_SONAME TRUE
 )
 
 # ---- consumer_app ---------------------------------------------------------

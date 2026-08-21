@@ -957,6 +957,25 @@ not the profile/receipt/gate architecture built around it.
 
 # 2026-08-21 follow-up: no cross-build-system public-contract equivalence primitive upstream
 
+**2026-08-21 update: the SONAME finding this entry describes is fixed on
+the lab side.** CMake (`buildsystems/cmake/CMakeLists.txt`, `NO_SONAME
+TRUE`) and Make (`buildsystems/make/Makefile`, dropped `-Wl,-soname`
+entirely) are now aligned to Bazel's existing no-SONAME shape for
+`math`/`strings` -- not the reverse, since `BUILD.bazel`'s own comment
+keeps `//:math` deliberately unchanged (every existing job's cache key,
+evidence pack, and committed baseline are keyed to it, and it's the
+required `abi-scan.yml` gate's own target). Verified end-to-end: a fresh
+three-way build now reports the CMake<->Make pair fully `EQUIVALENT` (no
+findings at all), and the SONAME `public_contract_mismatch` no longer
+appears in either Bazel pair. This does not change the ask below (this
+lab's own `ci/compare_build_outputs.py` is still bespoke tooling, not a
+first-class abicheck primitive) -- it only means one of this section's
+own real findings no longer reproduces. A separate, still-open finding
+from the same tooling remains: a real `abicheck compare` between Bazel's
+and CMake/Make's own built `libmath.so` reports `COMPATIBLE_WITH_RISK`, a
+DWARF/source-level difference the SONAME/symbol-table diff can't see on
+its own -- a different investigation, not addressed by this fix.
+
 **Context:** PR3 of the multi-build-system integration effort adds
 `ci/compare_build_outputs.py` -- a pairwise (Bazel↔CMake, Bazel↔Make,
 CMake↔Make) comparison of two profiles' own staged build output for the

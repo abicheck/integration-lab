@@ -133,9 +133,14 @@ and [docs/integration-profiles.md](docs/integration-profiles.md#scanner-candidat
   symbols, SONAME, dynamic dependencies, public headers — and classifies
   every difference as a real public-contract mismatch or expected
   build-system bookkeeping. It is real (run against this repo's own three
-  profiles, it found a genuine SONAME mismatch — see
-  [integration-profiles.md](docs/integration-profiles.md#cross-build-system-equivalence))
-  but, like every other advisory job, cannot block a merge.
+  profiles, it found and this repo then fixed a genuine SONAME mismatch —
+  see
+  [integration-profiles.md](docs/integration-profiles.md#cross-build-system-equivalence));
+  a separate, still-open `abicheck_cross_check` finding (a real
+  `abicheck compare` between Bazel's and CMake/Make's own built
+  `libmath.so` reports `COMPATIBLE_WITH_RISK`, a DWARF/source-level
+  difference the SONAME/symbol-table diff can't see on its own) remains.
+  Like every other advisory job, none of this can block a merge.
 - **Not every profile has a production release baseline**, and not every
   scenario runs through every build system — the scenario oracle exercises
   Bazel for its full suite; CMake covers only an initial, deliberately

@@ -50,14 +50,24 @@ all: $(LIBMATH) $(LIBSTRINGS) $(CONSUMER)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# SONAME set explicitly (-Wl,-soname), the same runtime-linking contract a
-# real shared library ships with -- not just -shared with no SONAME.
+# No -Wl,-soname (deliberately, no longer the "-shared with no SONAME"
+# default this comment used to warn against): the cross_build_equivalence
+# job (ci/compare_build_outputs.py) found a real public_contract_mismatch
+# between all three build systems here -- this Makefile previously set an
+# unversioned SONAME equal to the bare filename (-Wl,-soname,libmath.so),
+# CMake's own SOVERSION set a versioned one (libmath.so.1), and Bazel's
+# `math` cc_binary(linkshared=True) target embeds no SONAME at all.
+# BUILD.bazel's own comment keeps `math` deliberately unchanged (every
+# existing job's cache key, evidence pack, and committed baseline are
+# keyed to it, and it's the required abi-scan.yml gate's own target), so
+# this build aligns to Bazel's existing no-SONAME shape instead of adding
+# SONAME handling to the required gate's own target.
 $(LIBMATH): $(MATH_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) -shared -Wl,-soname,libmath.so \
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) -shared \
 	    -o $@ $<
 
 $(LIBSTRINGS): $(STRINGS_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) -shared -Wl,-soname,libstrings.so \
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) -shared \
 	    -o $@ $<
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's
