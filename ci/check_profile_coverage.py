@@ -175,6 +175,25 @@ def evaluate(
 
     # 4. Evidence identity: the ABI report (if supplied) actually ran
     #    against these exact staged bytes.
+    #
+    # Every target ci/profiles.yaml's coverage.checked_targets declares
+    # must have a report -- this previously only validated whichever
+    # --report flags were actually passed on the command line, with no
+    # cross-check against checked_targets itself. A profile that adds or
+    # renames a checked_targets entry without also updating the workflow's
+    # --report flags would then have that target's artifact staged and
+    # "covered" by every other check here, but receive no ABI comparison
+    # at all -- and this contract, plus the receipt/gate built on it,
+    # would still pass (Codex review, PR #20).
+    # Only enforced when the caller opted into report-based checking at
+    # all (report_paths is not None) -- an evidence-only coverage check
+    # (report_paths omitted entirely) is a distinct, legitimate mode this
+    # function has always supported and must keep supporting.
+    if report_paths is not None:
+        missing_reports = sorted(set(checked_targets) - set(report_paths))
+        for target in missing_reports:
+            failures.append(f"checked_targets includes {target!r} but no --report was supplied for it")
+
     if report_paths:
         report_facts: Dict[str, Any] = {}
         for target, report_path in report_paths.items():

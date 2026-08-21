@@ -81,7 +81,14 @@ def evaluate(
         schema_errors = validate_document(receipt, schema_path)
         if schema_errors:
             failures.append(f"{profile_id}: receipt fails schema validation: {'; '.join(schema_errors[:5])}")
-            rows.append({**row, "status": "SCHEMA_INVALID", "build": receipt.get("build"), "reports": receipt.get("reports", []), "gate_status": "FAIL"})
+            # receipt is valid JSON but not necessarily an object here --
+            # validate_document() flags e.g. a top-level `[]` as a schema
+            # error too, and calling .get() on that crashed this whole
+            # job with an unhandled AttributeError instead of emitting the
+            # SCHEMA_INVALID row/failure this branch promises (Codex
+            # review, PR #20).
+            receipt_dict = receipt if isinstance(receipt, dict) else {}
+            rows.append({**row, "status": "SCHEMA_INVALID", "build": receipt_dict.get("build"), "reports": receipt_dict.get("reports", []), "gate_status": "FAIL"})
             continue
 
         status = receipt.get("status")
