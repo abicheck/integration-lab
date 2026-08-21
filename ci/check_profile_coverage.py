@@ -158,8 +158,21 @@ def evaluate(
         present = backend_evidence.get("compile_commands_present", False)
         facts["compile_commands_present"] = present
         if not present:
-            if require_cc:
-                failures.append("compile_commands.json was not generated for this profile (required)")
+            note = backend_evidence.get("note", "")
+            # require_compile_commands: false exists specifically to
+            # tolerate a runner that never had bear installed (make.py's
+            # documented best-effort posture for that case) -- it was not
+            # meant to also swallow a genuine invocation *failure* on a
+            # runner where bear IS installed (integration-shadow.yml
+            # explicitly installs it), which is a real signal something's
+            # broken, not an absent-optional-tool no-op (Codex review,
+            # PR #20). make.py's own note text distinguishes the two.
+            tool_absent = note.startswith("bear not installed")
+            if require_cc or not tool_absent:
+                failures.append(
+                    "compile_commands.json was not generated for this profile "
+                    f"({'required' if require_cc else 'bear was expected to be installed'}): {note}"
+                )
             else:
                 facts["compile_commands_note"] = (
                     "compile_commands.json not generated -- not required for this profile "
