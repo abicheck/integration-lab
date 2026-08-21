@@ -70,7 +70,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: abicheck-canary
+  # CodeRabbit review, PR #24 (nitpick, real): keying this on a constant
+  # meant two candidates dispatched in quick succession (a plausible
+  # shape for abicheck's own release automation, not just a hypothetical)
+  # would cancel each other -- the first candidate then produces NO
+  # classification at all, and nothing surfaces that loss anywhere.
+  # Keying by the resolved candidate identity instead means only a
+  # re-run of the SAME candidate (same SHA, same manual ref, or another
+  # schedule tick) supersedes an in-flight run; two different candidates
+  # run independently. `github.event.client_payload.scanner_sha` covers
+  # repository_dispatch, `inputs.scanner-ref` covers workflow_dispatch,
+  # and the literal `schedule` fallback covers the schedule trigger
+  # (which always resolves the same `main` ref, so cancel-in-progress
+  # for repeat schedule ticks is still exactly the right behavior).
+  group: abicheck-canary-${{ github.event.client_payload.scanner_sha || inputs.scanner-ref || 'schedule' }}
   cancel-in-progress: true
 
 jobs:
@@ -335,6 +348,17 @@ jobs:
       # reporting anything other than a clean pass on a genuinely
       # unchanged input IS the drift signal, independent of whatever
       # verdict string ends up in the report.
+      # CodeRabbit review, PR #24 (Major): checking only
+      # `steps.action_contract.outcome` certified the Action's contract
+      # without ever confirming the Action actually honored its own
+      # `output-file: canary-action-contract.json` input -- a candidate
+      # whose Action step exits 0 but writes no report (or a truncated/
+      # corrupt one) would have passed this assertion, silently
+      # certifying an Action that violates its documented output
+      # contract. `build_integration_canary`'s own equivalent assertion
+      # (below) already reads its report's `verdict` field and would
+      # fail closed on exactly this -- this step gets the same guarantee
+      # explicitly, since it has no verdict field of its own to read.
       - name: Assert self-comparison is clean
         id: assert_clean
         if: steps.action_contract.outcome != 'skipped'
@@ -345,6 +369,11 @@ jobs:
             echo "::error::candidate Action reported a non-clean result comparing an unchanged library+header pair against itself" >&2
             exit 1
           fi
+          if [ ! -s canary-action-contract.json ]; then
+            echo "::error::candidate Action exited clean but wrote no (or an empty) canary-action-contract.json -- violates its own output-file contract" >&2
+            exit 1
+          fi
+          python3 -c "import json; json.load(open('canary-action-contract.json', encoding='utf-8'))"
 
       - name: Upload action-contract report
         if: always()
@@ -610,6 +639,37 @@ jobs:
           else
             jq -s 'add' "${signal_files[@]}" > "$RUNNER_TEMP/signals.json"
           fi
+
+          # CodeRabbit review, PR #24: the merge above already tolerates a
+          # WHOLLY missing artifact set (the branch above), but a
+          # PARTIALLY missing one -- e.g. one matrix leg's own runner
+          # died before it could even upload its artifact, while its
+          # sibling legs uploaded fine -- previously classified on
+          # whatever legs happened to report, silently treating an
+          # unreported leg as if it had never been expected at all. Every
+          # expected artifact name is known statically (it's this same
+          # workflow's own matrix values); a name absent from what was
+          # actually downloaded gets its own explicit infrastructure
+          # signal appended here, so a silently-missing leg is never
+          # indistinguishable from "there was no such leg this run".
+          expected_artifacts=(
+            canary-signal-resolve-candidate
+            canary-signal-semantic-bazel
+            canary-signal-semantic-cmake
+            canary-signal-action-contract
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-bazel
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-cmake-ninja
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-make-bear
+          )
+          for name in "${expected_artifacts[@]}"; do
+            if [ ! -f "$RUNNER_TEMP/canary-signals/$name/signal.json" ]; then
+              echo "::warning::expected signal artifact '$name' was never uploaded -- appending an explicit infrastructure signal for it" >&2
+              jq --arg name "$name" \
+                '. + [{"name": ($name + " (artifact missing)"), "category": "infrastructure", "outcome": "failure"}]' \
+                "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp"
+              mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+            fi
+          done
           cat "$RUNNER_TEMP/signals.json"
           python3 scripts/classify_canary_outcome.py "$RUNNER_TEMP/signals.json" | tee "$RUNNER_TEMP/classification.json"
           classification="$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/classification.json'))['classification'])")"
