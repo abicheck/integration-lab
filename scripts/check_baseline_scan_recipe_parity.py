@@ -101,7 +101,12 @@ _EXPECTED_TO_DIFFER_FIELDS = frozenset(
     }
 )
 
-_USES_RE = re.compile(r"^abicheck/abicheck@(?P<sha>[0-9a-f]{7,40})")
+# Anchored at both ends (Codex review, fresh evidence): an unanchored
+# match would extract a matching prefix from two genuinely different refs
+# that merely *start* with the same seven hex characters (e.g.
+# `@abcdef0-baseline` vs. `@abcdef0-scan`) and report them as the same
+# pin. The full ref must be nothing but a 7-40 character hex SHA.
+_USES_RE = re.compile(r"^abicheck/abicheck@(?P<sha>[0-9a-f]{7,40})$")
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -142,6 +147,67 @@ def _bazel_pack_root_target(workflow: dict[str, Any], job_id: str) -> str | None
         return None
     m = re.search(r"--root-target\s+\"([^\"]+)\"", run)
     return m.group(1) if m else None
+
+
+# Matches a `bazel cquery`/`bazel aquery` invocation and everything up to
+# (but not including) the redirect that ends it -- both real commands are
+# multi-line, backslash-continued shell, so this spans lines. Normalized by
+# collapsing all whitespace before comparison, since line-wrapping/
+# indentation differences between the two workflows' `run:` blocks are not
+# themselves a recipe drift.
+_BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?\$RUNNER_TEMP", re.DOTALL)
+# The pip install line -- captures the whole `pip install ...` invocation,
+# which is where the abicheck git ref used to *build the evidence pack
+# itself* (a separate pin from the `uses: abicheck/abicheck@<sha>` scanner
+# Action pin already checked above) lives.
+_PIP_INSTALL_RE = re.compile(r"pip install\b.*")
+
+
+def _normalize_shell(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _bazel_query_commands(workflow: dict[str, Any], job_id: str) -> dict[str, str]:
+    """The normalized `bazel cquery`/`bazel aquery` command lines from the
+    job's own `bazel_queries` step, keyed by query kind ('cquery'/
+    'aquery'). Empty dict if the step or a query is missing."""
+    step = _find_step(workflow, job_id, step_id="bazel_queries")
+    run = step.get("run") if isinstance(step, dict) else None
+    if not isinstance(run, str):
+        return {}
+    commands: dict[str, str] = {}
+    for m in _BAZEL_QUERY_RE.finditer(run):
+        normalized = _normalize_shell(m.group(1))
+        kind = "cquery" if normalized.startswith("bazel cquery") else "aquery"
+        commands[kind] = normalized
+    return commands
+
+
+def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
+    """The normalized `pip install ...` line from the job's own
+    `abicheck_pip` step -- the abicheck git ref used to *run
+    build_bazel_evidence_pack.py*, independent of the scanner Action's own
+    `uses: abicheck/abicheck@<sha>` pin checked above."""
+    step = _find_step(workflow, job_id, step_id="abicheck_pip")
+    run = step.get("run") if isinstance(step, dict) else None
+    if not isinstance(run, str):
+        return None
+    m = _PIP_INSTALL_RE.search(run)
+    return _normalize_shell(m.group(0)) if m else None
+
+
+def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
+    """The job's own `bazel_pack` step script, normalized, with the
+    `--root-target` VALUE masked out -- that value is already compared
+    directly by `_bazel_pack_root_target`/`BUILD_EVIDENCE_ROOT_TARGET_
+    MISMATCH` above, so masking it here avoids reporting the identical
+    drift twice under two different error codes."""
+    step = _find_step(workflow, job_id, step_id="bazel_pack")
+    run = step.get("run") if isinstance(step, dict) else None
+    if not isinstance(run, str):
+        return None
+    masked = re.sub(r'--root-target\s+"[^"]*"', "--root-target <masked>", run)
+    return _normalize_shell(masked)
 
 
 def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]:
@@ -326,6 +392,69 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"to --root-target {dump_root_target!r} but abi-scan.yml's is scoped to "
             f"{scan_root_target!r} -- the baseline and the canonical scan must collect L3 "
             "evidence for the same Bazel target"
+        )
+
+    # Complete evidence-pack *producer* recipe (Codex review, fresh
+    # evidence): everything above compares the two `abicheck/abicheck`
+    # Action steps' own typed inputs -- but both steps consume an evidence
+    # pack a job first assembles itself, from a `bazel_queries` step (the
+    # actual cquery/aquery command lines), an `abicheck_pip` step (a
+    # *second*, independent abicheck git-ref pin -- the one used to *run*
+    # build_bazel_evidence_pack.py, not the one that scans/dumps), and a
+    # `bazel_pack` step (the helper script invocation itself). A drift in
+    # any of these changes what evidence the dump/scan steps see without
+    # touching either step's own `with:` block at all, invisible to every
+    # check above. abi-scan.yml's `bazel_queries` step legitimately has one
+    # extra trailing `bazel query 'buildfiles(...)'` line (feeds
+    # check_coverage_contract.py's --buildfiles, which baseline.yml's dump
+    # mode has no use for -- dump never runs crosschecks) -- that's why
+    # the two steps' cquery/aquery commands are compared individually
+    # rather than as whole-script text.
+    dump_queries = _bazel_query_commands(baseline_wf, "collect")
+    scan_queries = _bazel_query_commands(abi_scan_wf, "scan")
+    for kind in ("cquery", "aquery"):
+        dump_q = dump_queries.get(kind)
+        scan_q = scan_queries.get(kind)
+        if dump_q is None:
+            errors.append(f"{BASELINE_PATH}: could not find a 'bazel {kind}' command in job 'collect''s bazel_queries step")
+        if scan_q is None:
+            errors.append(f"{ABI_SCAN_PATH}: could not find a 'bazel {kind}' command in job 'scan''s bazel_queries step")
+        if dump_q is not None and scan_q is not None and dump_q != scan_q:
+            errors.append(
+                f"BUILD_EVIDENCE_QUERY_MISMATCH: baseline.yml's and abi-scan.yml's 'bazel {kind}' "
+                f"commands differ -- baseline.yml: {dump_q!r}, abi-scan.yml: {scan_q!r}. The two "
+                "workflows must collect L3 evidence with the identical query, or the resulting "
+                "evidence packs can silently cover different compile units."
+            )
+
+    dump_pip_pin = _abicheck_pip_pin(baseline_wf, "collect")
+    scan_pip_pin = _abicheck_pip_pin(abi_scan_wf, "scan")
+    if dump_pip_pin is None:
+        errors.append(f"{BASELINE_PATH}: could not find a 'pip install' line in job 'collect''s abicheck_pip step")
+    if scan_pip_pin is None:
+        errors.append(f"{ABI_SCAN_PATH}: could not find a 'pip install' line in job 'scan''s abicheck_pip step")
+    if dump_pip_pin is not None and scan_pip_pin is not None and dump_pip_pin != scan_pip_pin:
+        errors.append(
+            "BUILD_EVIDENCE_PIP_PIN_MISMATCH: baseline.yml's and abi-scan.yml's abicheck_pip "
+            f"steps install different abicheck refs -- baseline.yml: {dump_pip_pin!r}, "
+            f"abi-scan.yml: {scan_pip_pin!r}. This is the abicheck version that actually *runs* "
+            "build_bazel_evidence_pack.py (separate from the abicheck/abicheck@<sha> scanner "
+            "Action pin already checked above) -- a drift here can change the evidence pack's "
+            "own shape without either canonical step's `uses:` pin ever changing."
+        )
+
+    dump_pack_script = _bazel_pack_script(baseline_wf, "collect")
+    scan_pack_script = _bazel_pack_script(abi_scan_wf, "scan")
+    if dump_pack_script is None:
+        errors.append(f"{BASELINE_PATH}: could not find a script in job 'collect''s bazel_pack step")
+    if scan_pack_script is None:
+        errors.append(f"{ABI_SCAN_PATH}: could not find a script in job 'scan''s bazel_pack step")
+    if dump_pack_script is not None and scan_pack_script is not None and dump_pack_script != scan_pack_script:
+        errors.append(
+            "BUILD_EVIDENCE_PACK_SCRIPT_MISMATCH: baseline.yml's and abi-scan.yml's bazel_pack "
+            f"steps invoke build_bazel_evidence_pack.py differently (--root-target masked out, "
+            "already checked separately) -- baseline.yml: "
+            f"{dump_pack_script!r}, abi-scan.yml: {scan_pack_script!r}"
         )
 
     return errors

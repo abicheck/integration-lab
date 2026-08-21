@@ -38,12 +38,29 @@ _GOOD_SCAN_WITH = {
 }
 _SHA = "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
+_CQUERY_CMD = "bazel cquery --output=jsonproto 'deps(//:math)'"
+_AQUERY_CMD = "bazel aquery --output=jsonproto --include_param_files \"mnemonic('CppCompile', deps(//:math))\""
+_PIP_LINE = f'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@{_SHA}"'
 
-def _wf(job_id: str, step: dict, *, root_target: str = "//:math") -> dict:
+
+def _bazel_queries_run(*, cquery: str = _CQUERY_CMD, aquery: str = _AQUERY_CMD, extra: str = "") -> str:
+    return f'{cquery} > "$RUNNER_TEMP/bazel-cquery.json"\n{aquery} > "$RUNNER_TEMP/bazel-aquery.json"\n{extra}'
+
+
+def _wf(
+    job_id: str,
+    step: dict,
+    *,
+    root_target: str = "//:math",
+    bazel_queries_run: str | None = None,
+    abicheck_pip_run: str | None = None,
+) -> dict:
     return {
         "jobs": {
             job_id: {
                 "steps": [
+                    {"id": "bazel_queries", "run": bazel_queries_run if bazel_queries_run is not None else _bazel_queries_run()},
+                    {"id": "abicheck_pip", "run": abicheck_pip_run if abicheck_pip_run is not None else _PIP_LINE},
                     {"id": "bazel_pack", "run": f'python3 x.py --root-target "{root_target}"'},
                     step,
                 ]
@@ -52,22 +69,43 @@ def _wf(job_id: str, step: dict, *, root_target: str = "//:math") -> dict:
     }
 
 
-def _dump_wf(with_block: dict | None = None, *, uses_sha: str = _SHA, root_target: str = "//:math") -> dict:
+def _dump_wf(
+    with_block: dict | None = None,
+    *,
+    uses_sha: str = _SHA,
+    root_target: str = "//:math",
+    bazel_queries_run: str | None = None,
+    abicheck_pip_run: str | None = None,
+) -> dict:
     step = {
         "name": "Collect source-aware ABI baseline",
         "uses": f"abicheck/abicheck@{uses_sha}",
         "with": with_block if with_block is not None else dict(_GOOD_DUMP_WITH),
     }
-    return _wf("collect", step, root_target=root_target)
+    return _wf("collect", step, root_target=root_target, bazel_queries_run=bazel_queries_run, abicheck_pip_run=abicheck_pip_run)
 
 
-def _scan_wf(with_block: dict | None = None, *, uses_sha: str = _SHA, root_target: str = "//:math") -> dict:
+def _scan_wf(
+    with_block: dict | None = None,
+    *,
+    uses_sha: str = _SHA,
+    root_target: str = "//:math",
+    bazel_queries_run: str | None = None,
+    abicheck_pip_run: str | None = None,
+) -> dict:
     step = {
         "id": "scan",
         "uses": f"abicheck/abicheck@{uses_sha}",
         "with": with_block if with_block is not None else dict(_GOOD_SCAN_WITH),
     }
-    return _wf("scan", step, root_target=root_target)
+    # abi-scan.yml's own real bazel_queries step legitimately has one extra
+    # trailing `bazel query 'buildfiles(...)'` line beyond baseline.yml's --
+    # default this synthetic scan side to carry the identical asymmetry, so
+    # the "clean" default case exercises that real shape rather than a
+    # simplified one that would never catch the check ignoring it correctly.
+    if bazel_queries_run is None:
+        bazel_queries_run = _bazel_queries_run(extra="bazel query 'buildfiles(deps(//:math))' > \"$RUNNER_TEMP/bazel-buildfiles.txt\"")
+    return _wf("scan", step, root_target=root_target, bazel_queries_run=bazel_queries_run, abicheck_pip_run=abicheck_pip_run)
 
 
 class TestCheck:
@@ -175,6 +213,44 @@ class TestCheck:
         dump_with["some-brand-new-input"] = "x"
         errors = check(_dump_wf(dump_with), _scan_wf())
         assert any("UNCLASSIFIED_FIELD" in e and "some-brand-new-input" in e for e in errors)
+
+    def test_evidence_pack_cquery_drift_is_caught(self):
+        # The exact shape the check exists for: a `with:` block that agrees
+        # on every typed input, but the *evidence* feeding both steps was
+        # collected with two different bazel cquery commands.
+        drifted = _bazel_queries_run(cquery="bazel cquery --output=jsonproto 'deps(//:other)'")
+        errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
+        assert any("BUILD_EVIDENCE_QUERY_MISMATCH" in e and "cquery" in e for e in errors)
+
+    def test_evidence_pack_aquery_drift_is_caught(self):
+        drifted = _bazel_queries_run(aquery="bazel aquery --output=jsonproto \"mnemonic('CppLink', deps(//:math))\"")
+        errors = check(_dump_wf(), _scan_wf(bazel_queries_run=drifted))
+        assert any("BUILD_EVIDENCE_QUERY_MISMATCH" in e and "aquery" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_drift_is_caught(self):
+        # A second, independent abicheck pin (the one that *runs*
+        # build_bazel_evidence_pack.py) drifting from the scanner Action's
+        # own pin, with the `uses:` pins on both canonical steps unchanged.
+        drifted = 'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"'
+        errors = check(_dump_wf(), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_bazel_pack_script_drift_is_caught(self):
+        # A structural difference in the bazel_pack invocation itself
+        # (beyond --root-target, which is checked separately) -- e.g. one
+        # side passing an extra flag the other doesn't.
+        step = {
+            "id": "scan",
+            "uses": f"abicheck/abicheck@{_SHA}",
+            "with": dict(_GOOD_SCAN_WITH),
+        }
+        wf = _wf("scan", step)
+        wf["jobs"]["scan"]["steps"][2]["run"] = 'python3 x.py --root-target "//:math" --extra-flag'
+        errors = check(_dump_wf(), wf)
+        assert any("BUILD_EVIDENCE_PACK_SCRIPT_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_queries_agreeing_is_clean(self):
+        assert check(_dump_wf(), _scan_wf()) == []
 
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
