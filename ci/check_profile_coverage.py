@@ -94,7 +94,13 @@ def evaluate(
     }
 
     build_output = _load_json(staged_dir / "build-output.json")
-    if build_output is None:
+    # A syntactically valid but non-object document (e.g. `[]`) is truthy
+    # and not None, so "is None" alone let it through to every .get() call
+    # below, each raising AttributeError (CodeRabbit review, PR #20; same
+    # shape as the report-JSON hardening already applied elsewhere in this
+    # PR -- see ci/emit_profile_receipt.py's own comment on this exact
+    # pattern).
+    if not isinstance(build_output, dict):
         failures.append(f"no valid build-output.json under {staged_dir}")
         return _result(facts, failures)
     facts["build_success"] = bool(build_output.get("success"))
@@ -134,13 +140,25 @@ def evaluate(
         else:
             for root in header_roots:
                 root_dir = staged_dir / root
-                files = [p for p in root_dir.rglob("*")] if root_dir.is_dir() else []
-                header_files = [p for p in files if p.is_file()]
-                if not header_files:
+                # Short-circuits on the first file found instead of
+                # materializing the whole tree just to prove one file
+                # exists (CodeRabbit review, PR #20).
+                has_file = root_dir.is_dir() and any(p.is_file() for p in root_dir.rglob("*"))
+                if not has_file:
                     failures.append(f"header root {root!r} staged but contains no files")
 
     # 3. Backend-appropriate compile-evidence signal.
-    backend_evidence = build_output.get("evidence", {}).get("backend_evidence", {})
+    # `evidence`/`backend_evidence` are themselves attacker/producer-
+    # controlled JSON, not guaranteed to be objects even if build_output
+    # itself is one (e.g. `"evidence": null` from a degraded build) --
+    # coerce each to {} before chaining another .get() onto it, same
+    # reasoning as the build_output guard above.
+    evidence = build_output.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    backend_evidence = evidence.get("backend_evidence")
+    if not isinstance(backend_evidence, dict):
+        backend_evidence = {}
     backend = profile["backend"]
     if backend == "bazel":
         min_resolved = coverage_cfg.get("min_resolved_targets", 1)
@@ -158,7 +176,11 @@ def evaluate(
         present = backend_evidence.get("compile_commands_present", False)
         facts["compile_commands_present"] = present
         if not present:
-            note = backend_evidence.get("note", "")
+            # backend_evidence.get("note", "") only substitutes the default
+            # when the key is absent -- an explicit "note": null still
+            # returns None, and None.startswith() below would raise
+            # (CodeRabbit review, PR #20).
+            note = backend_evidence.get("note") or ""
             # require_compile_commands: false exists specifically to
             # tolerate a runner that never had bear installed (make.py's
             # documented best-effort posture for that case) -- it was not
@@ -211,7 +233,12 @@ def evaluate(
         report_facts: Dict[str, Any] = {}
         for target, report_path in report_paths.items():
             report = _load_json(report_path)
-            if report is None:
+            # Same non-object-JSON hazard as build_output above -- a
+            # syntactically valid `[]`/`null`/string report is truthy and
+            # not None, so "is None" alone let it reach report.get() below
+            # and raise AttributeError instead of routing through this
+            # existing missing/invalid failure (CodeRabbit review, PR #20).
+            if not isinstance(report, dict):
                 failures.append(f"report for target {target!r} at {report_path} is missing/invalid JSON")
                 continue
             candidate_rel = report.get("candidate_library_path")

@@ -73,7 +73,14 @@ def evaluate(
 
         try:
             receipt = _load_json(receipt_path)
-        except json.JSONDecodeError as exc:
+        # UnicodeDecodeError (a binary/truncated artifact download) is a
+        # ValueError, not a JSONDecodeError, so it escaped this handler
+        # entirely; OSError (permission, an unexpected directory at this
+        # path) escaped it too. Either crashed this whole gate job with a
+        # traceback instead of the readable INVALID row this branch exists
+        # to produce -- exactly the corrupted-artifact case this gate is
+        # meant to catch (CodeRabbit review, PR #20).
+        except (OSError, ValueError) as exc:
             failures.append(f"{profile_id}: receipt is not valid JSON ({exc})")
             rows.append({**row, "status": "INVALID", "build": None, "reports": [], "gate_status": "FAIL"})
             continue

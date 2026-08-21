@@ -115,3 +115,40 @@ def test_bazel_backend_builds_real_targets(repo_root):
     assert result.success, result.diagnostics
     for name in profile["targets"]:
         assert result.targets[name].built, name
+
+
+def test_extract_printed_labels_no_substring_collision():
+    # Real `bazel cquery --output=label_kind` output for a query resolving
+    # both //:math and //:math_shared (captured from a real run against
+    # this repo's own BUILD.bazel) -- //:math is a substring of
+    # //:math_shared, so naive `label in line` matching would previously
+    # report //:math "resolved" even from a query where only
+    # //:math_shared was ever configured/printed.
+    from bazel import _extract_printed_labels
+
+    real_output = "\n".join([
+        "Computing main repo mapping: ",
+        "Loading: ",
+        "Loading: 0 packages loaded",
+        "Analyzing: 2 targets (0 packages loaded, 0 targets configured)",
+        "INFO: Analyzed 2 targets (0 packages loaded, 0 targets configured).",
+        "INFO: Found 2 targets...",
+        "cc_binary rule //:math (9bbc831)",
+        "cc_shared_library rule //:math_shared (9bbc831)",
+        "INFO: Elapsed time: 0.175s, Critical Path: 0.00s",
+        "INFO: 0 processes.",
+        "INFO: Build completed successfully, 0 total actions",
+    ])
+    assert _extract_printed_labels(real_output) == {"//:math", "//:math_shared"}
+
+
+def test_extract_printed_labels_no_false_positive_for_unprinted_label():
+    # Only //:math_shared is actually printed (e.g. //:math failed to
+    # resolve) -- //:math must NOT be reported as resolved just because
+    # it's a substring of a line that IS present.
+    from bazel import _extract_printed_labels
+
+    output = "cc_shared_library rule //:math_shared (9bbc831)\n"
+    printed = _extract_printed_labels(output)
+    assert printed == {"//:math_shared"}
+    assert "//:math" not in printed

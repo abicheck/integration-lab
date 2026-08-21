@@ -17,6 +17,24 @@ from base import BackendError, BuildBackend, BuildResult, EnvironmentCheck, Targ
 _EXECUTABLE_TARGETS = {"consumer"}
 
 
+def _extract_printed_labels(label_kind_output: str) -> set:
+    """The exact set of `//...`/`@...` label tokens `bazel cquery
+    --output=label_kind` actually printed a line for -- one label per
+    resolved-target line, `<kind> rule <label> (<config-hash>)` (verified
+    against a real `bazel cquery` run: "cc_binary rule //:math
+    (9bbc831)"), interleaved with diagnostic lines ("Loading: ...",
+    "INFO: ..."). A pure function (no subprocess) so it's directly unit
+    testable without mocking `_run`, which this codebase's own convention
+    (see BuildBackend._run's docstring) keeps un-mocked everywhere else.
+    """
+    printed_labels = set()
+    for line in label_kind_output.splitlines():
+        for token in line.split():
+            if token.startswith("//") or token.startswith("@"):
+                printed_labels.add(token)
+    return printed_labels
+
+
 class BazelBackend(BuildBackend):
     name = "bazel"
 
@@ -178,10 +196,16 @@ class BazelBackend(BuildBackend):
             )
             evidence["label_kind"] = proc.stdout.strip()
             if proc.returncode == 0:
-                resolved = [
-                    label for label in labels
-                    if any(label in line for line in proc.stdout.splitlines())
-                ]
+                # `label in line` substring matching previously made
+                # //:math match any line mentioning //:math_shared too (a
+                # real label collision in this exact repo -- //:math and
+                # //:math_shared are both configured), inflating
+                # resolved_target_count with a target that was never
+                # actually printed on its own line (CodeRabbit review,
+                # PR #20). _extract_printed_labels() extracts the exact
+                # `//...` token from each line instead.
+                printed_labels = _extract_printed_labels(proc.stdout)
+                resolved = [label for label in labels if label in printed_labels]
                 evidence["targets"] = resolved
                 if len(resolved) != len(labels):
                     evidence["note"] = (

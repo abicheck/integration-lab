@@ -171,8 +171,22 @@ def build_receipt(
             status = "failed"
             detail_parts.append("coverage contract did not pass (see coverage result failures)")
 
-    backend = (build_output or {}).get("profile", {}).get("backend", "unknown")
-    compiler = (build_output or {}).get("compiler", {})
+    # dict.get(key, default) only substitutes the default when the key is
+    # absent -- a build-output.json with an explicit "profile": null or
+    # "compiler": null still returns None for that key, and .get() on None
+    # (backend) or storing None where the schema expects an object
+    # (compiler) would crash this always-running step or fail schema
+    # validation (CodeRabbit review, PR #20; same non-object-JSON hazard
+    # already hardened elsewhere in this file for build_output/coverage_doc
+    # themselves -- this closes it one level deeper, for their nested
+    # values).
+    profile_meta = (build_output or {}).get("profile")
+    if not isinstance(profile_meta, dict):
+        profile_meta = {}
+    backend = profile_meta.get("backend") or "unknown"
+    compiler = (build_output or {}).get("compiler")
+    if not isinstance(compiler, dict):
+        compiler = {}
 
     return {
         "schema_version": SCHEMA_VERSION,

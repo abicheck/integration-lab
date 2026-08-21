@@ -122,13 +122,17 @@ attempted here.)
   `compile_commands.json`) was actually collected.
 - **`integration_gate` job** (`.github/workflows/integration-shadow.yml`) --
   runs after all three profiles' build+check+receipt steps, downloads every
-  profile's receipt, validates each against the schema, checks every
-  expected profile/target reported and every digest is self-consistent, and
-  renders a `profile | build | evidence | verdict | status` step-summary
-  table. This job is real (it fails if a receipt is missing, invalid, or
-  reports a breaking/incomparable verdict) but stays advisory: like the
-  rest of this workflow, it is never added to branch-protection required
-  status checks -- promotion is explicitly PR3+ scope.
+  profile's receipt, validates each against the schema, confirms each
+  receipt's own embedded `profile_id` matches the profile it was expected
+  for, and requires `status: passed` with clean per-target verdicts (the
+  per-target completeness and digest cross-checks themselves run earlier,
+  in `ci/check_profile_coverage.py`, whose result the receipt already
+  carries -- this job doesn't re-derive them), rendering a
+  `profile | build | evidence | verdict | status` step-summary table. This
+  job is real (it fails if a receipt is missing, invalid, or reports a
+  breaking/incomparable verdict) but stays advisory: like the rest of this
+  workflow, it is never added to branch-protection required status checks
+  -- promotion is explicitly PR3+ scope.
 
 ## Gate / PR-comment architecture
 

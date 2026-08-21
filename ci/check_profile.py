@@ -46,9 +46,15 @@ mangled C++ symbol, but the point generalizes: this is a binary-surface
 diff, not a source-level AST/DWARF comparison). Real `abicheck` does the
 latter; this script does the former. `public_headers_changed` in the report
 is the honest signal for "something in the API surface changed that this
-mechanism cannot itself classify" -- it is surfaced, never silently dropped,
-and never folded into the verdict on its own (a header comment/whitespace
-change would otherwise falsely read as a break).
+mechanism cannot itself classify" -- it is surfaced, never silently dropped.
+When headers changed and nothing else did, the verdict is `NOT_COMPARABLE`,
+not `COMPATIBLE`: the change is reported as unclassified (and therefore
+failing, per `ci/emit_profile_receipt.py`'s own status rule) rather than as
+a proven break or a proven compatible change -- even a header comment or
+whitespace-only edit takes this path, since this mechanism has no way to
+tell that apart from a real API surface change (CodeRabbit review, PR #20:
+corrected from an earlier, inaccurate claim that this signal was "never
+folded into the verdict on its own").
 
 ## Modes
 
@@ -214,7 +220,16 @@ def _soname(library_path: Path) -> Optional[str]:
         text=True,
     )
     if proc.returncode != 0:
-        return None
+        # A readelf failure (bad ELF, tool missing, permission) is not the
+        # same fact as "no SONAME entry" -- collapsing both to None
+        # previously meant a readelf failure during `dump` silently wrote
+        # "soname": null into a committed baseline (switching that target
+        # to the filename-only loadability check with no record anything
+        # went wrong), and during `check` against a library that DOES have
+        # a SONAME, the same failure read as "SONAME changed to None" and
+        # reported a false BREAKING (Codex review, PR #20). None is now
+        # reserved exclusively for "readelf ran fine, found no SONAME".
+        raise CheckProfileError(f"readelf -d failed on {library_path}: {proc.stdout}")
     m = re.search(r"\(SONAME\)\s*Library soname:\s*\[(.*?)\]", proc.stdout)
     return m.group(1) if m else None
 
@@ -236,7 +251,14 @@ def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], t
     headers_dir = staged_dir / "headers" / root_prefix
     result: Dict[str, str] = {}
     if not headers_dir.is_dir():
-        return result
+        # A missing header root used to return {} on both the baseline and
+        # candidate sides alike -- header drift then produces no diff at
+        # all (both empty dicts compare equal), so the header signal
+        # silently disappears instead of failing. Fail closed instead:
+        # this repo's own fixed target->root layout means a missing root
+        # is a real staging defect, not a legitimate "no headers" case
+        # (Codex review, PR #20).
+        raise CheckProfileError(f"expected header root {headers_dir} does not exist for target {target!r}")
     for path in sorted(headers_dir.rglob("*")):
         if path.is_file():
             rel = str(path.relative_to(staged_dir))
@@ -375,7 +397,24 @@ def compare_profile(
         return facts
 
     candidate_symbols = dynamic_symbols(library_path)
-    candidate_headers = _public_headers_for_target(staged_dir, build_output, target)
+    # Both can now raise CheckProfileError (readelf failure; a missing
+    # header root) -- caught here, matching the two try/except blocks
+    # above, so this compare still writes a NOT_COMPARABLE report instead
+    # of leaving --out unwritten (main()'s own top-level catch would still
+    # exit cleanly either way, but every other failure path in this
+    # function leaves a report behind for the receipt step to read, and
+    # this one should too).
+    try:
+        candidate_headers = _public_headers_for_target(staged_dir, build_output, target)
+        candidate_soname = _soname(library_path)
+    except CheckProfileError as exc:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=str(exc),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
 
     base_symbols = _index_by_name(baseline.get("dynamic_symbols", []))
     cand_symbols = _index_by_name(candidate_symbols)
@@ -410,11 +449,10 @@ def compare_profile(
     # own even when the symbol table and headers are otherwise identical:
     # every existing consumer's NEEDED entry names the OLD soname, which
     # the new library no longer provides, so it can't be loaded at
-    # runtime. candidate_soname was already computed for the receipt but
-    # never compared against the baseline's -- symbol/header comparisons
-    # alone can (and did) report NO_CHANGE/COMPATIBLE for a soname bump
-    # (Codex review, PR #20).
-    candidate_soname = _soname(library_path)
+    # runtime. candidate_soname (computed above, alongside candidate_headers)
+    # was already available for the receipt but never compared against the
+    # baseline's -- symbol/header comparisons alone can (and did) report
+    # NO_CHANGE/COMPATIBLE for a soname bump (Codex review, PR #20).
     baseline_soname = baseline.get("soname")
     soname_changed = baseline_soname is not None and candidate_soname != baseline_soname
 
@@ -546,7 +584,25 @@ def main(argv=None) -> int:
             print(json.dumps({"mode": "check", "profile_id": args.profile_id, "target": args.target, "verdict": report["verdict"]}))
             return 1
 
-        baseline = _load_json(args.baseline)
+        try:
+            baseline = _load_json(args.baseline)
+        except json.JSONDecodeError as exc:
+            # A corrupted committed baseline previously crashed this
+            # process with a traceback and never wrote --out, leaving no
+            # report for the receipt step to read at all. A syntactically
+            # valid but non-object baseline (`[]`, `null`, a bare string)
+            # was worse: compare_profile()'s own `baseline.get("kind")`
+            # kind-guard is the very first thing it does, so it raised
+            # AttributeError before any of this function's guards could
+            # run. Coercing either case to `{}` here routes both through
+            # compare_profile()'s existing kind-mismatch guard, which
+            # already produces a written NOT_COMPARABLE report with a
+            # readable detail -- no new code path needed (CodeRabbit
+            # review, PR #20).
+            print(f"check_profile: baseline {args.baseline} is not valid JSON: {exc}", file=sys.stderr)
+            baseline = None
+        if not isinstance(baseline, dict):
+            baseline = {}
         report = compare_profile(args.profile_id, args.target, args.staged_dir, baseline)
         _write_json(report, args.out)
         print(json.dumps({"mode": "check", "profile_id": args.profile_id, "target": args.target, "verdict": report["verdict"]}))

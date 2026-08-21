@@ -267,6 +267,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/profile-receipts"
+          # --required is deliberately never passed here, so every receipt
+          # this workflow emits reports required: false -- including the
+          # bazel profile's, even though ci/profiles.yaml marks it
+          # contract: true. That's intentional, not an oversight: contract
+          # tracks which profile's *build* the manifest treats as load-
+          # bearing, while required (unused by any consumer today) would
+          # track this *workflow's* own advisory-vs-blocking status, which
+          # is uniformly advisory for every profile right now -- the two
+          # are different axes that happen to share a boolean shape
+          # (CodeRabbit review, PR #20). Don't read required as a proxy
+          # for a profile's contract flag in a later PR.
           python3 ci/emit_profile_receipt.py \
             --profile-id "$PROFILE_ID" \
             --staged-dir "abicheck-build-$PROFILE_ID" \
@@ -360,10 +371,23 @@ jobs:
           MATRIX_JSON: ${{ needs.select.outputs.matrix }}
         run: |
           set -o pipefail
+          # This job runs `if: always()`, so it also runs when `select`
+          # failed or was cancelled -- MATRIX_JSON is then an empty
+          # string, json.loads('') raises, and the whole step previously
+          # died with a Python traceback instead of a readable gate
+          # failure (CodeRabbit review, PR #20).
+          if [ -z "${MATRIX_JSON:-}" ]; then
+            echo "::error::select job produced no matrix -- cannot evaluate the integration gate" >&2
+            exit 1
+          fi
           expected_args=()
           while IFS= read -r pid; do
             expected_args+=(--expected-profile "$pid")
           done < <(python3 -c "import json, os; print('\n'.join(json.loads(os.environ['MATRIX_JSON'])['profile']))")
+          if [ "${#expected_args[@]}" -eq 0 ]; then
+            echo "::error::matrix contained no profiles -- refusing to render an empty gate" >&2
+            exit 1
+          fi
           python3 ci/render_integration_gate.py \
             --receipts-dir "$RUNNER_TEMP/profile-receipts" \
             "${expected_args[@]}" \

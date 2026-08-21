@@ -78,3 +78,15 @@ def test_gate_fails_on_receipt_with_wrong_embedded_profile_id(tmp_path):
     result = evaluate(["p1"], tmp_path)
     assert result["gate_status"] == "FAIL"
     assert any("is for profile_id='p2'" in f for f in result["failures"])
+
+
+def test_gate_fails_on_non_utf8_receipt(tmp_path):
+    # A corrupted/binary artifact download raises UnicodeDecodeError, not
+    # json.JSONDecodeError -- UnicodeDecodeError is a ValueError, so it
+    # previously escaped the JSONDecodeError-only handler entirely and
+    # crashed this whole gate job instead of producing the INVALID row
+    # this branch exists to report.
+    (tmp_path / "p1.json").write_bytes(b"\xff\xfe\x00\xff not valid utf-8 or json")
+    result = evaluate(["p1"], tmp_path)
+    assert result["gate_status"] == "FAIL"
+    assert any(row["status"] == "INVALID" for row in result["rows"])

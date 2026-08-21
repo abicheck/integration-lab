@@ -889,15 +889,21 @@ compiled output for all three profiles (Bazel, CMake+Ninja, Make), on both
 the happy path (identical source -> `NO_CHANGE` against every profile's own
 baseline) and a real regression (a function removed from `src/math.cc`/
 `include/abicheck_lab/math.h` -> `BREAKING`, symbol correctly named in the
-report). It catches exactly one class of ABI change (an exported
-function/data symbol added, removed, or changed in ELF type/size) and
-cannot catch anything invisible at that level -- a struct/class layout
-change with no symbol rename, a default-argument change, an inline-body
-change, a template instantiation change. `ci/check_profile.py`'s own module
+report). It compares exported symbols added/removed, a data symbol's ELF
+type/size (a code symbol's compiled size is deliberately ignored -- it
+legitimately changes on every ordinary recompile and isn't ABI-relevant on
+its own), and the library's SONAME (or, when no SONAME exists at all --
+Bazel's `cc_shared_library` outputs -- its on-disk loader filename
+instead); any of those changing is `BREAKING`. It cannot catch anything
+invisible at the symbol-table/SONAME level -- a struct/class layout change
+with no symbol rename, a default-argument change, an inline-body change, a
+template instantiation change. `ci/check_profile.py`'s own module
 docstring documents this in full; `public_headers_changed` in every report
 is the honest "something in the API surface changed that this mechanism
-cannot itself classify" signal, always surfaced, never folded into the
-verdict on its own.
+cannot itself classify" signal, always surfaced, never silently dropped --
+when a header changed and nothing else did, the verdict is `NOT_COMPARABLE`
+(not `COMPATIBLE`), reported as unclassified rather than as a proven
+compatible change.
 
 **What upstream/this lab should do once a real scanner is reachable from
 this integration's own CI/dev environment (a later PR, not blocked on

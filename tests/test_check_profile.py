@@ -20,12 +20,12 @@ from check_profile import CheckProfileError, build_baseline, compare_profile, dy
 pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not installed")
 
 
-def _compile_shared_lib(tmp_path, source: str, name: str = "libfake.so"):
+def _compile_shared_lib(tmp_path, source: str, name: str = "libfake.so", extra_args=()):
     src = tmp_path / "lib.c"
     src.write_text(source)
     out = tmp_path / name
     subprocess.run(
-        ["gcc", "-shared", "-fPIC", "-o", str(out), str(src)],
+        ["gcc", "-shared", "-fPIC", "-o", str(out), str(src), *extra_args],
         check=True, capture_output=True, text=True,
     )
     return out
@@ -112,6 +112,61 @@ def test_compare_profile_compatible_on_added_symbol(tmp_path):
     assert "bar" in result["symbols"]["added"]
 
 
+def test_compare_profile_not_comparable_on_header_only_change(tmp_path):
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    baseline_staged = _stage_profile(tmp_path / "before", lib, header_text="int foo(void); // v1\n")
+    baseline = build_baseline("p1", "math", baseline_staged)
+
+    # Same symbol table, only the header's content changed -- this
+    # mechanism has no way to tell a comment/whitespace edit apart from a
+    # real API surface change at the symbol-table level, so it must not
+    # claim COMPATIBLE (a proven-safe verdict this signal can't back up).
+    candidate_staged = _stage_profile(tmp_path / "after", lib, header_text="int foo(void); // v2, changed\n")
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert result["public_headers_changed"]
+
+
+def test_compare_profile_not_breaking_on_code_symbol_size_change(tmp_path):
+    lib_before = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so")
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before)
+    baseline = build_baseline("p1", "math", baseline_staged)
+
+    # Same exported symbol, same header -- but a larger function body
+    # (more code, same signature) legitimately changes the compiled size
+    # of a code symbol on an ordinary recompile. That's not ABI-relevant
+    # on its own and must not report BREAKING.
+    lib_after = _compile_shared_lib(
+        tmp_path,
+        "int foo(void) { int x = 1; for (int i = 0; i < 100; i++) { x += i * 2 - 1; } return x; }\n",
+        name="lib_after.so",
+    )
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after)
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "NO_CHANGE"
+    assert result["symbols"]["changed"] == []
+
+
+def test_compare_profile_breaking_on_soname_change(tmp_path):
+    lib_before = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so", extra_args=["-Wl,-soname,libmath.so.1"]
+    )
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    baseline = build_baseline("p1", "math", baseline_staged)
+    assert baseline["soname"] == "libmath.so.1"
+
+    lib_after = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_after.so", extra_args=["-Wl,-soname,libmath.so.2"]
+    )
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="libmath.so")
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "BREAKING"
+    assert "SONAME changed" in result["detail"]
+
+
 def test_compare_profile_breaking_on_filename_change_without_soname(tmp_path):
     # Bazel's cc_shared_library outputs carry no SONAME, so the loader
     # locates them by their on-disk filename instead. A rename here is
@@ -159,13 +214,23 @@ def test_build_baseline_rejects_wrong_staged_profile(tmp_path):
         build_baseline("p1", "math", wrong_profile_staged)
 
 
-def test_compare_profile_not_comparable_on_missing_build(tmp_path):
+def test_compare_profile_not_comparable_on_missing_target(tmp_path):
+    # A stub build-output.json with no "profile" block at all previously
+    # made this test pass through the *staged-identity* guard (staged_
+    # profile_id is None != "p1") instead of the missing-target branch it
+    # was meant to exercise, so the missing-target code path itself went
+    # untested (CodeRabbit review, PR #20). Include a matching profile
+    # block so the identity guard passes and this reaches _target_library_
+    # path()'s own "no target" check.
     lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
     staged = _stage_profile(tmp_path, lib)
     baseline = build_baseline("p1", "math", staged)
 
     empty_staged = tmp_path / "empty-staged"
     empty_staged.mkdir()
-    (empty_staged / "build-output.json").write_text(json.dumps({"targets": {}}))
+    (empty_staged / "build-output.json").write_text(
+        json.dumps({"profile": {"id": "p1", "backend": "make"}, "targets": {}})
+    )
     result = compare_profile("p1", "math", empty_staged, baseline)
     assert result["verdict"] == "NOT_COMPARABLE"
+    assert "has no target" in result["detail"]
