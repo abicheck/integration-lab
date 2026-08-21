@@ -77,6 +77,24 @@ def test_receipt_failed_when_report_missing(tmp_path):
     assert receipt["reports"][0]["verdict"] == "NOT_RUN"
 
 
+def test_receipt_failed_when_report_is_non_object_json(tmp_path):
+    # A report file can be valid JSON with a non-object top level (e.g. a
+    # truncated/corrupted write leaving `[]`) -- this must fall through to
+    # NOT_RUN, not crash the always-running receipt step with an
+    # AttributeError from calling .get() on a list.
+    staged = _stage(tmp_path)
+    report_path = tmp_path / "math.json"
+    report_path.write_text(json.dumps([]))
+    report_paths = {"math": report_path}
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=None,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["reports"][0]["verdict"] == "NOT_RUN"
+    assert validate_document(receipt, SCHEMA_PATH) == []
+
+
 def test_receipt_failed_when_coverage_fails(tmp_path):
     staged = _stage(tmp_path)
     report_paths = {"math": _report(tmp_path, "math", "NO_CHANGE")}

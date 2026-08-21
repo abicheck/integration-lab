@@ -92,7 +92,13 @@ def build_reports(report_paths: Dict[str, Path]) -> List[Dict[str, Any]]:
         path = report_paths[target]
         digest = _sha256_file(path)
         doc = _load_json(path) if digest else None
-        verdict = doc.get("verdict") if doc else "NOT_RUN"
+        # A report file can be valid JSON with a non-object top level (e.g.
+        # a truncated/corrupted write leaving `[]` or `null`) -- doc.get()
+        # on that raises AttributeError instead of falling through to
+        # NOT_RUN, which crashes this always-running receipt step and
+        # loses the per-target failure detail the receipt is supposed to
+        # capture (Codex review, PR #20).
+        verdict = doc.get("verdict") if isinstance(doc, dict) else "NOT_RUN"
         if verdict not in ("NO_CHANGE", "COMPATIBLE", "BREAKING", "NOT_COMPARABLE", "NOT_RUN"):
             verdict = "NOT_RUN"
         reports.append({

@@ -236,6 +236,25 @@ def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], t
 
 def build_baseline(profile_id: str, target: str, staged_dir: Path) -> Dict[str, Any]:
     build_output = _load_build_output(staged_dir)
+
+    # Mirror compare_profile()'s own staged-identity guard: `dump` accepts
+    # --profile-id and --staged-dir as two independent CLI arguments, so
+    # nothing stops a caller from stamping a p2-built staged_dir's baseline
+    # as belonging to p1. compare_profile()'s identity check can't catch
+    # this after the fact -- a baseline poisoned this way carries
+    # self-consistent profile_id/target metadata that matches whatever the
+    # (also mismatched) compare-side caller later claims, so the two
+    # checks would agree with each other while both being wrong (Codex
+    # review, PR #20). Reject it here, at the only point the staged_dir's
+    # own recorded identity is actually available to compare against.
+    staged_profile_id = build_output.get("profile", {}).get("id")
+    if staged_profile_id != profile_id:
+        raise CheckProfileError(
+            f"staged_dir's own build-output.json was produced by profile "
+            f"{staged_profile_id!r}, not the requested profile_id={profile_id!r} -- "
+            "refusing to stamp a baseline with the wrong identity"
+        )
+
     library_path = _target_library_path(staged_dir, build_output, target)
     return {
         "schema_version": SCHEMA_VERSION,

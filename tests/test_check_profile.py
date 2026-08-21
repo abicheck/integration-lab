@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-from check_profile import build_baseline, compare_profile, dynamic_symbols
+from check_profile import CheckProfileError, build_baseline, compare_profile, dynamic_symbols
 
 pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not installed")
 
@@ -144,6 +144,19 @@ def test_compare_profile_not_comparable_on_wrong_staged_profile(tmp_path):
 
     assert result["verdict"] == "NOT_COMPARABLE"
     assert "not the requested profile_id" in result["detail"]
+
+
+def test_build_baseline_rejects_wrong_staged_profile(tmp_path):
+    # dump's --profile-id and --staged-dir are two independent CLI
+    # arguments -- nothing stops a caller from stamping a p2-built staged
+    # dir's baseline as p1. compare_profile()'s identity check can't catch
+    # this after the fact since a baseline poisoned this way carries
+    # self-consistent (but wrong) profile_id/target metadata.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    wrong_profile_staged = _stage_profile(tmp_path, lib, profile_id="p2")
+
+    with pytest.raises(CheckProfileError, match="not the requested profile_id"):
+        build_baseline("p1", "math", wrong_profile_staged)
 
 
 def test_compare_profile_not_comparable_on_missing_build(tmp_path):
