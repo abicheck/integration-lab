@@ -123,12 +123,36 @@ jobs:
       # additional `-H` root, not as its own removed flag (per this same
       # pinned commit's action.yml: "dump mode forwards it as one more
       # -H/--header root").
+      #
+      # Deliberately no separate `header:` alongside `public-header-dir`
+      # (this used to also set `header: include/abicheck_lab/math.h`) --
+      # confirmed by direct local reproduction against the pinned commit
+      # (real `bazel build //:math` evidence pack, both castxml and clang
+      # frontends): setting BOTH an explicit file `-H` root AND a directory
+      # `public-header-dir` root for a file already inside that directory
+      # derives one extra L2 include-seed slot on `scan`'s own candidate
+      # resolver that this `dump` baseline never gets (`dump`'s CLI path
+      # and `scan`'s candidate resolver are two different, only partially
+      # converged code paths -- see abicheck's own upstream `AGENTS.md`
+      # "Known gaps": "PR C ... dump's real run is still not migrated" to
+      # the shared resolver `scan` now uses). `include/` holds exactly one
+      # header (`abicheck_lab/math.h`), so `public-header-dir: include`
+      # alone already extracts and publicly-scopes it -- dropping the
+      # redundant, narrower `header:` here (matching the identical fix on
+      # `abi-scan.yml`'s `scan`-mode steps) is what makes a `dump` baseline
+      # and a `scan --against` candidate agree on `include_sequence` again
+      # (real local repro: NOT_COMPARABLE -> NO_CHANGE), without masking
+      # any real ABI-context difference. This is a genuine baseline-recipe
+      # change (per this repo's own "Do not regenerate the baseline first
+      # ... rebaseline only if a fresh round trip proves the recipe itself
+      # must change" guidance): committed `abi/math.abicheck.json` needs a
+      # fresh refresh from this workflow (on merge to `main`) before
+      # `scan --against` it is comparable again.
       - name: Collect source-aware ABI baseline
         uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
-          header: include/abicheck_lab/math.h
           public-header-dir: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}

@@ -218,6 +218,28 @@ jobs:
       # difference. `baseline.yml` already made this exact switch (see its
       # own comment on `public-header-dir`); this fixes the corresponding
       # `scan`-mode steps in this workflow to match.
+      #
+      # Deliberately NO separate `new-header:` alongside `public-header-dir`
+      # here (this used to also set `new-header: include/abicheck_lab/
+      # math.h`) -- confirmed by direct local reproduction against the
+      # pinned abicheck commit (real `bazel build //:math` evidence, both
+      # castxml and clang frontends): setting BOTH a directory
+      # `public-header-dir` root AND an explicit file `-H` root for a file
+      # already inside that directory makes the candidate's own L2 include
+      # seed derive one extra `-isystem <header's own parent dir>` entry
+      # that a `dump`-produced baseline (which only ever gets the directory
+      # root, see baseline.yml) never gets -- a second, independent,
+      # already-known-and-tracked abicheck-core divergence between `dump`'s
+      # CLI path and `scan`'s candidate resolver (upstream `AGENTS.md`
+      # "Known gaps": "PR C ... dump's real run is still not migrated" to
+      # the same shared resolver `scan`'s candidate now uses), not fixable
+      # from this workflow. `include/` here holds exactly one header
+      # (`abicheck_lab/math.h`), so `public-header-dir: include` alone
+      # already extracts and publicly-scopes it -- dropping the redundant,
+      # narrower `new-header:` avoids the extra seed slot entirely (real
+      # local repro: NOT_COMPARABLE -> NO_CHANGE) without masking any real
+      # ABI-context difference, since nothing under `include/` is excluded
+      # either way.
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
@@ -226,7 +248,6 @@ jobs:
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
-          new-header: include/abicheck_lab/math.h
           public-header-dir: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
@@ -530,6 +551,11 @@ jobs:
       # keeps its own scope=changed behavior unchanged (out of scope for
       # this fix, and consistent with its own documented budget/cost
       # tradeoff for the actual PR gate).
+      # No separate `new-header:` here either, for the identical reason
+      # given on the required-gate `scan` step above (real, verified local
+      # repro: an explicit file `-H` root alongside a covering
+      # `public-header-dir` directory root derives one extra L2 include
+      # seed slot the `dump`-produced baseline never gets).
       - name: L4 diagnostic · Clang replay (non-gating, artifact only)
         id: l4_clang_replay
         if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
@@ -538,7 +564,6 @@ jobs:
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
-          new-header: include/abicheck_lab/math.h
           public-header-dir: include
           sources: .
           build-info: ${{ steps.l4_replay_bazel_pack.outputs.pack_dir }}
