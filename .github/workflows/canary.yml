@@ -211,7 +211,21 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gcc g++ clang gcc-14 g++-14 cmake ninja-build
 
+      # `continue-on-error: true` (kept, matching scenarios-canary.yml's
+      # own posture -- a candidate's own install-castxml.sh may not exist
+      # at every possible SHA this job might certify) means a real
+      # install failure here would otherwise slip past
+      # `install_abicheck`'s own gate entirely: `install_abicheck` has no
+      # dependency on this step, so it still reports "success" and
+      # `run_scenarios` still runs -- against whatever castxml (if any)
+      # happens to already be on the runner -- and a resulting scenario
+      # failure would misclassify as DETECTOR_DRIFT instead of
+      # INFRASTRUCTURE_FAILED (Codex review, PR #24, fresh evidence after
+      # the earlier per-leg-signal fix). `id: install_castxml` lets the
+      # "Emit signal" step below fold this outcome into its own setup
+      # signal alongside `install_abicheck`'s.
       - name: Install pinned CastXML (from the candidate's own install script)
+        id: install_castxml
         continue-on-error: true
         run: |
           curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
@@ -243,22 +257,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      # Two signals per leg, not one: `install_abicheck` is the last step
-      # in this leg's own setup chain (apt/curl/pip -- every earlier step
-      # cascades into it: a failure upstream leaves it "skipped", not
-      # merely absent), so its own outcome is an accurate "did setup
-      # complete" signal independent of whether `run_scenarios` itself
-      # ran or what it found. See resolve_candidate's own "Emit signal"
-      # step above for why this exists at all.
+      # Two signals per leg, not one: `install_abicheck` is the last
+      # NON-continue-on-error step in this leg's own setup chain (apt/pip
+      # -- every earlier such step cascades into it: a failure upstream
+      # leaves it "skipped", not merely absent), so its own outcome is an
+      # accurate "did required setup complete" signal on its own.
+      # `install_castxml`, though, runs `continue-on-error: true` (its
+      # own step comment explains why), so a real install failure there
+      # does NOT cascade into `install_abicheck` at all -- it must be
+      # folded into the setup signal explicitly, or a castxml-install
+      # failure that later starves `run_scenarios` of its header frontend
+      # would misclassify as DETECTOR_DRIFT instead of
+      # INFRASTRUCTURE_FAILED (Codex review, PR #24).
       - name: Emit signal
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          setup_outcome="${{ steps.install_abicheck.outcome }}"
+          if [ "${{ steps.install_castxml.outcome }}" != "success" ]; then
+            setup_outcome="failure"
+          fi
           mkdir -p "$RUNNER_TEMP/canary-signal"
           cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
           [
-            {"name": "semantic_canary setup (${{ matrix.build_system }})", "category": "infrastructure", "outcome": "${{ steps.install_abicheck.outcome }}"},
+            {"name": "semantic_canary setup (${{ matrix.build_system }})", "category": "infrastructure", "outcome": "$setup_outcome"},
             {"name": "semantic_canary (${{ matrix.build_system }})", "category": "semantic", "outcome": "${{ steps.run_scenarios.outcome }}"}
           ]
           JSON
@@ -524,9 +547,24 @@ jobs:
       # layout-corroboration note on the `Calculator` type, not an actual
       # ABI difference -- both `old` and `new` are the literal same file,
       # sha256-identical). Both verdicts are "0 -- no binary ABI break"
-      # per `abicheck compare --help`'s own exit-code table, so both are
-      # accepted here; only a verdict that actually names a break is
-      # rejected.
+      # per `abicheck compare --help`'s own exit-code table.
+      #
+      # Codex review, PR #24 (fresh evidence): the deny-list this used to
+      # be (`*BREAK*|*INCOMPATIBLE*|NOT_COMPARABLE`) falls through --
+      # exit code masked by this step's own `|| true` -- on any OTHER
+      # inconclusive/error verdict spelling a future candidate might
+      # introduce (`BUDGET_OVERFLOW`, `EVIDENCE_CONTRACT_ERROR`,
+      # `BUNDLE_INCOMPLETE`, ...), certifying it as clean. An allow-list
+      # is the correct shape here -- reusing the exact same three "clean"
+      # verdict strings `scripts/render_conformance_report.py`'s own
+      # `_CONCLUSIVE_VERDICTS` already trusts for this repo's other
+      # conformance-comparison surface (that set also includes
+      # `API_BREAK`/`BREAKING` as "conclusive", since it treats reporting
+      # a real break as a valid, non-inconclusive answer to a DIFFERENT
+      # question than this one; this self-compare wants the narrower
+      # "and also not a break" intersection: those two are exactly the
+      # verdicts this step must reject, so they're excluded here rather
+      # than allow-listed).
       - name: Assert self-comparison is clean
         id: assert_clean
         if: steps.profile_compare.outcome == 'success'
@@ -536,8 +574,10 @@ jobs:
           verdict="$(python3 -c "import json; print(json.load(open('canary-build-integration-${{ matrix.profile }}.json'))['verdict'])")"
           echo "verdict=$verdict"
           case "$verdict" in
-            *BREAK*|*INCOMPATIBLE*|NOT_COMPARABLE)
-              echo "::error::self-comparison of an unchanged library+header reported verdict '$verdict' for profile ${{ matrix.profile }}" >&2
+            NO_CHANGE|COMPATIBLE|COMPATIBLE_WITH_RISK)
+              ;;
+            *)
+              echo "::error::self-comparison of an unchanged library+header reported non-clean/inconclusive verdict '$verdict' for profile ${{ matrix.profile }} (expected one of NO_CHANGE/COMPATIBLE/COMPATIBLE_WITH_RISK)" >&2
               exit 1
               ;;
           esac
