@@ -2,15 +2,18 @@
 # (build system x compiler x standard) combinations this lab exercises, and
 # which of them are the required ABI gate versus advisory/shadow builds.
 #
-# This is PR1 of a larger phased plan (see UPSTREAM_TO_ABICHECK.md and the
-# capabilities.yaml precedent this file follows: a declarative table one
-# script -- here, ci/select_profiles.py -- checks reality against, instead
-# of hand-typed job lists that can silently drift). PR1 only adds the
-# manifest, the backends that can execute it, and canonical staged output --
-# it does NOT wire ABICheck scans into the new build systems and does NOT
-# change what gates a PR. `contract: true` marks the one profile whose
-# result is trusted for anything beyond "did the source build" today
-# (abi-scan.yml's existing Bazel-only gate, untouched by this file).
+# Part of the multi-build-system integration lab (see docs/integration-profiles.md
+# and the capabilities.yaml precedent this file follows: a declarative table
+# one script -- here, ci/select_profiles.py -- checks reality against,
+# instead of hand-typed job lists that can silently drift). This manifest
+# declares the backends each profile builds through and the canonical
+# staged output they produce; .github/workflows/integration-shadow.yml also
+# runs a lab-specific per-profile ABI signal (ci/check_profile.py) against
+# each profile's own baseline, but that signal is a narrower ELF/header
+# check, not the real ABICheck source-level scanner, and none of it changes
+# what gates a PR. `contract: true` marks the one profile whose result is
+# trusted for anything beyond "did the source build" today (abi-scan.yml's
+# existing Bazel-only gate, untouched by this file).
 #
 # Environment note (verified, not assumed): the sandbox this manifest was
 # authored/validated in ships Ubuntu 24.04 with system gcc/g++ at 13.3.0 by

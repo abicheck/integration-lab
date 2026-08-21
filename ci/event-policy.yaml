@@ -7,14 +7,18 @@
 # `if:` conditions across workflow YAML) means a workflow can always ask
 # "what should run for this event" instead of hand-encoding the answer.
 #
-# PR1 note: `required` here means "declared required by this policy", not
+# Note: `required` here means "declared required by this policy", not
 # "actually gates a PR today". The only thing that gates a PR right now is
 # abi-scan.yml's own `scan` job, entirely independent of this file (see
 # ci/profiles.yaml's `contract: true` comment). integration-shadow.yml (the
-# only workflow this PR wires to this file) runs every profile it's handed
-# in continue-on-error mode regardless of `required`/`advisory` membership
-# -- the required/advisory split here is groundwork for a later PR to
-# actually enforce, not an enforcement mechanism this PR adds.
+# only workflow wired to this file) runs every profile it's handed in
+# continue-on-error mode -- including each profile's own ci/check_profile.py
+# ABI signal and the fail-closed integration_gate fan-in job -- regardless
+# of `required`/`advisory` membership. That gate is real (it fails on a
+# missing/invalid receipt or a breaking/incomparable verdict) but is not
+# yet wired into branch protection, so the required/advisory split here
+# remains groundwork for a future promotion (see docs/roadmap.md), not an
+# enforcement mechanism this file adds today.
 
 schema_version: 1
 
