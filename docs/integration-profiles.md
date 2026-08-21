@@ -193,6 +193,60 @@ result in the job summary — advisory only, same as everything else in this
 document, until the build definitions are intentionally aligned and
 stable (see [roadmap.md](roadmap.md)).
 
+## Scanner candidate certification (canary)
+
+`.github/workflows/canary.yml` (PR5, design doc section 28) certifies a
+specific `abicheck` commit — not just whatever's pinned in `abi-scan.yml`
+today — against every layer this lab can actually exercise, dispatched
+three ways: a weekly `schedule` (certifies `abicheck/main`), a manual
+`workflow_dispatch` (any branch/tag/SHA), or a `repository_dispatch` of
+type `scanner-candidate` carrying `{"scanner_repository":
+"abicheck/abicheck", "scanner_sha": "<exact commit SHA>",
+"scanner_version": "<optional>", "baseline_generation": "<optional>"}` —
+the shape `abicheck`'s own release automation would send ahead of cutting
+a release. `scripts/resolve_scanner_candidate.py` validates that payload
+(a missing or non-40-hex-character `scanner_sha` is rejected outright,
+before any certification work runs) and resolves a `workflow_dispatch`/
+`schedule` ref to an exact SHA via `git ls-remote`, so every job downstream
+of `resolve_candidate` certifies exactly one pinned commit.
+
+This is a separate, broader workflow from the pre-existing
+`scenarios-canary.yml` (unchanged by PR5, still the narrower "does
+`abicheck/main` still agree with our Bazel-only scenario oracle" weekly
+check it always was). `canary.yml` runs three independent layers against
+the resolved candidate:
+
+| Job | Layer | What it exercises |
+|---|---|---|
+| `semantic_canary` | detector correctness | `scenarios/manifest.yaml`'s fixture-pair oracle, matrixed over both build systems `scripts/run_scenario.py` supports (bazel, cmake) — the same mechanism `scenarios-canary.yml` uses, extended to cmake and to the resolved candidate instead of always `main`. |
+| `action_contract_canary` | GitHub Action surface | the real `abicheck/abicheck` composite Action, checked out at the candidate SHA and invoked via `uses: ./...` (a local path, not a dynamic `owner/repo@${{ expr }}` step reference) — a self-comparison (the reference Bazel `//:math` build against a fresh dump of itself) exercising the Action's own input/output/exit-code contract. |
+| `build_integration_canary` | multi-build-system integration | the candidate's own CLI (`abicheck compare`), matrixed over all three `ci/profiles.yaml` profiles, each a self-comparison of that profile's own staged `math` library. |
+
+Every layer's actual ABI assertion is `abicheck compare` (a self-comparison:
+an unchanged library+header against itself, or a fresh dump against the
+build it was dumped from) — deliberately never `abicheck scan --against
+<a dump-mode baseline>`. See `UPSTREAM_TO_ABICHECK.md`'s own P0 entry: that
+exact combination is a confirmed, deterministic upstream bug (a
+comparability-field divergence between `scan` mode's and `dump` mode's own
+candidate construction) that reports `NOT_COMPARABLE` for byte-identical
+inputs, independent of which commit is pinned — a canary built on that
+pattern would misreport every candidate as broken, forever.
+
+`classify`, the final fan-in job, turns every layer's own job `result`
+into exactly one of five outcomes (`scripts/classify_canary_outcome.py`,
+design doc section 24): `INFRASTRUCTURE_FAILED` (a setup/environment
+problem, never a detector signal — and this always wins over the others,
+including when a later layer also failed, since an infra failure upstream
+routinely cascades into "downstream step skipped"), `DETECTOR_DRIFT`
+(the semantic layer), `ACTION_CONTRACT_DRIFT` (the Action-surface layer),
+`BUILD_INTEGRATION_DRIFT` (the multi-build-system layer), or `SUCCESS`.
+This classification is deliberately coarse — one signal per job, not per
+step — a real scoping limitation versus a finer step-level breakdown; see
+that script's own module docstring for the exact priority rules. Advisory
+only, like every other workflow in this document: `canary.yml` is not a
+required status check, and cannot be — it never runs against a PR's own
+commit in the first place.
+
 ## Planned migration to the real ABICheck Action
 
 `ci/check_profile.py`'s ELF/header signal exists only because the real

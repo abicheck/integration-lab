@@ -1,0 +1,738 @@
+name: Scanner candidate certification (canary)
+
+# PR5 (design doc section 28 "Full canary and scanner candidate
+# certification" + section 9.4 "canary.yml" + section 23.3 "Scanner
+# release candidate"). This is a SEPARATE workflow from the pre-existing
+# .github/workflows/scenarios-canary.yml (untouched by this PR, kept as
+# the narrower "does abicheck/main still agree with our Bazel-only
+# scenario oracle" weekly check it always was). canary.yml is the
+# broader, candidate-driven certification surface: it can be dispatched
+# at any specific abicheck commit -- most importantly by abicheck's OWN
+# release automation, via `repository_dispatch` -- and checks that
+# commit against every layer this lab can actually exercise:
+#
+#   1. semantic_canary        -- scenarios/manifest.yaml's fixture-pair
+#                                 oracle, both build systems this repo's
+#                                 scenario runner supports (bazel, cmake).
+#   2. action_contract_canary -- the REAL `abicheck/abicheck` composite
+#                                 GitHub Action, checked out at the
+#                                 candidate SHA and actually invoked
+#                                 (`uses: ./...`), not just `pip install`ed
+#                                 -- this is "run actual Action surfaces"
+#                                 from section 28's own wording.
+#   3. build_integration_canary -- the candidate scanner's CLI against
+#                                 each of ci/profiles.yaml's three
+#                                 multi-build-system profiles' own staged
+#                                 output.
+#
+# Every layer here uses `abicheck compare` (dump vs. dump, or dump vs. a
+# freshly built binary) for its actual ABI assertion, deliberately NEVER
+# `abicheck scan --against <a dump-mode baseline>` -- see
+# UPSTREAM_TO_ABICHECK.md's own P0 entry: that exact combination is a
+# confirmed, deterministic upstream bug (scan-mode vs dump-mode
+# `include_sequence` divergence) that reports NOT_COMPARABLE for
+# byte-identical inputs regardless of which abicheck commit is pinned.
+# A canary built on that pattern would report every single candidate as
+# BUILD_INTEGRATION_DRIFT/ACTION_CONTRACT_DRIFT forever, which is a
+# useless (and actively misleading) canary. `compare` mode is the same
+# mechanism abi-scan.yml's own L2/L4 diagnostic legs already exercise in
+# real CI without hitting that bug.
+#
+# classify (the final fan-in job) turns every layer's own job `result`
+# into exactly one of the five section 24 outcomes via
+# scripts/classify_canary_outcome.py -- see that script's own docstring
+# for the priority rules (infrastructure failure always wins; a layer
+# that never got to run is an infrastructure story, not a drift one).
+on:
+  schedule:
+    # Weekly, same slot scenarios-canary.yml already uses -- this is the
+    # "nobody dispatched a specific candidate" default path, certifying
+    # abicheck/main.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      scanner-ref:
+        description: 'Branch, tag, or commit SHA on abicheck/abicheck to certify (default: main).'
+        required: false
+        type: string
+        default: main
+  # Section 23.3's own payload shape:
+  #   {"scanner_repository": "abicheck/abicheck", "scanner_sha": "<sha>",
+  #    "scanner_version": "<optional>", "baseline_generation": "<optional>"}
+  # `types: [scanner-candidate]` per section 9.4 -- only that specific
+  # dispatch type triggers this workflow, so an unrelated
+  # repository_dispatch integration elsewhere in this org can't
+  # accidentally fire a certification run.
+  repository_dispatch:
+    types: [scanner-candidate]
+
+permissions:
+  contents: read
+
+concurrency:
+  # CodeRabbit review, PR #24 (nitpick, real): keying this on a constant
+  # meant two candidates dispatched in quick succession (a plausible
+  # shape for abicheck's own release automation, not just a hypothetical)
+  # would cancel each other -- the first candidate then produces NO
+  # classification at all, and nothing surfaces that loss anywhere.
+  # Keying by the resolved candidate identity instead means only a
+  # re-run of the SAME candidate (same SHA, same manual ref, or another
+  # schedule tick) supersedes an in-flight run; two different candidates
+  # run independently. `github.event.client_payload.scanner_sha` covers
+  # repository_dispatch, `inputs.scanner-ref` covers workflow_dispatch,
+  # and the literal `schedule` fallback covers the schedule trigger
+  # (which always resolves the same `main` ref, so cancel-in-progress
+  # for repeat schedule ticks is still exactly the right behavior).
+  group: abicheck-canary-${{ github.event.client_payload.scanner_sha || inputs.scanner-ref || 'schedule' }}
+  cancel-in-progress: true
+
+jobs:
+  # Section 23.3: validate/resolve exactly one candidate identity for this
+  # run, regardless of which trigger fired. Every downstream job reads
+  # this job's outputs -- none of them re-derive the candidate themselves,
+  # so there is exactly one place a malformed repository_dispatch payload
+  # can be rejected (this job fails outright, per validate_dispatch_payload's
+  # own ResolutionError contract; the whole run never reaches a job that
+  # would otherwise silently certify "whatever main happens to be").
+  resolve_candidate:
+    runs-on: ubuntu-24.04
+    outputs:
+      scanner_repository: ${{ steps.resolve.outputs.scanner_repository }}
+      scanner_sha: ${{ steps.resolve.outputs.scanner_sha }}
+      scanner_version: ${{ steps.resolve.outputs.scanner_version }}
+      pip_spec: ${{ steps.resolve.outputs.pip_spec }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      # CodeRabbit review, PR #24 (Critical): this used to extract each
+      # output field with its own `python3 -c "import json; print(...)"`
+      # call piped into `echo "key=$(...)" >> "$GITHUB_OUTPUT"` -- an
+      # attacker-controlled `repository_dispatch` field containing a
+      # newline could forge extra `$GITHUB_OUTPUT` lines that way.
+      # `--github-output` is one writer
+      # (`resolve_scanner_candidate.write_github_output()`) that
+      # re-validates every value for embedded CR/LF/NUL immediately
+      # before writing it, so an injection attempt fails this step
+      # closed instead of forging output. See that script's own module
+      # docstring and `_REPOSITORY_RE`'s comment for the full rationale.
+      - name: Resolve scanner candidate
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          SCANNER_REF_INPUT: ${{ inputs.scanner-ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            repository_dispatch)
+              echo "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/client-payload.json"
+              python3 scripts/resolve_scanner_candidate.py \
+                --event repository_dispatch \
+                --payload-file "$RUNNER_TEMP/client-payload.json" \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
+              ;;
+            workflow_dispatch)
+              python3 scripts/resolve_scanner_candidate.py \
+                --event workflow_dispatch \
+                --scanner-ref "${SCANNER_REF_INPUT:-main}" \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
+              ;;
+            *)
+              python3 scripts/resolve_scanner_candidate.py --event schedule \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
+              ;;
+          esac
+          cat "$RUNNER_TEMP/candidate.json"
+
+      - name: Upload resolved candidate
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-resolved-candidate
+          path: ${{ runner.temp }}/candidate.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # CodeRabbit + Codex review, PR #24: `classify` used to read only
+      # `needs.<job>.result` -- one signal per job, which cannot tell
+      # "the job's own setup step failed" apart from "the job's real
+      # assertion step failed", so a setup failure anywhere inside
+      # `semantic_canary`/`action_contract_canary`/`build_integration_canary`
+      # was reported as that job's own drift category instead of
+      # INFRASTRUCTURE_FAILED -- exactly what section 24 forbids. Every
+      # canary job now emits its own fine-grained signal(s) (this step's
+      # own pattern, repeated per job/matrix-leg below) as a small
+      # artifact `classify` downloads and merges, instead of relying on
+      # the job-level result alone. `if: always()` -- must still emit
+      # (recording a real "skipped"/"failure" outcome) even when the
+      # step(s) it reads from never ran.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [{"name": "resolve_candidate", "category": "infrastructure", "outcome": "${{ steps.resolve.outcome }}"}]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-resolve-candidate
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Layer 1 (DETECTOR_DRIFT signal): same scenarios/manifest.yaml oracle
+  # scenarios-canary.yml already trusts for its Bazel-only weekly run, now
+  # against the RESOLVED CANDIDATE (not always abicheck/main) and over
+  # both build systems scripts/run_scenario.py supports (PR3's cmake
+  # path included -- scenarios-canary.yml predates PR3 and was
+  # deliberately left Bazel-only; this workflow is where that gap closes).
+  semantic_canary:
+    needs: resolve_candidate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build_system: [bazel, cmake]
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc g++ clang gcc-14 g++-14 cmake ninja-build
+
+      # `continue-on-error: true` (kept, matching scenarios-canary.yml's
+      # own posture -- a candidate's own install-castxml.sh may not exist
+      # at every possible SHA this job might certify) means a real
+      # install failure here would otherwise slip past
+      # `install_abicheck`'s own gate entirely: `install_abicheck` has no
+      # dependency on this step, so it still reports "success" and
+      # `run_scenarios` still runs -- against whatever castxml (if any)
+      # happens to already be on the runner -- and a resulting scenario
+      # failure would misclassify as DETECTOR_DRIFT instead of
+      # INFRASTRUCTURE_FAILED (Codex review, PR #24, fresh evidence after
+      # the earlier per-leg-signal fix). `id: install_castxml` lets the
+      # "Emit signal" step below fold this outcome into its own setup
+      # signal alongside `install_abicheck`'s.
+      - name: Install pinned CastXML (from the candidate's own install script)
+        id: install_castxml
+        continue-on-error: true
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/${{ needs.resolve_candidate.outputs.scanner_repository }}/${{ needs.resolve_candidate.outputs.scanner_sha }}/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Install candidate abicheck + PyYAML
+        id: install_abicheck
+        run: |
+          pip install --quiet pyyaml
+          pip install --quiet "${{ needs.resolve_candidate.outputs.pip_spec }}"
+          python3 -c "import importlib.metadata; print('abicheck', importlib.metadata.version('abicheck'))"
+
+      - name: Run scenarios against the candidate (${{ matrix.build_system }})
+        id: run_scenarios
+        if: steps.install_abicheck.outcome == 'success'
+        run: |
+          python3 scripts/run_scenario.py \
+            --build-system "${{ matrix.build_system }}" \
+            --results-dir "scenario-results-canary-${{ matrix.build_system }}"
+
+      - name: Upload scenario results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-scenario-results-${{ matrix.build_system }}
+          path: scenario-results-canary-${{ matrix.build_system }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Two signals per leg, not one: `install_abicheck` is the last
+      # NON-continue-on-error step in this leg's own setup chain (apt/pip
+      # -- every earlier such step cascades into it: a failure upstream
+      # leaves it "skipped", not merely absent), so its own outcome is an
+      # accurate "did required setup complete" signal on its own.
+      # `install_castxml`, though, runs `continue-on-error: true` (its
+      # own step comment explains why), so a real install failure there
+      # does NOT cascade into `install_abicheck` at all -- it must be
+      # folded into the setup signal explicitly, or a castxml-install
+      # failure that later starves `run_scenarios` of its header frontend
+      # would misclassify as DETECTOR_DRIFT instead of
+      # INFRASTRUCTURE_FAILED (Codex review, PR #24).
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          setup_outcome="${{ steps.install_abicheck.outcome }}"
+          if [ "${{ steps.install_castxml.outcome }}" != "success" ]; then
+            setup_outcome="failure"
+          fi
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "semantic_canary setup (${{ matrix.build_system }})", "category": "infrastructure", "outcome": "$setup_outcome"},
+            {"name": "semantic_canary (${{ matrix.build_system }})", "category": "semantic", "outcome": "${{ steps.run_scenarios.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-semantic-${{ matrix.build_system }}
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Layer 2 (ACTION_CONTRACT_DRIFT signal): the real `abicheck/abicheck`
+  # composite Action, checked out at the resolved candidate SHA and
+  # invoked with `uses: ./abicheck-candidate` -- an actual local-path
+  # action reference, not a step-level `uses: owner/repo@${{ expr }}`
+  # (GitHub does not document `needs`-context support for a step's own
+  # `uses:` key the way it does for `with:` inputs; checking the action
+  # out to a fixed local path and using a static `./...` reference sides
+  # steps that ambiguity entirely). Exercises the exact Action surface
+  # abi-scan.yml's own required gate depends on: composite-action inputs,
+  # its own toolchain provisioning (pixi/conda-forge, independent of
+  # whatever this job separately installs via pip for the CLI-only steps
+  # below), output-file contract, and exit-code contract -- against the
+  # single canonical Bazel profile, the same profile abi-scan.yml itself
+  # always builds against.
+  action_contract_canary:
+    needs: resolve_candidate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout candidate abicheck Action
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          repository: ${{ needs.resolve_candidate.outputs.scanner_repository }}
+          ref: ${{ needs.resolve_candidate.outputs.scanner_sha }}
+          path: .abicheck-candidate
+          persist-credentials: false
+
+      - name: Build the reference Bazel profile
+        id: build_bazel
+        run: bazel build //:math
+
+      - name: Install candidate abicheck CLI (for the self-comparison baseline dump)
+        id: install_abicheck
+        if: steps.build_bazel.outcome == 'success'
+        run: pip install --quiet "${{ needs.resolve_candidate.outputs.pip_spec }}"
+
+      # A dump of the SAME build the Action step below also reads --
+      # `abicheck compare` between two views of one identical binary+header
+      # pair is the self-check this workflow's own header comment
+      # explains (never `scan --against`, which is the known-broken path).
+      - name: Dump self-comparison baseline
+        id: dump_baseline
+        if: steps.install_abicheck.outcome == 'success'
+        run: |
+          abicheck dump bazel-bin/libmath.so \
+            --header include/abicheck_lab/math.h \
+            --ast-frontend clang \
+            -o "$RUNNER_TEMP/canary-self-baseline.json"
+
+      - name: "Run the candidate Action (self-comparison, mode: compare)"
+        id: action_contract
+        if: steps.dump_baseline.outcome == 'success'
+        continue-on-error: true
+        uses: ./.abicheck-candidate
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/canary-self-baseline.json
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          ast-frontend: clang
+          format: json
+          output-file: canary-action-contract.json
+          fail-on-breaking: true
+          fail-on-api-break: true
+          add-job-summary: true
+          pr-comment: false
+
+      # A NO_CHANGE/COMPATIBLE verdict is expected (identical binary+header
+      # on both sides) -- this step is the actual assertion: the Action's
+      # own `fail-on-breaking`/`fail-on-api-break` exit-code contract
+      # reporting anything other than a clean pass on a genuinely
+      # unchanged input IS the drift signal, independent of whatever
+      # verdict string ends up in the report.
+      # CodeRabbit review, PR #24 (Major): checking only
+      # `steps.action_contract.outcome` certified the Action's contract
+      # without ever confirming the Action actually honored its own
+      # `output-file: canary-action-contract.json` input -- a candidate
+      # whose Action step exits 0 but writes no report (or a truncated/
+      # corrupt one) would have passed this assertion, silently
+      # certifying an Action that violates its documented output
+      # contract. `build_integration_canary`'s own equivalent assertion
+      # (below) already reads its report's `verdict` field and would
+      # fail closed on exactly this -- this step gets the same guarantee
+      # explicitly, since it has no verdict field of its own to read.
+      - name: Assert self-comparison is clean
+        id: assert_clean
+        if: steps.action_contract.outcome != 'skipped'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.action_contract.outcome }}" != "success" ]; then
+            echo "::error::candidate Action reported a non-clean result comparing an unchanged library+header pair against itself" >&2
+            exit 1
+          fi
+          if [ ! -s canary-action-contract.json ]; then
+            echo "::error::candidate Action exited clean but wrote no (or an empty) canary-action-contract.json -- violates its own output-file contract" >&2
+            exit 1
+          fi
+          python3 -c "import json; json.load(open('canary-action-contract.json', encoding='utf-8'))"
+
+      - name: Upload action-contract report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-action-contract-report
+          path: canary-action-contract.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # `dump_baseline` is the last step of this job's own setup chain
+      # (checkout-candidate -> build_bazel -> install_abicheck ->
+      # dump_baseline, each cascading into the next on failure) -- its
+      # outcome is an accurate "did setup complete" signal.
+      # `action_contract`'s own outcome (not `assert_clean`'s -- that
+      # step only re-raises the same fact as a real job failure, since
+      # `action_contract` itself runs `continue-on-error: true`) is the
+      # actual assertion signal: "skipped" when setup never completed,
+      # "failure" when the candidate Action itself flagged a break,
+      # "success" when it ran clean.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "action_contract_canary setup", "category": "infrastructure", "outcome": "${{ steps.dump_baseline.outcome }}"},
+            {"name": "action_contract_canary", "category": "action_contract", "outcome": "${{ steps.action_contract.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-action-contract
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Layer 3 (BUILD_INTEGRATION_DRIFT signal): does the candidate scanner's
+  # OWN CLI (independent of the composite Action wrapper -- that's layer
+  # 2's job) still function correctly against every ci/profiles.yaml
+  # multi-build-system profile's own staged binary+header shape. Each
+  # profile leg builds via ci/run_profile.py (the same driver
+  # integration-shadow.yml uses), then runs the identical
+  # dump-then-self-compare pattern layer 2 uses, purely at the CLI level.
+  build_integration_canary:
+    needs: resolve_candidate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      - name: Install gcc-14/g++-14, ninja, bear, patchelf, clang
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 ninja-build bear patchelf clang
+
+      - name: Run profile (build + stage)
+        id: run_profile
+        run: python3 ci/run_profile.py --profile-id "${{ matrix.profile }}"
+
+      - name: Install candidate abicheck CLI
+        id: install_abicheck
+        if: steps.run_profile.outcome == 'success'
+        run: pip install --quiet "${{ needs.resolve_candidate.outputs.pip_spec }}"
+
+      # math's staged library path comes from build-output.json's own
+      # `targets.math.path` (ci/schemas/build-output.schema.json) -- the
+      # same field ci/check_profile.py's own `_target_library_path()`
+      # reads. The header path is this repo's fixed target->root layout
+      # (`include/abicheck_lab/math.h`, staged under `headers/include/...`)
+      # -- the same convention `_public_headers_for_target()` hardcodes
+      # (its own comment: "this repo's own fixed layout ... not a generic
+      # inference"), reused here rather than re-deriving it differently.
+      #
+      # Self-compare uses the SAME `abicheck compare <lib> <lib> --header
+      # old=... --header new=...` two-positional-library CLI shape
+      # ci/compare_build_outputs.py's own `_try_abicheck_compare()`
+      # already runs successfully in this repo's real CI (see that
+      # function's own command construction) -- deliberately not a
+      # dump-then-compare-against-a-baseline-json call, which is a
+      # different (untested, in this repo) code path and, per
+      # UPSTREAM_TO_ABICHECK.md's own P0 entry, the one shape known to
+      # trip the upstream scan-vs-dump NOT_COMPARABLE bug when it goes
+      # through `scan --against` rather than `compare`. Exit code is
+      # deliberately not treated as pass/fail (matching
+      # `_try_abicheck_compare()`'s own comment: a real ABI difference is
+      # expected to exit non-zero) -- the report's own `verdict` field is
+      # asserted on instead, in the next step.
+      #
+      # `abicheck compare` (bare CLI, unlike the composite Action's own
+      # `ast-frontend` input) has no `--ast-frontend` flag at all --
+      # verified against this repo's own sandbox (`abicheck compare
+      # --help` lists no such option), the header-frontend choice for
+      # this subcommand is the `ABICHECK_AST_FRONTEND` env var only
+      # (confirmed by real local reproduction: without it, this command
+      # fails outright with "castxml not found in PATH", whose own error
+      # text names this exact env var as the fix). `clang` (installed
+      # above) avoids depending on the pinned CastXML Superbuild install
+      # script existing at every possible candidate SHA this job might
+      # ever certify.
+      - name: Self-compare this profile's math library
+        id: profile_compare
+        if: steps.install_abicheck.outcome == 'success'
+        shell: bash
+        env:
+          ABICHECK_AST_FRONTEND: clang
+        run: |
+          set -euo pipefail
+          staged="abicheck-build-${{ matrix.profile }}"
+          library="$staged/$(python3 -c "import json; d=json.load(open('$staged/build-output.json')); print(d['targets']['math']['path'])")"
+          header="$staged/headers/include/abicheck_lab/math.h"
+          abicheck compare "$library" "$library" \
+            --version "old=self" --version "new=self" \
+            --header "old=$header" --header "new=$header" \
+            --lang c++ --format json \
+            -o "canary-build-integration-${{ matrix.profile }}.json" \
+            --policy strict_abi || true
+
+      # An unchanged library+header compared against itself must report a
+      # verdict abicheck itself considers non-breaking -- this repo has no
+      # visibility into abicheck's own exact verdict vocabulary beyond
+      # what's already used elsewhere here (COMPATIBLE/NO_CHANGE-shaped),
+      # so this asserts the narrower, still-meaningful thing: NOT a
+      # BREAKING/INCOMPATIBLE-shaped verdict, and a report that actually
+      # parses at all (a missing/unparseable report is its own failure --
+      # the candidate CLI didn't function against this profile's output).
+      #
+      # Verified locally, real `abicheck compare`, against every one of
+      # the three profiles this job matrixes over: the bazel profile's
+      # self-compare reports `NO_CHANGE`; cmake and make both report
+      # `COMPATIBLE_WITH_RISK` instead, from a `header_binary_context_mismatch`
+      # "risk" finding on both sides symmetrically (a DWARF-vs-header-AST
+      # layout-corroboration note on the `Calculator` type, not an actual
+      # ABI difference -- both `old` and `new` are the literal same file,
+      # sha256-identical). Both verdicts are "0 -- no binary ABI break"
+      # per `abicheck compare --help`'s own exit-code table.
+      #
+      # Codex review, PR #24 (fresh evidence): the deny-list this used to
+      # be (`*BREAK*|*INCOMPATIBLE*|NOT_COMPARABLE`) falls through --
+      # exit code masked by this step's own `|| true` -- on any OTHER
+      # inconclusive/error verdict spelling a future candidate might
+      # introduce (`BUDGET_OVERFLOW`, `EVIDENCE_CONTRACT_ERROR`,
+      # `BUNDLE_INCOMPLETE`, ...), certifying it as clean. An allow-list
+      # is the correct shape here -- reusing the exact same three "clean"
+      # verdict strings `scripts/render_conformance_report.py`'s own
+      # `_CONCLUSIVE_VERDICTS` already trusts for this repo's other
+      # conformance-comparison surface (that set also includes
+      # `API_BREAK`/`BREAKING` as "conclusive", since it treats reporting
+      # a real break as a valid, non-inconclusive answer to a DIFFERENT
+      # question than this one; this self-compare wants the narrower
+      # "and also not a break" intersection: those two are exactly the
+      # verdicts this step must reject, so they're excluded here rather
+      # than allow-listed).
+      - name: Assert self-comparison is clean
+        id: assert_clean
+        if: steps.profile_compare.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          verdict="$(python3 -c "import json; print(json.load(open('canary-build-integration-${{ matrix.profile }}.json'))['verdict'])")"
+          echo "verdict=$verdict"
+          case "$verdict" in
+            NO_CHANGE|COMPATIBLE|COMPATIBLE_WITH_RISK)
+              ;;
+            *)
+              echo "::error::self-comparison of an unchanged library+header reported non-clean/inconclusive verdict '$verdict' for profile ${{ matrix.profile }} (expected one of NO_CHANGE/COMPATIBLE/COMPATIBLE_WITH_RISK)" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload build-integration report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-build-integration-${{ matrix.profile }}
+          path: canary-build-integration-${{ matrix.profile }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # `install_abicheck` is the last step of this leg's own setup chain
+      # (checkout -> apt installs -> run_profile -> install_abicheck,
+      # each cascading into the next) -- its outcome is an accurate "did
+      # setup complete" signal. `assert_clean`'s own outcome (not
+      # `profile_compare`'s -- that step always exits 0 via its own
+      # `|| true`, deliberately, so `assert_clean` can assess the report
+      # instead) is the actual assertion signal.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "build_integration_canary setup (${{ matrix.profile }})", "category": "infrastructure", "outcome": "${{ steps.install_abicheck.outcome }}"},
+            {"name": "build_integration_canary (${{ matrix.profile }})", "category": "build_integration", "outcome": "${{ steps.assert_clean.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-build-integration-${{ matrix.profile }}
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Fan-in: five-way classification (design doc section 24) from every
+  # layer's own job `result` -- never from a step outcome buried inside
+  # one job, since a matrixed job's own `result` already folds every leg
+  # together (any failed leg -> job result failure) the same way
+  # `needs.<job>.result` always has for this repo's other fan-in jobs
+  # (integration_gate's own `needs.cross_build_equivalence.result` read,
+  # for one). `if: always()` -- this job's entire purpose is to run and
+  # report even when every upstream job failed outright.
+  classify:
+    needs: [resolve_candidate, semantic_canary, action_contract_canary, build_integration_canary]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      # Every upstream job/leg's own "Emit signal" step uploads a small
+      # `canary-signal-*` artifact (`merge-multiple: false` keeps each
+      # under its own `<artifact-name>/signal.json` subdirectory, so a
+      # matrixed job's several legs -- e.g. `canary-signal-semantic-bazel`
+      # and `canary-signal-semantic-cmake` -- never collide on one path).
+      # `continue-on-error: true`: if `resolve_candidate` itself failed,
+      # every job downstream of it was skipped entirely (default `needs:`
+      # gating, no `if: always()` on those jobs) and never got to upload
+      # anything -- an empty/partial download here is expected in that
+      # case, not a reason to fail this job before it can even classify
+      # that exact situation.
+      - name: Download every layer's own signal
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: canary-signal-*
+          path: ${{ runner.temp }}/canary-signals
+          merge-multiple: false
+
+      - name: Merge signals + classify
+        id: classify
+        shell: bash
+        env:
+          SCANNER_SHA: ${{ needs.resolve_candidate.outputs.scanner_sha }}
+        run: |
+          set -euo pipefail
+          signal_files=()
+          while IFS= read -r -d '' f; do
+            signal_files+=("$f")
+          done < <(find "$RUNNER_TEMP/canary-signals" -name 'signal.json' -print0 2>/dev/null)
+
+          if [ "${#signal_files[@]}" -eq 0 ]; then
+            # Nothing to classify from -- every upstream job must have
+            # died before its own "Emit signal" step could run (e.g. the
+            # runner itself was lost). Fail closed as INFRASTRUCTURE_FAILED
+            # rather than let scripts/classify_canary_outcome.py's own
+            # "no signals given" error surface as an opaque script crash.
+            echo "::warning::no canary-signal-* artifacts found at all -- treating as INFRASTRUCTURE_FAILED" >&2
+            echo '[{"name": "classify", "category": "infrastructure", "outcome": "failure"}]' > "$RUNNER_TEMP/signals.json"
+          else
+            jq -s 'add' "${signal_files[@]}" > "$RUNNER_TEMP/signals.json"
+          fi
+
+          # CodeRabbit review, PR #24: the merge above already tolerates a
+          # WHOLLY missing artifact set (the branch above), but a
+          # PARTIALLY missing one -- e.g. one matrix leg's own runner
+          # died before it could even upload its artifact, while its
+          # sibling legs uploaded fine -- previously classified on
+          # whatever legs happened to report, silently treating an
+          # unreported leg as if it had never been expected at all. Every
+          # expected artifact name is known statically (it's this same
+          # workflow's own matrix values); a name absent from what was
+          # actually downloaded gets its own explicit infrastructure
+          # signal appended here, so a silently-missing leg is never
+          # indistinguishable from "there was no such leg this run".
+          expected_artifacts=(
+            canary-signal-resolve-candidate
+            canary-signal-semantic-bazel
+            canary-signal-semantic-cmake
+            canary-signal-action-contract
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-bazel
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-cmake-ninja
+            canary-signal-build-integration-linux-x86_64-gcc14-cxx17-make-bear
+          )
+          for name in "${expected_artifacts[@]}"; do
+            if [ ! -f "$RUNNER_TEMP/canary-signals/$name/signal.json" ]; then
+              echo "::warning::expected signal artifact '$name' was never uploaded -- appending an explicit infrastructure signal for it" >&2
+              jq --arg name "$name" \
+                '. + [{"name": ($name + " (artifact missing)"), "category": "infrastructure", "outcome": "failure"}]' \
+                "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp"
+              mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+            fi
+          done
+          cat "$RUNNER_TEMP/signals.json"
+          python3 scripts/classify_canary_outcome.py "$RUNNER_TEMP/signals.json" | tee "$RUNNER_TEMP/classification.json"
+          classification="$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/classification.json'))['classification'])")"
+          echo "classification=$classification" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Scanner candidate certification (canary)"
+            echo
+            echo "Candidate SHA: \`${SCANNER_SHA:-unresolved}\`"
+            echo
+            echo "**Classification: \`$classification\`**"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/classification.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload classification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-classification
+          path: |
+            ${{ runner.temp }}/classification.json
+            ${{ runner.temp }}/signals.json
+          if-no-files-found: warn
+          retention-days: 90

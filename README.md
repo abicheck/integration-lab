@@ -94,10 +94,17 @@ consumer-scoped and aggregate multi-library checks exercise `--used-by` and
 (`capabilities.yaml`) tracks which validation axis is actually covered by a
 real job, with per-run receipts proving that job executed; a weekly canary
 re-runs the scenario suite against `abicheck/main` to catch upstream drift
-before a version pin is bumped; cold/warm performance measurements track
-Bazel and abicheck cache speedups; a committed baseline lifecycle
-(`baseline.yml`) keeps the trusted comparison target current. Full detail:
-[docs/scenarios-and-capabilities.md](docs/scenarios-and-capabilities.md).
+before a version pin is bumped; a broader scanner-candidate canary
+(`canary.yml`) certifies a *specific* `abicheck` commit — dispatched by
+`repository_dispatch`, on demand, or weekly — against the scenario oracle,
+the real composite Action surface, and every multi-build-system profile,
+classifying the result into one of five outcomes; cold/warm performance
+measurements track Bazel and abicheck cache speedups, plus a per-profile
+build/dump measurement for the cmake and make profiles; a committed
+baseline lifecycle (`baseline.yml`) keeps the trusted comparison target
+current. Full detail:
+[docs/scenarios-and-capabilities.md](docs/scenarios-and-capabilities.md)
+and [docs/integration-profiles.md](docs/integration-profiles.md#scanner-candidate-certification-canary).
 
 ## Honest current limitations
 
@@ -274,6 +281,7 @@ exists, promote to required once build definitions are aligned and
 stable) and scenario-oracle build-system parity → promote proven profiles
 to required contracts (accepted-main/release-contract baselines already
 exist for the one profile that has one today) → scanner release-candidate
-dispatch → expand toolchain/platform coverage as real integration needs
-demonstrate them. Full detail, still with no dates or completion claims:
+dispatch (`canary.yml`: done, see above) → expand toolchain/platform
+coverage as real integration needs demonstrate them. Full detail, still
+with no dates or completion claims:
 [docs/roadmap.md](docs/roadmap.md).
