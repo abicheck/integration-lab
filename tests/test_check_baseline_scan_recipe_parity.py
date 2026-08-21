@@ -35,6 +35,8 @@ _GOOD_SCAN_WITH = {
     "build-info": "${{ steps.bazel_pack.outputs.pack_dir }}",
     "depth": "source",
     "against": "${{ runner.temp }}/math.base.abicheck.json",
+    "fail-on-breaking": True,
+    "fail-on-api-break": True,
 }
 _SHA = "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
@@ -220,6 +222,39 @@ class TestCheck:
         scan_with["against"] = "abi/math.abicheck.json"
         errors = check(_dump_wf(), _scan_wf(scan_with))
         assert any("AGAINST_MISMATCH" in e for e in errors)
+
+    def test_scan_step_with_fail_on_breaking_disabled_is_caught(self):
+        # `Enforce gate` only fails the required PR check when
+        # steps.scan.outcome == 'failure', and the Action itself only
+        # exits non-zero on a BREAKING verdict when fail-on-breaking is
+        # true -- blanket-exempting this flag would let the canonical
+        # scan step be silently changed to fail-on-breaking: false,
+        # leaving a real ABI break green (Codex review, fresh evidence,
+        # P1).
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["fail-on-breaking"] = False
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any("SCAN_GATE_FLAG_MISMATCH" in e and "fail-on-breaking" in e for e in errors)
+
+    def test_scan_step_with_fail_on_api_break_disabled_is_caught(self):
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["fail-on-api-break"] = False
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any("SCAN_GATE_FLAG_MISMATCH" in e and "fail-on-api-break" in e for e in errors)
+
+    def test_scan_step_with_fail_on_breaking_unset_is_caught(self):
+        # Absence must be caught too, not just an explicit `false`.
+        scan_with = dict(_GOOD_SCAN_WITH)
+        del scan_with["fail-on-breaking"]
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any("SCAN_GATE_FLAG_MISMATCH" in e and "fail-on-breaking" in e for e in errors)
+
+    def test_dump_step_fail_on_breaking_value_is_unconstrained(self):
+        # Dump mode has nothing to gate on -- the dump step's own value
+        # (true, false, or unset) must never affect this check.
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["fail-on-breaking"] = False
+        assert check(_dump_wf(dump_with), _scan_wf()) == []
 
     def test_dump_step_setting_against_is_caught(self):
         # Dump mode never compares against anything -- an `against` on the

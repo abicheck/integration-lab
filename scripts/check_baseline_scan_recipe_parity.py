@@ -80,9 +80,10 @@ _MUST_MATCH_FIELDS = (
 
 # Fields the assessment itself names as *expected* to differ between a
 # dump baseline step and a scan candidate step -- not compared at all, so a
-# mismatch here is never even considered. `mode`/`against` are handled
-# specially (below, not through this set): each must always differ, but
-# only as one specific expected shape -- see `known`'s own comment.
+# mismatch here is never even considered. `mode`/`against`/
+# `fail-on-breaking`/`fail-on-api-break` are handled specially (below, not
+# through this set): each must always differ, but only as one specific
+# expected shape -- see `known`'s own comment.
 _EXPECTED_TO_DIFFER_FIELDS = frozenset(
     {
         "since",
@@ -93,12 +94,24 @@ _EXPECTED_TO_DIFFER_FIELDS = frozenset(
         "output-file",
         "budget",
         "format",
-        "fail-on-breaking",
-        "fail-on-api-break",
         "add-job-summary",
         "pr-comment",
     }
 )
+
+# `abi-scan.yml`'s own `Enforce gate` step only fails the required PR check
+# when `steps.scan.outcome == 'failure'` -- and the scanner Action itself
+# only exits non-zero on a BREAKING/API_BREAK verdict when these two flags
+# are `true` (Codex review, fresh evidence, P1). Blanket-classifying them
+# as "expected to differ" let this static gate accept a canonical scan
+# silently changed to `fail-on-breaking: false`/`fail-on-api-break: false`
+# -- a real ABI break would then leave the scan step successful and the
+# required PR gate green, with nothing in this checker (or the round-trip
+# certification, which exercises `baseline.yml`, not `abi-scan.yml`)
+# catching it. The dump step's own `fail-on-breaking: true` is left
+# unconstrained -- dump mode has no comparison to gate on, so its value
+# there is inert either way; only the scan side's gating actually matters.
+_REQUIRED_SCAN_GATE_FLAGS = ("fail-on-breaking", "fail-on-api-break")
 
 # The one trusted baseline artifact the canonical scan step may compare
 # against -- produced by `.github/actions/resolve-baseline` from the PR's
@@ -362,6 +375,19 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"(against={dump_against!r}, against={scan_against!r})"
         )
 
+    # fail-on-breaking/fail-on-api-break: the canonical scan step must gate
+    # on both -- see `_REQUIRED_SCAN_GATE_FLAGS`'s own comment. The dump
+    # step's own value is deliberately unconstrained here (dump mode has
+    # nothing to gate on).
+    for flag in _REQUIRED_SCAN_GATE_FLAGS:
+        if scan_with.get(flag) is not True:
+            errors.append(
+                f"SCAN_GATE_FLAG_MISMATCH: abi-scan.yml's scan step must have "
+                f"{flag}: true (got {scan_with.get(flag)!r}) -- without it, a real "
+                "BREAKING/API_BREAK verdict would leave the scan step successful "
+                "and the required PR gate green"
+            )
+
     for field in _MUST_MATCH_FIELDS:
         dump_val = dump_with.get(field)
         scan_val = scan_with.get(field)
@@ -444,16 +470,19 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # this script (either checked for equality, or explicitly named as
     # expected to differ) -- an unrecognized key silently skips both,
     # which would make this check quietly incomplete as new inputs are
-    # added to either step over time. `mode`/`against`/`build-info`/
-    # `header`/`new-header`/`old-header` are all handled specially above
-    # (`mode`/`against` each need an exact-shape assertion, not mere
-    # inequality; the header fields need cross-field/role normalization;
-    # `build-info`'s literal value can't be compared through the generic
-    # equality loop) -- still "accounted for", so they're excluded here
-    # rather than falling through as unclassified.
+    # added to either step over time. `mode`/`against`/`fail-on-breaking`/
+    # `fail-on-api-break`/`build-info`/`header`/`new-header`/`old-header`
+    # are all handled specially above (`mode`/`against` each need an
+    # exact-shape assertion, not mere inequality; the gate flags need a
+    # required-true assertion on the scan side only; the header fields
+    # need cross-field/role normalization; `build-info`'s literal value
+    # can't be compared through the generic equality loop) -- still
+    # "accounted for", so they're excluded here rather than falling
+    # through as unclassified.
     known = (
         set(_MUST_MATCH_FIELDS)
         | _EXPECTED_TO_DIFFER_FIELDS
+        | set(_REQUIRED_SCAN_GATE_FLAGS)
         | {"mode", "against", "build-info", "header", "new-header", "old-header"}
     )
     unaccounted = (set(dump_with) | set(scan_with)) - known
