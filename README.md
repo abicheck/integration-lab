@@ -134,6 +134,110 @@ attempted here.)
   workflow, it is never added to branch-protection required status checks
   -- promotion is explicitly PR3+ scope.
 
+### PR3: cross-build-system equivalence and initial scenario parity
+
+PR3 adds the comparison PR2 explicitly deferred -- do Bazel's, CMake's, and
+Make's own builds of the identical source mean the same public ABI, not
+just "does each pass its own baseline" -- plus the first real proof that a
+second build system can drive `scenarios/manifest.yaml`'s own detection-
+correctness oracle, not just the staged-build-output smoke test PR1/PR2
+already cover. Still advisory only: `abi-scan.yml`'s own required Bazel
+gate and `scenarios.yml`'s own required scenario gate are both completely
+untouched.
+
+- **`ci/compare_build_outputs.py`** -- pairwise (Bazel↔CMake, Bazel↔Make,
+  CMake↔Make) comparison of two profiles' staged `abicheck-build-<id>/`
+  output for the same commit: exported dynamic symbol set, SONAME, `NEEDED`
+  dynamic dependencies (`nm -D`/`readelf`, reusing `ci/check_profile.py`'s
+  own extraction functions), and staged public-header inventory/content
+  digest. Every difference is classified into one of five categories from
+  the design doc (`public_contract_mismatch`, `toolchain_configuration_
+  mismatch`, `expected_build_system_metadata_difference`, `evidence_only_
+  difference`, `unclassified_difference`) so a real ABI-relevant divergence
+  never gets lost among expected build-system bookkeeping (a different
+  target id, generator, or evidence path). Compares only the target names
+  each pair's `ci/profiles.yaml` `coverage.checked_targets` shares -- NOT
+  every target either side's `build-output.json` happens to mark
+  `shared_library` -- so Bazel's own `//:math_shared` (a real
+  `cc_shared_library`, deliberately Bazel-only per the design doc's own
+  "Bazel-only diagnostics may remain Bazel-specific") is recorded as
+  context, never flagged as a cross-build gap.
+
+  Run for real against this repo's own three profiles (gcc-14/g++-14,
+  Bazel 7.4.1, CMake+Ninja, Make+Bear, all locally provisioned in this PR's
+  own sandbox -- see the PR's own local-command log): the comparison found
+  a genuine `public_contract_mismatch` on **SONAME** -- Bazel's `//:math`
+  (the `cc_binary(linkshared = True)` "legacy/demo target shape",
+  `BUILD.bazel`'s own comment) sets no SONAME at all, CMake's build sets
+  `libmath.so.1`, and Make's build sets `libmath.so` -- three build
+  systems, three different answers, for the identical source. This is
+  real, useful signal working exactly as intended, not a bug in the
+  script: left as-is and visible (not "fixed" by editing the production
+  build definitions in this PR), since aligning it is a build-definition
+  decision for a later PR, not a comparison-tooling one.
+
+  When the real `abicheck` CLI is on `PATH` (this repo's own sandbox had
+  outbound network access this session and could install it -- unlike the
+  PR2 session, which couldn't; see `ci/check_profile.py`'s own docstring),
+  this script also runs one real `abicheck compare` between each pair's own
+  built library directly, as an additional best-effort signal beyond the
+  nm/readelf diff (which can't see a struct-layout or default-argument
+  difference); it degrades to a recorded `not_run` outcome, never a silent
+  "equivalent", when `abicheck` isn't available.
+
+  `cross_build_equivalence` (`.github/workflows/integration-shadow.yml`)
+  runs this after every profile's build, uploads `cross-build-equivalence.
+  {json,md}`, and `integration_gate` notes its result in the job summary --
+  advisory only, per the design doc's own "Initially make this job
+  advisory. Promote it to required only after the build definitions are
+  intentionally aligned and stable" (the SONAME finding above is exactly
+  the kind of pre-existing misalignment that guidance is written for).
+
+- **`scenarios/build-matrix.yaml`** + **`scripts/run_scenario.py
+  --build-system {bazel,cmake}`** -- the build-recipe layer the design doc
+  asks be decoupled from `scenarios/manifest.yaml`'s own semantic layer
+  (fixture pair -> expected verdict). `--build-system bazel` (the default)
+  is byte-for-byte the original, unchanged path -- every existing scenario
+  test still passes against it unmodified. `--build-system cmake` builds a
+  fixture pair through a new, generic, parameterized
+  `buildsystems/cmake/fixtures/CMakeLists.txt` (one project, `-DFIXTURE_
+  DIR=<path>`, not one CMakeLists.txt per fixture) and runs the identical
+  `abicheck compare` oracle check against it. Populated for a deliberately
+  small initial subset -- `add_function` (the design doc's own item 1, a
+  compatible addition) and `remove_function` (item 2, a binary break) --
+  proving both oracle outcomes work under CMake; every other scenario
+  stays Bazel-only and is reported as `SKIP`ped with an explicit reason
+  when run under `--build-system cmake`, never silently dropped from the
+  summary. Verified locally for real: under CMake+gcc-14, `add_function`
+  correctly reads `COMPATIBLE` and `remove_function` correctly reads
+  `BREAKING` (Clang frontend; CastXML is unavailable in this sandbox
+  regardless of build system -- a pre-existing, unrelated environment gap,
+  confirmed identical on the unmodified Bazel path too).
+
+  Deliberately NOT wired into `scenarios.yml` itself (that workflow's job
+  is `gating: true` in `capabilities.yaml`, and `scripts/
+  check_capability_matrix.py`'s own `IN_SCOPE_WORKFLOWS` check requires
+  every job in an in-scope workflow to be named by a capability entry --
+  adding a step there needs its own gating decision, not made in this PR).
+  Instead, `scenarios_cmake` (`.github/workflows/integration-shadow.yml`)
+  runs it independently, advisory only, uploading `scenario-results-cmake/`.
+
+**Deferred, honestly, not silently**: `capabilities.yaml` is NOT extended
+in this PR. Its own header comment and `scripts/check_capability_matrix.py`
+deliberately scope it to the workflows that answer "does this gate a PR"
+(`abi-scan.yml`, `scenarios.yml`, `scenarios-canary.yml`) and explicitly
+exclude `baseline.yml`/`performance.yml` as answering no coverage question
+that matrix tracks. `integration-shadow.yml`'s entire PR1-3 body of work is
+still advisory/shadow-only, so it answers that same kind of non-gating
+question today -- extending the matrix's scope to include it now would
+either misrepresent every PR1-3 job as something the matrix's own
+`gating: true`/`false` contract is designed to distinguish, or require
+(per `check_capability_matrix.py`'s own `UNDOCUMENTED_JOB` check) an entry
+for all four of `select`/`build`/`cross_build_equivalence`/
+`integration_gate` immediately. Left for the PR that actually promotes a
+non-Bazel profile (or this cross-build check) to gating, matching the
+design doc's own "Promote it to required only after ... stable" sequencing.
+
 ## Gate / PR-comment architecture
 
 The `scan` job runs exactly one gating `abicheck` invocation (`mode: scan`,

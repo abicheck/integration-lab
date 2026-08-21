@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/cross-build-equivalence.schema.json",
+  "title": "abicheck-bazel-lab cross-build-system equivalence result",
+  "description": "Schema for cross-build-equivalence.json, written by ci/compare_build_outputs.py (PR3 item 1). Advisory-only: see that script's own module docstring.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "generated_at",
+    "advisory",
+    "profiles_compared",
+    "pairs",
+    "overall_verdict"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "abicheck.cross-build-equivalence/v1" },
+    "generated_at": { "type": "string" },
+    "advisory": { "type": "boolean", "const": true },
+    "profiles_compared": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 2
+    },
+    "commit_diagnostic": { "type": ["string", "null"] },
+    "overall_verdict": { "type": "string", "enum": ["EQUIVALENT", "DIVERGENT", "INCOMPLETE"] },
+    "pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["profile_a", "profile_b", "backend_a", "backend_b", "targets", "context_differences", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "profile_a": { "type": "string" },
+          "profile_b": { "type": "string" },
+          "backend_a": { "type": ["string", "null"] },
+          "backend_b": { "type": ["string", "null"] },
+          "verdict": { "type": "string", "enum": ["EQUIVALENT", "DIVERGENT", "NOT_COMPARABLE"] },
+          "context_differences": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/difference" }
+          },
+          "targets": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["target", "verdict"],
+              "additionalProperties": false,
+              "properties": {
+                "target": { "type": "string" },
+                "verdict": { "type": "string", "enum": ["EQUIVALENT", "DIVERGENT", "NOT_COMPARABLE"] },
+                "reason": { "type": "string" },
+                "differences": {
+                  "type": "array",
+                  "items": { "$ref": "#/definitions/difference" }
+                },
+                "abicheck_cross_check": {
+                  "type": ["object", "null"],
+                  "required": ["mechanism", "outcome"],
+                  "properties": {
+                    "mechanism": { "type": "string", "const": "abicheck-compare" },
+                    "outcome": { "type": "string", "enum": ["ran", "not_run", "error"] },
+                    "verdict": { "type": ["string", "null"] },
+                    "reason": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "difference": {
+      "type": "object",
+      "required": ["category", "aspect", "detail", "value_a", "value_b"],
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "public_contract_mismatch",
+            "toolchain_configuration_mismatch",
+            "expected_build_system_metadata_difference",
+            "evidence_only_difference",
+            "unclassified_difference"
+          ]
+        },
+        "aspect": { "type": "string" },
+        "detail": { "type": "string" },
+        "value_a": {},
+        "value_b": {}
+      }
+    }
+  }
+}

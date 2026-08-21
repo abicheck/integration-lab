@@ -921,3 +921,71 @@ is for Bazel. `ci/check_profile.py`'s own `dump`/`check` CLI shape (and
 plumbing around it) should stay useful as the integration seam either way --
 only the comparison mechanism inside `check_profile.py` needs replacing,
 not the profile/receipt/gate architecture built around it.
+
+---
+
+# 2026-08-21 follow-up: no cross-build-system public-contract equivalence primitive upstream
+
+**Context:** PR3 of the multi-build-system integration effort adds
+`ci/compare_build_outputs.py` -- a pairwise (Bazel↔CMake, Bazel↔Make,
+CMake↔Make) comparison of two profiles' own staged build output for the
+same commit, answering a question neither PR2's per-profile baseline check
+nor abicheck itself can: does Bazel's build of a library mean the same
+public ABI as CMake's or Make's build of the identical source. Still
+entirely non-gating (`cross_build_equivalence` in
+`.github/workflows/integration-shadow.yml`; `abi-scan.yml`'s own required
+gate is untouched).
+
+**Gap:** abicheck has no built-in notion of "compare two build systems'
+own outputs of the same commit" at all -- `abicheck compare` (and every
+other command) takes two *candidate* artifacts (old/new, a version bump,
+a release), never two *build systems'* independent productions of the
+*same* version. This is design doc section 29's own expected gap #8
+("Cross build public-contract equivalence reporting"), now confirmed with
+a real implementation and a real finding, not just anticipated: run for
+real against this repo's own three profiles (gcc-14, Bazel 7.4.1,
+CMake+Ninja, Make+Bear -- all locally provisioned this session, unlike the
+PR2 entry above, this session's own sandbox DID have outbound network
+access, confirmed by successfully installing the real `abicheck` package
+from its git+https source), the comparison surfaced a genuine
+`public_contract_mismatch`: Bazel's `//:math` (the `cc_binary(linkshared
+= True)` demo target shape) sets **no SONAME**, CMake's build sets
+`libmath.so.1`, and Make's build sets `libmath.so` -- three real, different
+answers for the identical source, exactly the class of finding this
+comparison exists to catch, and exactly the class of finding no existing
+abicheck command could have surfaced (each side's own `abicheck dump`/
+`compare` against its own baseline reports `NO_CHANGE`; SONAME is only
+visible by directly comparing the two sides' own artifacts against each
+other, which nothing in abicheck's own command surface does).
+
+**Lab-side workaround, current state:** `ci/compare_build_outputs.py` is
+entirely bespoke lab tooling -- it reuses `ci/check_profile.py`'s own
+`nm -D`/`readelf` extraction functions (dynamic symbol table, SONAME,
+public-header digest) directly rather than through any abicheck API, adds
+its own `NEEDED`-dependency extraction, and layers a five-way
+classification taxonomy (`public_contract_mismatch`/
+`toolchain_configuration_mismatch`/`expected_build_system_metadata_
+difference`/`evidence_only_difference`/`unclassified_difference`) on top
+so a real ABI divergence doesn't get lost among build-system bookkeeping
+that's expected to differ (target ids, generator, evidence-producer
+paths). When the real `abicheck` CLI is reachable, it also opportunistically
+runs one real `abicheck compare` directly between the two profiles' own
+built libraries (old="profile A", new="profile B") as a deeper,
+best-effort signal beyond the symbol-table diff -- but this is a
+one-off subprocess call this script owns and interprets itself, not a
+first-class abicheck comparison mode.
+
+**What upstream should provide instead:** a first-class `abicheck
+compare-builds` (or an existing-command mode) that takes N build-output
+directories (or N pairs of `--binary`/`--header` inputs) already known to
+represent the SAME logical version/commit and reports build-system-to-
+build-system equivalence directly, with its own classification of
+"expected build metadata difference" versus "real public-contract
+divergence" -- built on the same DWARF/header-AST evidence `compare`
+already collects, rather than a lab-side nm/readelf reimplementation that
+can only ever see what's visible at the ELF symbol-table level (this
+lab's own `abicheck_cross_check` best-effort step is exactly the stopgap
+such a command would replace). Once available, `ci/compare_build_outputs.py`
+should become a thin driver over that command (resolving which staged
+profiles to compare, classifying/rendering the result for this repo's own
+`cross_build_equivalence` job), not a parallel comparison engine.

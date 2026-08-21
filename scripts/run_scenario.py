@@ -24,6 +24,7 @@ never installs anything, so it stays runnable the same way locally.
 """
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,8 +47,68 @@ def load_manifest(path):
     return data.get("scenarios", [])
 
 
+def load_build_matrix(path):
+    """PR3 item 2 (design doc section 18): {build_system: {scenario_name:
+    {old_fixture_dir, new_fixture_dir}}} from scenarios/build-matrix.yaml
+    -- see that file's own header comment for why this is a separate file
+    from scenarios/manifest.yaml, not a duplication of it. Missing file
+    (a --build-system bazel-only run has no reason to need it) returns
+    an empty mapping rather than raising -- bazel's own recipe has always
+    lived in manifest.yaml's old_target/new_target fields and needs no
+    entry here at all.
+    """
+    if not path.is_file():
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    return data.get("build_systems", {})
+
+
 def run_bazel_build(*targets):
     subprocess.run(["bazel", "build", *targets], check=True)
+
+
+def run_cmake_build(fixture_dir: Path, build_dir: Path) -> Path:
+    """Configure+build buildsystems/cmake/fixtures/CMakeLists.txt against
+    fixture_dir (a fixtures/<name>/{v1,v2}/ directory) into a fresh
+    build_dir, returning the built libimpl.so. Mirrors
+    ci/backends/cmake.py's own configure()/build() subprocess pattern
+    (Ninja when available, falling back to the CMake default generator
+    otherwise -- this script has no ci/profiles.yaml `generator` field to
+    read, unlike that backend, so it can't assume Ninja is installed).
+
+    Explicitly pins CMAKE_C_COMPILER/CMAKE_CXX_COMPILER to gcc-14/g++-14 --
+    the same pinned intent buildsystems/cmake/CMakePresets.json's own
+    gcc14-cxx17 preset and every ci/profiles.yaml entry declares (see that
+    file's own header comment: "there is no silent fallback to whatever
+    gcc happens to be on PATH anywhere in ci/backends/"). Without this, an
+    un-parameterized `cmake -S ...` resolves whatever `cc`/`c++` happen to
+    be on PATH (verified locally: this sandbox's default `/usr/bin/c++` is
+    g++-13, not g++-14) -- a real toolchain-pinning gap this function
+    would otherwise silently reintroduce for exactly the fixture-comparison
+    path this repo's own toolchain-matrix scenarios (scenarios.yml) are
+    designed to keep honest about compiler identity.
+    """
+    build_dir.mkdir(parents=True, exist_ok=True)
+    configure_cmd = [
+        "cmake",
+        "-S",
+        str(REPO_ROOT / "buildsystems" / "cmake" / "fixtures"),
+        "-B",
+        str(build_dir),
+        f"-DFIXTURE_DIR={fixture_dir}",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER=gcc-14",
+        "-DCMAKE_CXX_COMPILER=g++-14",
+    ]
+    if shutil.which("ninja") is not None:
+        configure_cmd += ["-G", "Ninja"]
+    subprocess.run(configure_cmd, check=True)
+    subprocess.run(["cmake", "--build", str(build_dir)], check=True)
+    lib_path = build_dir / "libimpl.so"
+    if not lib_path.is_file():
+        raise FileNotFoundError(f"cmake build of {fixture_dir} did not produce {lib_path}")
+    return lib_path
 
 
 def run_abicheck_compare(
@@ -135,7 +196,7 @@ def _scenario_profiles(scenario):
     return {None: scenario["expected_verdict"]}
 
 
-def run_one_profile(scenario, profile, expected, results_dir):
+def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
     name = scenario["name"]
     result_name = name if profile is None else f"{name}.{profile}"
     output_json = results_dir / f"{result_name}.json"
@@ -152,8 +213,8 @@ def run_one_profile(scenario, profile, expected, results_dir):
     old_header = scenario.get("old_header")
     suppress = scenario.get("suppress")
     run_abicheck_compare(
-        REPO_ROOT / scenario["old_output"],
-        REPO_ROOT / scenario["new_output"],
+        old_lib,
+        new_lib,
         REPO_ROOT / scenario["new_header"],
         output_json,
         old_header=(REPO_ROOT / old_header) if old_header else None,
@@ -240,14 +301,41 @@ def run_one_profile(scenario, profile, expected, results_dir):
     }
 
 
-def run_one(scenario, results_dir):
-    """Build *scenario*'s fixture pair once, then run every declared profile
-    against it. Returns a list of per-profile results (length 1 for a
-    single-oracle scenario, one per named profile for a per-profile one)."""
-    run_bazel_build(scenario["old_target"], scenario["new_target"])
+def run_one(scenario, results_dir, build_system="bazel", build_matrix=None, scratch_dir=None):
+    """Build *scenario*'s fixture pair once (under *build_system*), then
+    run every declared profile against it. Returns a list of per-profile
+    results (length 1 for a single-oracle scenario, one per named profile
+    for a per-profile one) -- or None if *build_system* has no build
+    mapping for this scenario yet (PR3 item 2's initial, deliberately
+    partial cmake coverage -- see scenarios/build-matrix.yaml's own header
+    comment), which the caller reports as skipped, not failed.
+    """
+    name = scenario["name"]
+    if build_system == "bazel":
+        # Unchanged: manifest.yaml's own old_target/new_target/old_output/
+        # new_output ARE this scenario's bazel build recipe -- every
+        # scenario has always declared one, so there is no "no mapping"
+        # case for bazel.
+        run_bazel_build(scenario["old_target"], scenario["new_target"])
+        old_lib = REPO_ROOT / scenario["old_output"]
+        new_lib = REPO_ROOT / scenario["new_output"]
+    elif build_system == "cmake":
+        mapping = (build_matrix or {}).get("cmake", {}).get(name)
+        if mapping is None:
+            return None
+        assert scratch_dir is not None, "scratch_dir is required for build_system != 'bazel'"
+        old_lib = run_cmake_build(
+            REPO_ROOT / mapping["old_fixture_dir"], scratch_dir / f"{name}-old"
+        )
+        new_lib = run_cmake_build(
+            REPO_ROOT / mapping["new_fixture_dir"], scratch_dir / f"{name}-new"
+        )
+    else:
+        raise ValueError(f"unknown --build-system {build_system!r} (expected 'bazel' or 'cmake')")
+
     profiles = _scenario_profiles(scenario)
     return [
-        run_one_profile(scenario, profile, expected, results_dir)
+        run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir)
         for profile, expected in profiles.items()
     ]
 
@@ -268,6 +356,22 @@ def main():
         "--only",
         help="Run only the named scenario (default: run every scenario in the manifest)",
     )
+    parser.add_argument(
+        "--build-system",
+        default="bazel",
+        choices=["bazel", "cmake"],
+        help=(
+            "PR3 item 2: which build system builds each scenario's fixture pair "
+            "(default: bazel, the original/full-coverage path). 'cmake' is "
+            "currently a deliberately partial subset -- see "
+            "scenarios/build-matrix.yaml's own header comment."
+        ),
+    )
+    parser.add_argument(
+        "--build-matrix",
+        default="scenarios/build-matrix.yaml",
+        help="Path (repo-relative) to the non-bazel build-recipe mapping (ignored for --build-system bazel)",
+    )
     args = parser.parse_args()
 
     manifest_path = REPO_ROOT / args.manifest
@@ -275,6 +379,8 @@ def main():
     if not scenarios:
         print(f"run_scenario: no scenarios found in {manifest_path}", file=sys.stderr)
         return 1
+
+    build_matrix = load_build_matrix(REPO_ROOT / args.build_matrix) if args.build_system != "bazel" else {}
 
     if args.only:
         scenarios = [s for s in scenarios if s["name"] == args.only]
@@ -287,15 +393,27 @@ def main():
 
     results_dir = REPO_ROOT / args.results_dir
     results_dir.mkdir(parents=True, exist_ok=True)
+    scratch_dir = results_dir / "cmake-scratch"
 
     results = []
+    skipped = []
     for scenario in scenarios:
         print(f"--- {scenario['name']} ---")
         # run_one() now runs every profile a scenario declares against one
         # built fixture pair and returns one result dict per profile --
         # length 1 for the ordinary single-oracle scenarios, one per named
-        # profile for a per-profile `expected:` scenario.
-        for result in run_one(scenario, results_dir):
+        # profile for a per-profile `expected:` scenario. Returns None
+        # (not an empty list, not a raised error) when --build-system has
+        # no build mapping for this scenario yet -- reported below as
+        # skipped, never silently absent from the summary.
+        profile_results = run_one(
+            scenario, results_dir, build_system=args.build_system, build_matrix=build_matrix, scratch_dir=scratch_dir
+        )
+        if profile_results is None:
+            print(f"SKIP: no --build-system {args.build_system!r} build mapping declared for this scenario")
+            skipped.append(scenario["name"])
+            continue
+        for result in profile_results:
             results.append(result)
             status = "PASS" if result["passed"] else "FAIL"
             profile_label = f" [{result['profile']}]" if result["profile"] else ""
@@ -317,9 +435,37 @@ def main():
                 + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
             )
 
+    # summary.json's own shape (a bare list of per-profile result dicts)
+    # is a load-bearing contract for scripts/emit_scenario_receipts.py
+    # (scenarios.yml's own required-gate capability receipts) -- kept
+    # exactly as before, not wrapped in a {results, skipped} envelope,
+    # even though this function now also tracks `skipped` -- that goes to
+    # its own file instead (skipped.json), never into summary.json's own
+    # schema.
     summary_path = results_dir / "summary.json"
     with open(summary_path, "w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=2)
+
+    if skipped:
+        with open(results_dir / "skipped.json", "w", encoding="utf-8") as fh:
+            json.dump({"build_system": args.build_system, "skipped": sorted(skipped)}, fh, indent=2)
+        print(
+            f"\n{len(skipped)} scenario(s) SKIPPED for --build-system {args.build_system!r} "
+            f"(no build mapping declared -- see scenarios/build-matrix.yaml): {sorted(skipped)}"
+        )
+
+    if not results and skipped:
+        # Every scenario in scope was skipped -- e.g. --only pointed at a
+        # scenario --build-system cmake has no mapping for. Zero attempted
+        # comparisons is not the same fact as zero failures; report it as
+        # its own real failure rather than the misleading "All 0
+        # scenario/profile run(s) passed." this would otherwise print.
+        print(
+            f"run_scenario: every requested scenario was skipped for --build-system {args.build_system!r} "
+            "-- nothing was actually validated",
+            file=sys.stderr,
+        )
+        return 1
 
     failed = [r for r in results if not r["passed"]]
     if failed:
