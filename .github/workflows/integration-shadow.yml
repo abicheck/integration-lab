@@ -224,17 +224,41 @@ jobs:
             --sha "${{ github.sha }}" \
             --out "$RUNNER_TEMP/profile-receipts/$PROFILE_ID.json"
 
-      - name: Upload profile receipt and reports
+      # Its own artifact, containing ONLY the receipts dir's contents:
+      # upload-artifact roots a single-directory path AT that directory
+      # (the file lands at the artifact's root as <profile-id>.json), but
+      # listing multiple paths together (as this step's `path:` previously
+      # did, bundling report-math.json/report-strings.json/coverage.json
+      # alongside it for convenience) makes upload-artifact instead root
+      # the whole artifact at those paths' least common ancestor
+      # ($RUNNER_TEMP), nesting the receipt one level deeper inside a
+      # profile-receipts/ subfolder -- integration_gate's download step
+      # below (merge-multiple: true, expecting <receipts-dir>/<profile-id>.json
+      # flat) then found nothing there and failed the whole gate with
+      # "no receipt found" for every profile, a real CI failure on this
+      # PR's first run. Keeping this artifact receipt-only, flat, and
+      # predictable is what the gate job actually needs; the human-debug
+      # reports/coverage move to their own artifact below instead of
+      # silently reshaping this one.
+      - name: Upload profile receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: profile-receipt-${{ matrix.profile }}
+          path: ${{ runner.temp }}/profile-receipts/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload profile check/coverage reports (debug)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: profile-reports-${{ matrix.profile }}
           path: |
-            ${{ runner.temp }}/profile-receipts/
             ${{ runner.temp }}/report-math.json
             ${{ runner.temp }}/report-strings.json
             ${{ runner.temp }}/coverage.json
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: 14
 
   # PR2 item 3: the final, advisory integration gate. Runs after every
