@@ -80,12 +80,11 @@ _MUST_MATCH_FIELDS = (
 
 # Fields the assessment itself names as *expected* to differ between a
 # dump baseline step and a scan candidate step -- not compared at all, so a
-# mismatch here is never even considered. `mode` is handled specially
-# (below, not through this set): it must always differ, but only as the
-# exact ("dump", "scan") pair -- see `known`'s own comment.
+# mismatch here is never even considered. `mode`/`against` are handled
+# specially (below, not through this set): each must always differ, but
+# only as one specific expected shape -- see `known`'s own comment.
 _EXPECTED_TO_DIFFER_FIELDS = frozenset(
     {
-        "against",
         "since",
         "changed-path",
         "version",
@@ -100,6 +99,21 @@ _EXPECTED_TO_DIFFER_FIELDS = frozenset(
         "pr-comment",
     }
 )
+
+# The one trusted baseline artifact the canonical scan step may compare
+# against -- produced by `.github/actions/resolve-baseline` from the PR's
+# base SHA, not attacker-controlled. `against` was previously blanket-
+# exempted as "expected to differ", which let this static gate accept a
+# canonical scan silently repointed at any other path -- e.g. the
+# repo-committed `abi/math.abicheck.json` (a working-tree file the PR
+# itself can edit), which would let the same PR rewrite its own baseline
+# to conceal a real ABI break, contradicting the trusted-baseline
+# invariant `docs/canonical-bazel-gate.md` documents (Codex review, fresh
+# evidence, P1). Handled the same way `mode` already is: the dump step
+# must have no `against` at all (dump mode never compares against
+# anything), and the scan step's `against` must be exactly this one
+# resolve-baseline-produced path.
+_EXPECTED_SCAN_AGAINST = "${{ runner.temp }}/math.base.abicheck.json"
 
 # Anchored at both ends (Codex review, fresh evidence): an unanchored
 # match would extract a matching prefix from two genuinely different refs
@@ -277,6 +291,23 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"({dump_mode!r}, {scan_mode!r})"
         )
 
+    # against: must be the one trusted resolve-baseline-produced path, not
+    # merely "differs" -- see `_EXPECTED_SCAN_AGAINST`'s own comment (Codex
+    # review, fresh evidence, P1). Blanket-exempting this field let a
+    # canonical scan step be silently repointed at any other baseline
+    # (including a PR-controlled working-tree file), defeating the
+    # trusted-baseline invariant this whole gate exists to protect.
+    dump_against = dump_with.get("against")
+    scan_against = scan_with.get("against")
+    if dump_against is not None or scan_against != _EXPECTED_SCAN_AGAINST:
+        errors.append(
+            "AGAINST_MISMATCH: expected baseline.yml's dump step to have no "
+            f"'against' (dump mode never compares against anything) and "
+            f"abi-scan.yml's scan step to have against={_EXPECTED_SCAN_AGAINST!r} "
+            f"(the trusted resolve-baseline artifact), got "
+            f"(against={dump_against!r}, against={scan_against!r})"
+        )
+
     for field in _MUST_MATCH_FIELDS:
         dump_val = dump_with.get(field)
         scan_val = scan_with.get(field)
@@ -359,14 +390,18 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # this script (either checked for equality, or explicitly named as
     # expected to differ) -- an unrecognized key silently skips both,
     # which would make this check quietly incomplete as new inputs are
-    # added to either step over time. `mode`/`build-info`/`header`/
-    # `new-header`/`old-header` are all handled specially above (`mode`
-    # needs the exact-pair assertion, not mere inequality; the header
-    # fields need cross-field/role normalization; `build-info`'s literal
-    # value can't be compared through the generic equality loop) -- still
-    # "accounted for", so they're excluded here rather than falling
-    # through as unclassified.
-    known = set(_MUST_MATCH_FIELDS) | _EXPECTED_TO_DIFFER_FIELDS | {"mode", "build-info", "header", "new-header", "old-header"}
+    # added to either step over time. `mode`/`against`/`build-info`/
+    # `header`/`new-header`/`old-header` are all handled specially above
+    # (`mode`/`against` each need an exact-shape assertion, not mere
+    # inequality; the header fields need cross-field/role normalization;
+    # `build-info`'s literal value can't be compared through the generic
+    # equality loop) -- still "accounted for", so they're excluded here
+    # rather than falling through as unclassified.
+    known = (
+        set(_MUST_MATCH_FIELDS)
+        | _EXPECTED_TO_DIFFER_FIELDS
+        | {"mode", "against", "build-info", "header", "new-header", "old-header"}
+    )
     unaccounted = (set(dump_with) | set(scan_with)) - known
     for field in sorted(unaccounted):
         errors.append(

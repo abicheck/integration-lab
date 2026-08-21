@@ -202,6 +202,31 @@ class TestCheck:
         errors = check(_dump_wf(dump_with), _scan_wf())
         assert any("MODE_MISMATCH" in e for e in errors)
 
+    def test_scan_step_repointed_at_an_untrusted_against_path_is_caught(self):
+        # `against` was previously blanket-exempted as "expected to
+        # differ", which would let this static gate accept a canonical
+        # scan step silently repointed at any other baseline -- including
+        # the repo-committed abi/math.abicheck.json, a working-tree file
+        # the same PR can edit, defeating the trusted-baseline invariant
+        # (Codex review, fresh evidence, P1). It must be exactly the
+        # resolve-baseline-produced path.
+        scan_with = dict(_GOOD_SCAN_WITH)
+        scan_with["against"] = "abi/math.abicheck.json"
+        errors = check(_dump_wf(), _scan_wf(scan_with))
+        assert any("AGAINST_MISMATCH" in e for e in errors)
+
+    def test_dump_step_setting_against_is_caught(self):
+        # Dump mode never compares against anything -- an `against` on the
+        # dump step is itself a usage-shape drift, independent of the scan
+        # side's own value.
+        dump_with = dict(_GOOD_DUMP_WITH)
+        dump_with["against"] = "${{ runner.temp }}/math.base.abicheck.json"
+        errors = check(_dump_wf(dump_with), _scan_wf())
+        assert any("AGAINST_MISMATCH" in e for e in errors)
+
+    def test_scan_step_against_the_trusted_path_is_clean(self):
+        assert check(_dump_wf(), _scan_wf()) == []
+
     def test_old_header_on_either_canonical_step_is_flagged(self):
         dump_with = dict(_GOOD_DUMP_WITH)
         dump_with["old-header"] = "include/abicheck_lab/math.h"
