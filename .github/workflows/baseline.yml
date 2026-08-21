@@ -104,15 +104,34 @@ jobs:
             --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
+      # public-header-dir: at abicheck@6fb8536, `abicheck dump`'s CLI
+      # dropped the standalone `--public-header-dir` flag (merged into
+      # `-H`/`--header`, where a directory entry now tags everything
+      # under it public -- verified against the pinned commit's own
+      # cli.py: "The separate --public-header/--public-header-dir pair
+      # said the same thing a second way."). Passing it as a literal
+      # `--public-header-dir` string via `extra-args` (as this step did
+      # before) therefore hard-failed every "collect" run with
+      # `Error: No such option '--public-header-dir'` (exit 64) -- no
+      # baseline was ever produced on main after the pin bumped to
+      # 6fb8536 (PR #18), which is why every PR built off that main
+      # (including PR #19/#20) then hit `scan --against` with a stale-or-
+      # missing baseline. Using the *typed* `public-header-dir:` input
+      # instead of raw `extra-args` fixes this: the action's own
+      # composite script (unlike our workflow's copy-pasted extra-args
+      # string) already knows dump mode needs it forwarded as an
+      # additional `-H` root, not as its own removed flag (per this same
+      # pinned commit's action.yml: "dump mode forwards it as one more
+      # -H/--header root").
       - name: Collect source-aware ABI baseline
         uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
           header: include/abicheck_lab/math.h
+          public-header-dir: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
-          extra-args: '--public-header-dir include'
           depth: source
           new-version: main-${{ github.sha }}
           output-file: ${{ runner.temp }}/math.raw.abicheck.json
