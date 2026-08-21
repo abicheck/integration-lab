@@ -96,13 +96,13 @@ jobs:
         run: |
           curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
             --output "$RUNNER_TEMP/install-castxml.sh" \
-            "https://raw.githubusercontent.com/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/action/install-castxml.sh"
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
           bash "$RUNNER_TEMP/install-castxml.sh"
 
       - name: Install abicheck + PyYAML
         run: |
           pip install --quiet pyyaml
-          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       - name: Run scenarios against the manifest oracle
         id: run_scenarios

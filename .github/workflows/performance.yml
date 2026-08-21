@@ -70,7 +70,7 @@ jobs:
 
       - name: Install abicheck
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       # abicheck's own snapshot cache (snapshot_cache.py) is keyed on
       # binary content + header content + relevant flags, and lives under

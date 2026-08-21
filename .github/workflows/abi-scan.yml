@@ -166,7 +166,7 @@ jobs:
         id: abicheck_pip
         if: steps.bazel_queries.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -200,11 +200,23 @@ jobs:
       # (verified against cli_scan.py) and extra-args passes it through --
       # this is what turns the four provenance-gated crosschecks from
       # "skipped: no public-header provenance" into real evidence.
+      # This step (and the `aggregate`/`verify_capability_receipts` jobs
+      # downstream of it) fail with NOT_COMPARABLE against the committed
+      # baseline regardless of which abicheck pin is used here -- confirmed
+      # by checking PR #16/#17's own CI, both on the OLDER pin, both
+      # already red for the identical reason (see PR #17's own comment
+      # thread). This is not a regression this pin bump introduces: it's a
+      # pre-existing, upstream-tracked issue (abicheck's own AGENTS.md
+      # "Known gaps": dump's baseline and scan's `--depth source` candidate
+      # resolution disagree on include_sequence via two structurally
+      # different channels). Staying on an older pin buys nothing here --
+      # it only forgoes the two other real bugs 6fb8536 fixes (see this
+      # PR's own description) while leaving this same failure in place.
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -307,7 +319,7 @@ jobs:
         id: l2_castxml
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -341,7 +353,7 @@ jobs:
         id: l2_clang
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -516,7 +528,7 @@ jobs:
         id: l4_clang_replay
         if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
@@ -743,7 +755,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: ${{ runner.temp }}/strings.base.abicheck.json
@@ -844,7 +856,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math_shared.base.abicheck.json
@@ -942,18 +954,18 @@ jobs:
           path: ${{ runner.temp }}/reports
           merge-multiple: true
 
-      # Codex review, fresh evidence: `--manifest` (used below) does not
-      # exist at this workflow's own composite-Action pin (`891bd9d`,
-      # predating the CLI cleanup that added it) -- `abicheck aggregate
-      # --help` at that revision still exposes the retired `--expect`/
-      # `--optional` interface, so reusing that pin here would make this
-      # step fail on an unrecognized-option usage error rather than run the
-      # new fail-closed check. This install is a plain `pip install` of the
-      # `abicheck` Python package for the `aggregate` CLI alone -- unlike
-      # the composite-Action `uses:` pins elsewhere in this workflow, it
-      # never touches Bazel/castxml/the source-evidence pipeline this file's
-      # own P0.3 dump/scan-parity gap blocks a full repin on, so bumping it
-      # independently is safe. Pinned to `5b52989`, the exact `abicheck/main`
+      # Historically pinned separately from the composite-Action `uses:`
+      # pins elsewhere in this workflow (`--manifest`, used below, didn't
+      # exist at the older composite-Action pin -- `abicheck aggregate
+      # --help` there still exposed the retired `--expect`/`--optional`
+      # interface). Consolidated onto the same pin as the rest of this
+      # workflow now that a single SHA carries both fixes this repo
+      # needed: see `abi-scan.yml`'s own header note. This install is a
+      # plain `pip install` of the `abicheck` Python package for the
+      # `aggregate` CLI alone (not the composite Action) -- kept as its
+      # own step, not folded into a shared install, purely because
+      # `aggregate` never touches Bazel/castxml/the source-evidence
+      # pipeline the other steps do. Pinned to the exact `abicheck/main`
       # revision this repo's own upstream audit already validated end to end
       # (see UPSTREAM_TO_ABICHECK.md and this PR's own description) -- not
       # `main` itself, so this step's behavior stays reproducible rather
@@ -1015,7 +1027,7 @@ jobs:
       - name: Install abicheck (for aggregate)
         id: install_abicheck
         continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5b529896eff680203230ec1a635c669ee3334d6e"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
         id: aggregate_run
@@ -1321,7 +1333,7 @@ jobs:
         id: compare
         if: steps.build_base_consumer.outputs.available == 'true' || steps.build_head_consumer_fallback.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: >-
@@ -1486,7 +1498,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -1645,7 +1657,7 @@ jobs:
           git init -q "$RUNNER_TEMP/abicheck-src"
           cd "$RUNNER_TEMP/abicheck-src"
           git remote add origin https://github.com/abicheck/abicheck.git
-          git fetch --depth 1 origin 891bd9d7157dda8af38a8b9e145e564dc7fc1c71
+          git fetch --depth 1 origin 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3
           git sparse-checkout set --no-cone contrib/abicheck-clang-plugin
           git checkout FETCH_HEAD
 
@@ -1713,7 +1725,7 @@ jobs:
         id: install_abicheck
         if: steps.verify_facts.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       # Codex review: --ast-frontend clang added -- without it, the header
       # side of this compare silently used abicheck's CastXML default,
