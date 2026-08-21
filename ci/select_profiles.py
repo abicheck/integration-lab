@@ -60,7 +60,12 @@ def _expand(names: List[str], profile_sets: Dict[str, List[str]], known_ids: set
     resolved: List[str] = []
     for name in names:
         if name in profile_sets:
-            resolved.extend(profile_sets[name])
+            for member in profile_sets[name]:
+                if member not in known_ids:
+                    raise SelectionError(
+                        f"profile_sets[{name!r}] references unknown profile id: {member!r}"
+                    )
+                resolved.append(member)
         elif name in known_ids:
             resolved.append(name)
         else:

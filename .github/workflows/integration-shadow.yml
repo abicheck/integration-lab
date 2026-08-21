@@ -106,7 +106,10 @@ jobs:
 
       - name: Run profile (build + stage + validate)
         id: run_profile
-        run: python3 ci/run_profile.py --profile-id "${{ matrix.profile }}" | tee run-profile-summary.json
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 ci/run_profile.py --profile-id "${{ matrix.profile }}" | tee run-profile-summary.json
 
       - name: Upload staged build output
         if: always()
