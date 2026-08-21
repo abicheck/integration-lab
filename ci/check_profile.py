@@ -516,7 +516,26 @@ def compare_profile(
         and library_path.name != baseline_filename
     )
 
-    if removed or changed or soname_changed or filename_changed:
+    # An unchanged SONAME string doesn't by itself prove the library is
+    # loadable under that name -- the loader still has to find an actual
+    # file (or symlink) on disk named after the SONAME. The
+    # soname_changed check above only compares the SONAME *string*
+    # embedded in the candidate's own ELF metadata, which is independent
+    # of the staged file's own on-disk name; it can't detect a staging
+    # bug or build misconfiguration that renamed the output file while
+    # leaving its embedded SONAME untouched, or one where the SONAME-
+    # named copy simply never got staged. ci/backends/cmake.py's own
+    # stage() already stages a second copy under the exact SONAME name
+    # for precisely this reason (PR #19); this check verifies that copy
+    # is actually present, rather than trusting it exists (Codex review,
+    # PR #20).
+    soname_file_missing = (
+        candidate_soname is not None
+        and candidate_soname != library_path.name
+        and not (library_path.parent / candidate_soname).exists()
+    )
+
+    if removed or changed or soname_changed or filename_changed or soname_file_missing:
         verdict = "BREAKING"
         detail_parts = []
         if removed:
@@ -528,6 +547,12 @@ def compare_profile(
         if filename_changed:
             detail_parts.append(
                 f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
+            )
+        if soname_file_missing:
+            detail_parts.append(
+                f"candidate's own embedded SONAME is {candidate_soname!r}, but no file named that exists "
+                f"alongside {library_path.name!r} in the staged output -- consumers linked against this "
+                "SONAME cannot resolve it at runtime"
             )
         detail = "; ".join(detail_parts)
     elif added:

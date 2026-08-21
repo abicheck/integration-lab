@@ -190,6 +190,34 @@ def test_compare_profile_breaking_on_soname_change(tmp_path):
     assert "SONAME changed" in result["detail"]
 
 
+def test_compare_profile_breaking_when_soname_named_file_missing(tmp_path):
+    # An unchanged SONAME string doesn't by itself prove the library is
+    # loadable under that name -- the actual file (or symlink) named
+    # after the SONAME has to exist in the staged output too (this is
+    # exactly what ci/backends/cmake.py's own stage() stages a second
+    # copy for). Same SONAME on both sides, but the SONAME-named copy is
+    # simply never staged: a real loadability break this mechanism
+    # previously had no way to detect, since it only compared the SONAME
+    # *string* embedded in the file's own ELF metadata.
+    lib_before = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so", extra_args=["-Wl,-soname,libmath.so.1"]
+    )
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    baseline = build_baseline("p1", "math", baseline_staged)
+    assert baseline["soname"] == "libmath.so.1"
+
+    lib_after = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_after.so", extra_args=["-Wl,-soname,libmath.so.1"]
+    )
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="libmath.so")
+    # No libmath.so.1 written alongside libmath.so in candidate_staged --
+    # simulating a backend that failed to stage the SONAME-named copy.
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "BREAKING"
+    assert "no file named that exists" in result["detail"]
+
+
 def test_compare_profile_breaking_on_filename_change_without_soname(tmp_path):
     # Bazel's cc_shared_library outputs carry no SONAME, so the loader
     # locates them by their on-disk filename instead. A rename here is
