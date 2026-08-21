@@ -11,6 +11,22 @@ name: Performance benchmarks (cold/warm)
 # build plus a cold abicheck dump is real wall-clock cost, not worth paying
 # per-PR just to produce a number nobody's blocked on).
 #
+# PR5 (design doc section 9.5 "performance.yml": "expand measurement to
+# core build profiles over time ... Store profile ID and scanner SHA with
+# every measurement") adds the `profile_measurements` job below: one timed
+# `ci/run_profile.py` build + one timed `abicheck dump` per non-Bazel
+# profile (ci/profiles.yaml's cmake and make profiles -- Bazel's own
+# cold/warm pair above already covers the Bazel profile). Deliberately
+# NOT a cold/warm pair for cmake/make the way Bazel's own disk-cache
+# measurement above is: neither backend has a persistent, cache-directory-
+# scoped incremental build configured anywhere in this lab today (Bazel's
+# `--disk_cache` flag has no cmake/make equivalent this repo actually
+# wires up) -- a "warm" cmake/make run on a fresh GitHub-hosted runner
+# would just be "ran again with the exact same empty state", not a
+# meaningfully different measurement, so this only ever reports a single
+# cold number per profile rather than fabricating a warm one with nothing
+# real behind it.
+#
 # Deliberately `contents: read` only, no secrets, no PR interaction --
 # same "no elevated permissions -> tag pinning is enough" reasoning
 # AGENTS.md's (abicheck/abicheck) own action-pinning entry documents for
@@ -121,7 +137,8 @@ jobs:
             "abicheck_dump_cold_ms": ${{ steps.cold_dump.outputs.ms || 'null' }},
             "abicheck_dump_warm_ms": ${{ steps.warm_dump.outputs.ms || 'null' }},
             "run_id": "${{ github.run_id }}",
-            "sha": "${{ github.sha }}"
+            "sha": "${{ github.sha }}",
+            "scanner_sha": "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
           }
           JSON
           python3 scripts/render_performance_summary.py \
@@ -134,5 +151,130 @@ jobs:
         with:
           name: abicheck-lab-performance-timings
           path: ${{ runner.temp }}/performance-timings.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  # PR5 (design doc section 9.5): per-profile build + abicheck-dump timing
+  # for the two profiles the `benchmark` job above doesn't cover (Bazel is
+  # already measured there, cold AND warm; this job's own header comment
+  # explains why cmake/make only ever get a single cold number). Its own
+  # job, its own artifact -- deliberately not folded into `benchmark`
+  # above: that job's steps are already order-dependent on a shared
+  # `$HOME/.cache/bazel-disk` state machine (cold -> warm -> dump -> warm
+  # dump), and interleaving two more, unrelated backends into that same
+  # sequence would only make a failure in one backend's step harder to
+  # attribute to the right profile. `needs: []` implicitly (no needs) --
+  # runs in parallel with `benchmark`, same non-gating posture.
+  profile_measurements:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      # Same package set integration-shadow.yml's own `build` job installs
+      # for these two backends -- see that job's own comment for why
+      # gcc-14/g++-14/bear/patchelf/ninja aren't preinstalled on
+      # ubuntu-24.04 runners.
+      - name: Install gcc-14/g++-14, ninja, bear, patchelf
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 ninja-build bear patchelf
+
+      - name: Install abicheck (pinned, same commit the `benchmark` job above uses)
+        id: install_abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      # One cold build + one cold `abicheck dump` per profile, timed the
+      # same way the `benchmark` job's own cold Bazel build/dump steps
+      # are (wall-clock ns around the actual command, converted to ms).
+      # ci/run_profile.py itself does clean-build-stage in one call, so
+      # "cold" here just means "first and only time this profile is built
+      # on this fresh runner" -- there is no separate warm-up phase to
+      # skip (unlike the Bazel job above, which deliberately runs the
+      # build twice to isolate the disk cache's own contribution).
+      - name: Measure cmake profile (build + dump)
+        id: measure_cmake
+        if: steps.install_abicheck.outcome == 'success'
+        shell: bash
+        env:
+          PROFILE_ID: linux-x86_64-gcc14-cxx17-cmake-ninja
+        run: |
+          set -euo pipefail
+          build_start_ns=$(date +%s%N)
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" > "$RUNNER_TEMP/run-profile-cmake.json"
+          build_end_ns=$(date +%s%N)
+          echo "build_ms=$(( (build_end_ns - build_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+          staged="abicheck-build-$PROFILE_ID"
+          library="$staged/$(python3 -c "import json; print(json.load(open('$staged/build-output.json'))['targets']['math']['path'])")"
+          dump_start_ns=$(date +%s%N)
+          abicheck dump "$library" \
+            --header "$staged/headers/include/abicheck_lab/math.h" \
+            --ast-frontend clang \
+            -o "$RUNNER_TEMP/math.perf.dump.cmake.json"
+          dump_end_ns=$(date +%s%N)
+          echo "dump_ms=$(( (dump_end_ns - dump_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Measure make profile (build + dump)
+        id: measure_make
+        if: steps.install_abicheck.outcome == 'success'
+        shell: bash
+        env:
+          PROFILE_ID: linux-x86_64-gcc14-cxx17-make-bear
+        run: |
+          set -euo pipefail
+          build_start_ns=$(date +%s%N)
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" > "$RUNNER_TEMP/run-profile-make.json"
+          build_end_ns=$(date +%s%N)
+          echo "build_ms=$(( (build_end_ns - build_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+          staged="abicheck-build-$PROFILE_ID"
+          library="$staged/$(python3 -c "import json; print(json.load(open('$staged/build-output.json'))['targets']['math']['path'])")"
+          dump_start_ns=$(date +%s%N)
+          abicheck dump "$library" \
+            --header "$staged/headers/include/abicheck_lab/math.h" \
+            --ast-frontend clang \
+            -o "$RUNNER_TEMP/math.perf.dump.make.json"
+          dump_end_ns=$(date +%s%N)
+          echo "dump_ms=$(( (dump_end_ns - dump_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Write per-profile timings JSON
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/performance-profile-timings.json" <<JSON
+          {
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}",
+            "scanner_sha": "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3",
+            "profiles": [
+              {
+                "profile_id": "linux-x86_64-gcc14-cxx17-cmake-ninja",
+                "build_ms": ${{ steps.measure_cmake.outputs.build_ms || 'null' }},
+                "dump_ms": ${{ steps.measure_cmake.outputs.dump_ms || 'null' }}
+              },
+              {
+                "profile_id": "linux-x86_64-gcc14-cxx17-make-bear",
+                "build_ms": ${{ steps.measure_make.outputs.build_ms || 'null' }},
+                "dump_ms": ${{ steps.measure_make.outputs.dump_ms || 'null' }}
+              }
+            ]
+          }
+          JSON
+          python3 scripts/render_performance_summary.py \
+            "$RUNNER_TEMP/performance-profile-timings.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload per-profile timings artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-lab-profile-measurements
+          path: ${{ runner.temp }}/performance-profile-timings.json
           if-no-files-found: warn
           retention-days: 90

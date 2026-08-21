@@ -44,10 +44,20 @@ is implemented today.
    (`linux-x86_64-gcc14-cxx17-bazel`). Extending either beyond that one
    profile is the same promotion decision as item 4 above, not separate
    work.
-6. **Add scanner release-candidate dispatch.** A way to run the full
-   profile/scenario suite against an unreleased `abicheck` release
-   candidate on demand, ahead of a scheduled canary catching it, to
-   de-risk a planned version bump.
+6. **Scanner release-candidate dispatch: done.** `.github/workflows/canary.yml`
+   (see [integration-profiles.md](integration-profiles.md#scanner-candidate-certification-canary))
+   certifies a specific `abicheck` commit — via a `repository_dispatch`
+   payload, a manual `workflow_dispatch` ref, or the weekly default of
+   `abicheck/main` — against the semantic scenario oracle, the real
+   composite Action surface, and every multi-build-system profile's own
+   staged output, and classifies the result into one of five outcomes
+   (`scripts/classify_canary_outcome.py`). What's still open: the
+   classification is one signal per job, not per step (a real, documented
+   scoping limitation, not a finer breakdown this PR claims), and it never
+   runs the real scanner's `--against`-a-committed-baseline path at all
+   (see `UPSTREAM_TO_ABICHECK.md`'s own P0 entry for why) -- only
+   self-comparisons, so it cannot yet catch a regression that only shows
+   up when comparing against a *different*, real baseline.
 7. **Expand toolchain and platform profiles based on real integration
    needs.** Additional `(compiler × standard × platform)` combinations, or
    additional build systems, added when a real integration need
