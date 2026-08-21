@@ -15,9 +15,11 @@ be validated before other projects depend on them.
 > workflow described below. A newer, parallel multi-build-system system
 > (Bazel + CMake + Make, all three staged and checked) exists, runs on
 > every PR, and can genuinely fail — but it is advisory only and does not
-> block merges yet. Its per-build-system compatibility check is also not
-> yet the real ABICheck scanner for two of the three build systems; see
-> [Honest current limitations](#honest-current-limitations) before relying
+> block merges yet. Its per-build-system compatibility check
+> (`ci/check_profile.py`) is also a lab-only ELF/header signal, not the real
+> ABICheck scanner, for **all three** profiles including Bazel — the real
+> ABICheck scanner only runs in the separate, canonical `abi-scan.yml` gate.
+> See [Honest current limitations](#honest-current-limitations) before relying
 > on any of it as proof of anything beyond "the same source builds under
 > three build systems."
 
@@ -192,14 +194,22 @@ abicheck-build-<profile-id>/
 # Canonical Bazel build + real ABICheck scan (needs bazel and network access
 # to install abicheck):
 bazel build //:math
-pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@<pinned-ref>"
+pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 abicheck scan --sources . --depth source --against abi/math.abicheck.json
 
-# One multi-build-system profile, end to end (build, stage, check, coverage,
-# receipt):
+# One multi-build-system profile: build, stage, and validate build-output.json
+# only (ci/run_profile.py stops there — it does NOT run check_profile.py's
+# ABI signal, the coverage contract, or emit a receipt; those are separate
+# workflow steps, run manually below or via integration-shadow.yml):
 python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-bazel
 python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-cmake-ninja
 python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-make-bear
+
+# To also run the per-profile ABI signal against a committed baseline:
+python3 ci/check_profile.py check --profile-id linux-x86_64-gcc14-cxx17-bazel \
+  --target math --staged-dir abicheck-build-linux-x86_64-gcc14-cxx17-bazel \
+  --baseline abi/profiles/linux-x86_64-gcc14-cxx17-bazel/math.abicheck.json \
+  --out report-math.json
 
 # Scenario oracle (needs bazel + abicheck on PATH):
 python3 scripts/run_scenario.py

@@ -114,15 +114,17 @@ schema and mechanism entirely separate from `abi/math.abicheck.json`, which
 
 ## Profile receipts (`ci/emit_profile_receipt.py`)
 
-A **profile receipt** is a machine-readable record proving that an expected
-profile ran, produced validated artifacts and reports, and reached a stated
-result for the current workflow run — schema
+A **profile receipt** is a machine-readable record of an expected profile's
+build attempt and result for the current workflow run — schema
 `abicheck.integration-profile-receipt/v1`. One receipt is emitted per
-profile per run, always (a report that never got written reads as
-`NOT_RUN`, never silently omitted): build/check/coverage status, per-target
-report digests and verdicts, build-output digest, and a scanner-mechanism
-note (so a receipt can never be mistaken for evidence from the real
-scanner).
+profile per run, always, even when the profile's own build failed and
+produced no `build-output.json` at all (that case's receipt reports
+`status: failed`, not a missing receipt). A receipt's existence is not by
+itself proof the profile ran successfully — read its `build.success` field,
+the validated artifact digests, and the per-target reports for that: build/
+check/coverage status, per-target report digests and verdicts, build-output
+digest, and a scanner-mechanism note (so a receipt can never be mistaken for
+evidence from the real scanner).
 
 ## The advisory integration gate
 

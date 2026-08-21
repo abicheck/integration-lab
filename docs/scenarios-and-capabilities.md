@@ -2,9 +2,14 @@
 
 This document explains the machine-readable compatibility-scenario system
 (`scenarios.yml`, `scenarios-canary.yml`) and the declarative capability
-matrix (`capabilities.yaml`). Both validate the real ABICheck scanner
-directly — via Bazel, against the root `//:math`-adjacent fixtures — and
-are independent of the multi-build-system profiles described in
+matrix (`capabilities.yaml`). These are two different kinds of check: the
+scenario system validates the real ABICheck scanner directly — via Bazel,
+against small fixture pairs — while the capability matrix instead validates
+that `capabilities.yaml`'s own coverage claims match reality, by checking
+its declared entries against real job names in
+`.github/workflows/capability-matrix.yml` and friends
+(`scripts/check_capability_matrix.py`), not by invoking the scanner itself.
+Both are independent of the multi-build-system profiles described in
 [integration-profiles.md](integration-profiles.md).
 
 ## The semantic scenario oracle

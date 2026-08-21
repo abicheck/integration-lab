@@ -62,10 +62,14 @@ Check each workflow's own `permissions:` block before widening it.
 ## Cache behavior
 
 Both `abi-scan.yml` and `baseline.yml` cache Bazel's disk cache
-(`~/.cache/bazel-disk`) via `actions/cache`, keyed on
-`MODULE.bazel`/`.bazelversion`/`.bazelrc`/`BUILD.bazel` (plus each job's own
-additional relevant `BUILD.bazel` files, e.g. `strings_lib/BUILD.bazel` for
-`scan_strings`). `MODULE.bazel.lock` is committed and enforced via
+(`~/.cache/bazel-disk`) via `actions/cache`, keyed at minimum on
+`MODULE.bazel`/`.bazelversion`/`.bazelrc`/`BUILD.bazel`. `baseline.yml` uses
+that same key for every job it runs, including its `strings`/`math_shared`
+dumps. `abi-scan.yml` widens the key per job where relevant — e.g. adding
+`strings_lib/BUILD.bazel` for `scan_strings`, or `consumer/BUILD.bazel` for
+`consumer_scoped` — so a change to a target-specific `BUILD.bazel` only
+invalidates the cache for jobs that actually depend on it. `MODULE.bazel.lock`
+is committed and enforced via
 `.bazelrc`'s `common --lockfile_mode=error`, so an unreflected
 `MODULE.bazel` change fails closed with an explicit message rather than
 silently re-resolving whatever the registry currently serves.
@@ -82,7 +86,8 @@ eyeball a trend by hand across runs.
 ## Scanner pinning
 
 `abi-scan.yml` installs a specific pinned `abicheck` release
-(`pip install abicheck @ git+https://github.com/abicheck/abicheck.git@...`).
+(`pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@..."`
+— quoted as one argument, matching the workflow's own invocation).
 `scenarios-canary.yml` runs the same scenario suite against
 `abicheck/main`'s current HEAD instead, specifically so a pin bump can be
 evaluated against real scenario/suppression behavior before it's made.

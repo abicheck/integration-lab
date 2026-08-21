@@ -11,9 +11,9 @@ file is aspirational.
 
 `abi-scan.yml`'s `scan` job runs exactly one gating `abicheck` invocation
 (`mode: scan`, `depth: source`, `format: json`, `abicheck-report.json`)
-against the root Bazel build (`//:math`). Its outcome drives all of the
-following, so there is one verdict and one report, not two analyses that can
-silently disagree:
+against the root Bazel build (`//:math`). This scan produces the canonical
+compatibility report — there is one verdict and one report, not two analyses
+that can silently disagree. Its outcome drives:
 
 - the pass/fail gate (`fail-on-breaking`, `fail-on-api-break`);
 - the PR comment (see below);
@@ -21,6 +21,12 @@ silently disagree:
   `scan` mode);
 - the `abicheck-report` artifact, uploaded with `if: always()` so it is
   available even when the gate fails.
+
+The overall required gate is not this scan alone: it also includes the
+independent coverage contract described in
+[Source-depth coverage enforcement](#source-depth-coverage-enforcement)
+below, whose own failure can report `NOT_FULLY_EVALUATED` even when the scan
+itself found the change compatible.
 
 ## Trusted baseline resolution
 
@@ -46,8 +52,11 @@ implications of that direct-to-`main` push.
 
 abicheck's built-in sticky PR-comment renderer (`pr-comment: true`) only
 activates for `mode: compare` — `_maybe_post_pr_comment` in `action/run.sh`
-is a silent no-op for `mode: scan` (both in the pinned release and current
-`abicheck/main`).
+is a silent no-op for `mode: scan` in the pinned release this repo installs
+(`abi-scan.yml`'s pinned `abicheck.git@<sha>`). This was also true of
+`abicheck/main` as of this writing — a moving target, so treat that half of
+the claim as time-of-writing, not a permanent guarantee, and re-check
+upstream before relying on it.
 
 Since scan-mode PR comments don't exist upstream yet,
 `scripts/render_scan_comment.py` renders a small, literal comment directly
@@ -87,16 +96,21 @@ Two evidence gaps are closed at the workflow level, not just gated red:
 - **Bazel target resolution** — `abi-scan.yml` runs both `bazel cquery` and
   `bazel aquery` itself; `scripts/build_bazel_evidence_pack.py` combines
   them into one `BuildSourcePack` via `BazelAdapter(cquery=..., aquery=...)`
-  and hands it to the gating scan via `--build-info`. Fails closed and falls
-  back to the pre-existing (targets-less) auto-inference on any problem, so
-  this can only improve evidence, never regress it.
+  and hands it to the gating scan via `--build-info`.
 
 Both fixes apply to `baseline.yml`'s `dump` too, so both sides of every
-comparison have equivalent evidence. On `baseline.yml` this pipeline is
-gating, not best-effort: a silent fallback there would get committed to
-`main` and become every future PR's trusted comparison target, so a
-transient bazel/pip hiccup fails the whole job before `dump`/commit ever
-run.
+comparison have equivalent evidence — but the two workflows react
+differently to a cquery/aquery/pip failure in that pipeline, deliberately:
+
+- **`abi-scan.yml`** falls back to the pre-existing (targets-less)
+  auto-inference and continues the scan on degraded evidence — this only
+  affects one PR's own coverage-contract result, which stays visible, not
+  persisted, so this can only improve evidence, never silently regress it
+  below what a PR would have gotten anyway.
+- **`baseline.yml`** fails the whole job before `dump`/commit ever run — a
+  silent fallback there would get committed to `main` and become every
+  future PR's trusted comparison target, so a transient bazel/pip hiccup
+  must never produce a degraded baseline.
 
 Export-to-source symbol matching is exempted, not enforced, only when the
 changed-source scope is confirmed zero **and** none of the changed files
