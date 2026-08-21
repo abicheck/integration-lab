@@ -56,17 +56,24 @@ except ImportError:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
-# Every workflow that invokes the `abicheck/abicheck` composite Action.
-# Listed explicitly (rather than globbed) so a new workflow adding an
-# `abicheck/abicheck` step is a deliberate addition to this list, not a
-# silent gap the way a glob could hide one under (e.g.) a workflow this
-# repo doesn't consider a "canonical gate".
-CHECKED_WORKFLOWS = (
-    WORKFLOWS_DIR / "abi-scan.yml",
-    WORKFLOWS_DIR / "baseline.yml",
-    WORKFLOWS_DIR / "profile-baseline.yml",
-    WORKFLOWS_DIR / "scenarios.yml",
-)
+
+def _discover_workflows() -> tuple[Path, ...]:
+    """Every `.yml`/`.yaml` file under `.github/workflows/` -- discovered,
+    not hand-listed (Codex review, fresh evidence): an earlier revision of
+    this check named the workflow files explicitly, on the reasoning that a
+    new workflow adding an `abicheck/abicheck` step should be a *deliberate*
+    addition to the list. That reasoning was backwards for a check whose
+    whole job is catching an accidental mistake -- a fifth workflow could
+    introduce the exact `extra-args` regression this guard exists for while
+    the hand-maintained list silently never looked at it, and nothing would
+    fail to say so. Discovering the workflow directory instead means a new
+    workflow is checked automatically, with no list to remember to update."""
+    if not WORKFLOWS_DIR.is_dir():
+        return ()
+    return tuple(sorted({*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")}))
+
+
+CHECKED_WORKFLOWS = _discover_workflows()
 
 # Maps a typed Action input name to the CLI flag spelling(s) it controls.
 # Mirrors action.yml's own `INPUT_*` -> flag wiring (see action.yml's
@@ -135,17 +142,30 @@ def _abicheck_steps(workflow: dict[str, Any], path: Path) -> list[tuple[str, dic
     return steps
 
 
+# Matches a GitHub Actions expression (`${{ ... }}`), non-greedy so two
+# separate expressions on one line don't collapse into one match.
+_GHA_EXPRESSION_RE = re.compile(r"\$\{\{.*?\}\}")
+
+
 def _extra_args_tokens(with_block: dict[str, Any]) -> list[str]:
     raw = with_block.get("extra-args")
     if not isinstance(raw, str) or not raw.strip():
         return []
-    # A GitHub Actions expression (`${{ ... }}`) can't be tokenized
-    # statically -- skip rather than mis-parse; this check only reasons
-    # about literal, checked-in extra-args strings.
-    if "${{" in raw:
-        return []
+    # A GitHub Actions expression's *value* (`${{ ... }}`) can't be
+    # tokenized statically -- runtime-substituted, so this check has no way
+    # to know what it expands to. But blanking the whole `extra-args`
+    # string over one embedded expression (an earlier revision of this
+    # check did exactly that) throws away every *other*, statically visible
+    # token on the same line -- `extra-args: '--public-header-dir "${{
+    # inputs.public_dir }}"'` would then miss the unambiguous, literal
+    # `--public-header-dir` flag right next to the dynamic part (Codex
+    # review, fresh evidence). Mask only the expression span itself with an
+    # opaque placeholder token, so shlex still sees every literal token
+    # around it, and the placeholder itself never collides with a real flag
+    # spelling in `_FLAG_TO_TYPED_INPUT`.
+    masked = _GHA_EXPRESSION_RE.sub("__gha_expr__", raw)
     try:
-        return shlex.split(raw)
+        return shlex.split(masked)
     except ValueError:
         return []
 

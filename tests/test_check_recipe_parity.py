@@ -78,6 +78,19 @@ class TestCheckStep:
         with_block = {"mode": "scan", "extra-args": "${{ inputs.extra }}"}
         assert check_step("fake:step", with_block) == []
 
+    def test_a_static_flag_next_to_an_expression_is_still_caught(self):
+        # A GHA expression's *value* can't be tokenized statically, but a
+        # literal, statically-visible flag on the same extra-args line must
+        # not be masked away along with it -- only the expression span
+        # itself is opaque.
+        with_block = {
+            "mode": "scan",
+            "extra-args": '--public-header-dir "${{ inputs.public_dir }}"',
+        }
+        errors = check_step("fake:step", with_block)
+        assert len(errors) == 1
+        assert "public-header-dir" in errors[0]
+
 
 class TestCheckWorkflow:
     def test_flags_the_known_bad_shape(self):
