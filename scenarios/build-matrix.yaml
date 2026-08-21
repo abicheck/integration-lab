@@ -1,0 +1,56 @@
+# PR3 item 2 (design doc section 18): the build-recipe layer, decoupled
+# from scenarios/manifest.yaml's own semantic layer (fixture pair ->
+# expected verdict/suppression assertions). manifest.yaml stays the
+# single source of truth for WHAT a scenario means and WHAT abicheck
+# should conclude about it -- unchanged by this file, and still the only
+# thing scripts/run_scenario.py reads for its existing, default
+# --build-system bazel path (old_target/new_target/old_output/new_output
+# there are themselves already a build recipe, just a bazel-only one that
+# predates this file; not duplicated here, see below).
+#
+# This file adds ONLY the additional build systems' own recipes, keyed by
+# scenario name -- when a build system has no entry for a scenario, that
+# scenario simply isn't run under that build system yet (fails closed
+# with a clear "no build mapping declared" message in
+# scripts/run_scenario.py, never silently substituted or skipped
+# quietly).
+#
+# `cmake` entries are deliberately populated for only the initial,
+# representative subset design doc section 18 names first (item 1: a
+# compatible addition, item 2: an exported-function removal) --
+# `add_function` (COMPATIBLE) and `remove_function` (BREAKING) are the
+# two simplest, most representative scenarios in scenarios/manifest.yaml,
+# proving BOTH oracle outcomes work under a second build system before
+# broader parity is attempted. Every other scenario (suppressions,
+# default-argument, generated-header, the aggregate/consumer-scoped
+# cases) stays bazel-only for now -- see this repo's README.md PR3
+# section and design doc section 18's own "keep the full existing
+# scenario suite under the canonical Bazel path until broad parity is
+# proven".
+#
+# `old_fixture_dir`/`new_fixture_dir` are repo-relative paths to a
+# fixtures/<name>/{v1,v2}/ directory -- passed straight to
+# buildsystems/cmake/fixtures/CMakeLists.txt's own -DFIXTURE_DIR. The
+# built library's staged path is always <cmake-build-dir>/libimpl.so
+# (that CMakeLists.txt's own fixed OUTPUT_NAME), matching the bazel
+# path's own bazel-bin/.../libimpl.so naming convention -- so
+# scripts/run_scenario.py's per-build-system code can share the same
+# "run abicheck compare against libimpl.so" call regardless of which
+# build system produced it.
+#
+# The header passed to `abicheck compare` for a cmake run is NOT
+# duplicated here -- manifest.yaml's own new_header/old_header fields are
+# repo source file paths (fixtures/<name>/v2/lib.h), not build outputs,
+# so they're identical regardless of which build system compiled the
+# library and are reused as-is by run_scenario.py for every build system.
+
+schema_version: 1
+
+build_systems:
+  cmake:
+    add_function:
+      old_fixture_dir: fixtures/add_function/v1
+      new_fixture_dir: fixtures/add_function/v2
+    remove_function:
+      old_fixture_dir: fixtures/remove_function/v1
+      new_fixture_dir: fixtures/remove_function/v2

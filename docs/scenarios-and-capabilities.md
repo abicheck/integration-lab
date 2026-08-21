@@ -42,11 +42,35 @@ Run locally: `python3 scripts/run_scenario.py` (needs `bazel` and the
 `abicheck` CLI on `PATH`, plus `pyyaml`) — or `--only <name>` for a single
 scenario.
 
+### Build-system parity (`--build-system cmake`)
+
+The scenario runner's build recipe is decoupled from `scenarios/
+manifest.yaml`'s own semantic layer (fixture pair → expected verdict):
+`scenarios/build-matrix.yaml` maps a scenario name to a non-Bazel build
+recipe. `--build-system bazel` (the default) is the original, unchanged,
+full-coverage path. `--build-system cmake` builds a fixture pair through a
+generic, parameterized `buildsystems/cmake/fixtures/CMakeLists.txt` (one
+project, `-DFIXTURE_DIR=<path>`, not one CMakeLists.txt per fixture) and
+runs the identical `abicheck compare` oracle check against it.
+
+Populated for a deliberately small initial subset — `add_function`
+(compatible) and `remove_function` (breaking) — proving both oracle
+outcomes work under a second build system. Every other scenario has no
+`cmake` entry in `build-matrix.yaml` yet, and is reported `SKIP` with an
+explicit reason when run with `--build-system cmake`, never silently
+dropped from the summary. `.github/workflows/integration-shadow.yml`'s
+`scenarios_cmake` job runs this independently of `scenarios.yml`'s own
+required gate — that workflow's job is `gating: true` in
+`capabilities.yaml`, and adding a step there would need its own gating
+decision this hasn't earned yet.
+
 **Not yet covered**, explicitly: a `cc_shared_library`-shaped
 detection-correctness scenario (every current fixture pair is
 `cc_binary(linkshared = True)`); the multi-library aggregate-plumbing and
 consumer/app-scoped gaps are covered separately by `strings_lib/` and
-`consumer/`'s own CI wiring, not by a scenario-manifest entry.
+`consumer/`'s own CI wiring, not by a scenario-manifest entry; every
+scenario beyond `add_function`/`remove_function` under `--build-system
+cmake`; and Make entirely (no `build-matrix.yaml` entries yet).
 
 ## Suppressions
 

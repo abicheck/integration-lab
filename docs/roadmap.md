@@ -17,20 +17,33 @@ is implemented today.
    should be replaced by a more direct `abicheck check-target`/
    `check-project`-style invocation per backend, rather than this lab's own
    staging-and-checking scaffolding.
-3. **Implement cross-build-system public-contract equivalence.** Compare
-   the three profiles' own reports against *each other*, not just each
-   against its own baseline — i.e., prove that Bazel, CMake, and Make
-   builds of the same source agree on the public ABI, not only that each
-   independently matches its own history.
+3. **Broaden cross-build-system public-contract equivalence.** An advisory
+   version already exists (`ci/compare_build_outputs.py`, the
+   `cross_build_equivalence` job — see
+   [integration-profiles.md](integration-profiles.md#cross-build-system-equivalence)):
+   it compares the three profiles' own staged output against *each other*,
+   not just each against its own baseline, and already found a real SONAME
+   mismatch across all three build systems. Promoting it to required, and
+   extending the scenario oracle's own build-system parity
+   (`--build-system cmake` currently covers only `add_function`/
+   `remove_function`; Make has none yet) beyond its current initial
+   subset, both wait on the build definitions being intentionally aligned
+   and stable first.
 4. **Promote proven profiles to required contracts.** Once a profile has
    run the real scanner reliably over time, evaluate flipping its
    `contract` field and adding its check to branch-protection required
    status checks — a deliberate, separate decision from simply having the
    profile exist.
-5. **Add accepted-main and release-contract profile baselines.** Extend the
-   baseline lifecycle (`baseline.yml`'s pattern) to cover accepted-`main`
-   and release-tagged baselines per profile, not just the current
-   PR-vs-base-SHA comparison.
+5. **Accepted-main and release-contract profile baselines: done for the
+   profiles that have one today.** `profile-baseline.yml` keeps every
+   profile's own `abi/profiles/<id>/*.abicheck.json` current on every
+   push to `main` (the same pattern `baseline.yml` already uses for the
+   canonical gate); `release.yml` re-certifies and publishes an immutable
+   per-profile baseline asset on every published release, currently only
+   for the one `contract: true` profile
+   (`linux-x86_64-gcc14-cxx17-bazel`). Extending either beyond that one
+   profile is the same promotion decision as item 4 above, not separate
+   work.
 6. **Add scanner release-candidate dispatch.** A way to run the full
    profile/scenario suite against an unreleased `abicheck` release
    candidate on demand, ahead of a scheduled canary catching it, to

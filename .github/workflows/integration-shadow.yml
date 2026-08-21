@@ -331,6 +331,159 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # PR3 item 1: pairwise cross-build-system equivalence (design doc section
+  # 19). Downloads every profile's staged abicheck-build-<profile-id>/
+  # output (uploaded by the build job above, "Upload staged build output"
+  # step) and runs ci/compare_build_outputs.py over every pair -- does
+  # Bazel's libmath.so mean the same public ABI as CMake's and Make's,
+  # modulo the build-system/generator/target-id differences that are
+  # expected and never a finding on their own. `if: always()` (must still
+  # run and report "no staged output" when a profile's own build failed,
+  # same reasoning as integration_gate below) and `needs: [select, build]`
+  # (needs every profile's staged artifact, not just one). Advisory only,
+  # like every other job in this workflow -- see this file's own header
+  # comment; design doc section 19's own words: "Initially make this job
+  # advisory. Promote it to required only after the build definitions are
+  # intentionally aligned and stable."
+  cross_build_equivalence:
+    needs: [select, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      # Same pinned scanner commit abi-scan.yml's own required gate
+      # installs (see that workflow's own comment for why a pin, not
+      # `main` or a tag, is used) -- the optional abicheck-backed deep
+      # check in ci/compare_build_outputs.py degrades to "not_run" rather
+      # than failing when this step is skipped/fails, so it is not
+      # `continue-on-error: false`-critical, but installing it here means
+      # this job actually exercises that deep check in real CI runs, not
+      # only in a sandbox that happens to have network access.
+      - name: Install abicheck (optional deep cross-check)
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      # Same pinned CastXML install scenarios.yml/scenarios_cmake both use
+      # (see scenarios_cmake's own comment for the full rationale) --
+      # without it, `ci/compare_build_outputs.py`'s optional deep check
+      # (`abicheck compare`, defaulting to CastXML, no --ast-frontend
+      # override) can install abicheck fine but every actual compare call
+      # then errors with "castxml not found in PATH", so the "when
+      # abicheck is on PATH" deep check this job advertises silently
+      # never actually exercises real DWARF/header-AST comparison --
+      # `_try_abicheck_compare()`'s own `outcome: error` records this
+      # honestly (never a false "ran and agreed"), but the deep check
+      # itself was never actually being exercised in CI before this
+      # (Codex review, PR #23). continue-on-error: true, matching the
+      # abicheck install step above -- this deep check is best-effort by
+      # design; a failed install here degrades it, it doesn't fail the job.
+      - name: Install pinned CastXML (for the optional deep cross-check)
+        continue-on-error: true
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Download every profile's staged build output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: abicheck-build-*
+          path: ${{ runner.temp }}/staged-builds
+          merge-multiple: false
+
+      # No continue-on-error here (unlike the best-effort install/download
+      # steps above): matches integration_gate's own "Render integration
+      # gate summary" step below -- this job is allowed to fail for real
+      # (a genuine DIVERGENT/INCOMPLETE result shows red in the Actions
+      # UI, exactly what an advisory-but-real signal should do), and
+      # nothing downstream needs this job's own conclusion to be
+      # `success` -- integration_gate's `needs: [..., cross_build_equivalence]`
+      # only needs it to have RUN (that job's own `if: always()` covers a
+      # failed dependency), and reads this job's real result via
+      # `needs.cross_build_equivalence.result` in its own "Note
+      # cross-build-equivalence status" step below.
+      - name: Compare staged build outputs pairwise
+        id: compare
+        shell: bash
+        env:
+          MATRIX_JSON: ${{ needs.select.outputs.matrix }}
+        run: |
+          set -o pipefail
+          if [ -z "${MATRIX_JSON:-}" ]; then
+            echo "::error::select job produced no matrix -- cannot resolve which profiles to compare" >&2
+            exit 1
+          fi
+          # expected_count is the size of THIS run's own selected matrix
+          # (e.g. a workflow_dispatch with the documented single `profile`
+          # input legitimately selects exactly one) -- distinct from
+          # resolved_count (how many of those actually produced staged
+          # output). Only expected_count decides SKIP vs ERROR when fewer
+          # than two are available to compare; resolved_count alone can't
+          # tell "nothing was ever supposed to be compared" apart from "a
+          # build silently failed" (Codex review, PR #23).
+          expected_count="$(python3 -c "import json, os; print(len(json.loads(os.environ['MATRIX_JSON'])['profile']))")"
+          if [ "$expected_count" -lt 2 ]; then
+            echo "Fewer than two profiles were selected for this run (expected_count=$expected_count) -- nothing to compare pairwise. Skipping, not failing: a single-profile workflow_dispatch is a legitimate, deliberate selection, not an incomplete one."
+            exit 0
+          fi
+
+          build_dir_args=()
+          resolved_count=0
+          missing=0
+          while IFS= read -r pid; do
+            staged="$RUNNER_TEMP/staged-builds/abicheck-build-$pid/abicheck-build-$pid"
+            if [ ! -f "$staged/build-output.json" ]; then
+              echo "::warning::no staged build-output.json for profile '$pid' -- its build likely failed; excluded from comparison" >&2
+              missing=1
+              continue
+            fi
+            build_dir_args+=(--build-dir "$pid=$staged")
+            resolved_count=$((resolved_count + 1))
+          done < <(python3 -c "import json, os; print('\n'.join(json.loads(os.environ['MATRIX_JSON'])['profile']))")
+
+          if [ "$resolved_count" -lt 2 ]; then
+            echo "::error::fewer than two of the $expected_count expected profiles produced staged output -- nothing to compare" >&2
+            exit 1
+          fi
+
+          python3 ci/compare_build_outputs.py \
+            "${build_dir_args[@]}" \
+            --output-json "$RUNNER_TEMP/cross-build-equivalence.json" \
+            --output-md "$RUNNER_TEMP/cross-build-equivalence.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          compare_exit=$?
+          if [ "$missing" -eq 1 ]; then
+            # An expected profile's staged output was missing -- the
+            # comparison that DID run may have reported EQUIVALENT
+            # (compare_exit 0), but that's not the same fact as "every
+            # expected profile was actually checked". Force a real
+            # failure here rather than letting a partial, incomplete
+            # comparison masquerade as a clean equivalence result
+            # (Codex review, PR #23: "makes a failed profile
+            # indistinguishable from a complete successful equivalence
+            # run").
+            echo "::error::at least one expected profile's staged output was missing -- cross-build-equivalence result is INCOMPLETE, not a valid EQUIVALENT" >&2
+            exit 1
+          fi
+          exit "$compare_exit"
+
+      - name: Upload cross-build-equivalence result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cross-build-equivalence-result
+          path: |
+            ${{ runner.temp }}/cross-build-equivalence.json
+            ${{ runner.temp }}/cross-build-equivalence.md
+          if-no-files-found: warn
+          retention-days: 14
+
   # PR2 item 3: the final, advisory integration gate. Runs after every
   # profile's build+check+receipt steps (needs: build, if: always() -- must
   # run even when a profile leg failed, since a missing receipt is exactly
@@ -344,7 +497,7 @@ jobs:
   # workflow's own header comment and README.md's PR2 section: this job can
   # and does fail for real, it just doesn't yet block a merge.
   integration_gate:
-    needs: [select, build]
+    needs: [select, build, cross_build_equivalence]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -396,11 +549,109 @@ jobs:
             "${expected_args[@]}" \
             -o "$RUNNER_TEMP/integration-gate-result.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # PR3 item 1 (design doc section 9.1's "Include cross-build-equivalence
+      # status"): a status LINE, not a gating input -- cross_build_equivalence
+      # is its own advisory job with its own artifact and its own real exit
+      # code (see that job's own comment), and render_integration_gate.py's
+      # pass/fail contract is deliberately untouched by this step so a
+      # cross-build divergence never silently changes what the gate itself
+      # reports pass/fail on. `needs.cross_build_equivalence.result` reads
+      # the JOB's own outcome (success/failure/skipped/cancelled), which
+      # already reflects that job's `compare` step exit code since nothing
+      # in that job sets `continue-on-error: true` at the JOB level (only
+      # individual steps do, for artifact-upload robustness -- see that
+      # job's own steps).
+      - name: Note cross-build-equivalence status
+        if: always()
+        shell: bash
+        env:
+          CROSS_BUILD_RESULT: ${{ needs.cross_build_equivalence.result }}
+        run: |
+          {
+            echo ""
+            echo "**Cross-build-system equivalence (advisory, PR3):** \`$CROSS_BUILD_RESULT\` -- see the \`cross-build-equivalence-result\` artifact for the full pairwise report."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload integration gate result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: integration-gate-result
           path: ${{ runner.temp }}/integration-gate-result.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # PR3 item 2 (design doc section 18): run scripts/run_scenario.py's new
+  # --build-system cmake path -- the SAME oracle (scenarios/manifest.yaml)
+  # and the SAME `abicheck compare` mechanism .github/workflows/
+  # scenarios.yml's own required gate already trusts for the bazel path,
+  # just built by CMake instead. Deliberately its OWN job in THIS
+  # (non-gating) workflow, not added to scenarios.yml itself: that
+  # workflow's job is `gating: true` in capabilities.yaml
+  # (detection-correctness-scenarios-castxml/-clang) and this repo's own
+  # scripts/check_capability_matrix.py fails closed on any job in an
+  # in-scope workflow (abi-scan.yml/scenarios.yml/scenarios-canary.yml --
+  # see that script's own IN_SCOPE_WORKFLOWS) that isn't named by a
+  # capabilities.yaml entry, so adding a step there would need its own
+  # capability entry and a gating decision this PR isn't making yet.
+  # Independent of every other job in this workflow (no `needs:`) -- it
+  # only needs scenarios/build-matrix.yaml's currently declared
+  # add_function/remove_function subset (see that file's own header
+  # comment), not any profile's staged build.
+  scenarios_cmake:
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install gcc-14/g++-14/cmake/ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 cmake ninja-build
+
+      - run: pip install --quiet pyyaml
+
+      # scenarios.yml's own castxml install step, exactly (see that
+      # workflow's identical step for the full rationale: Ubuntu's distro
+      # castxml package bundles too old a Clang for abicheck/main's own
+      # >=0.6.11,<0.8.0 contract, so this fetches the same
+      # checksum-verified pinned CastXML Superbuild abicheck's own CI
+      # uses, from the exact commit this job already pins abicheck itself
+      # to below). Missing here in this job's first real CI run (verified
+      # against this repo's own PR #23: every scenario/profile pair that
+      # declares a `castxml` oracle entry failed with "castxml not found
+      # in PATH", the `clang` oracle entries alongside them still passed)
+      # -- this sandbox's own local runs never caught it because castxml
+      # is ALSO unavailable there (a different, unrelated gap; see
+      # README.md's own note), so both the CMake and Bazel paths looked
+      # identically "castxml-less" locally when only the CMake path here
+      # was actually missing a real, available install step.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      # Same pinned scanner commit abi-scan.yml's own required gate and
+      # the cross_build_equivalence job above both install -- this job's
+      # whole point is exercising abicheck's real detection logic against
+      # a CMake-built fixture pair, so unlike cross_build_equivalence's
+      # own optional deep check, a failed install here is fatal (no
+      # continue-on-error), not best-effort.
+      - name: Install abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Run scenarios against CMake-built fixtures
+        run: python3 scripts/run_scenario.py --build-system cmake --results-dir scenario-results-cmake
+
+      - name: Upload CMake scenario results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-results-cmake
+          path: scenario-results-cmake/
           if-no-files-found: warn
           retention-days: 14

@@ -69,10 +69,21 @@ every PR and push to `main`, runs a per-profile compatibility check
 (`ci/check_profile.py`) against each profile's own committed baseline,
 enforces a profile-specific coverage contract, emits a machine-readable
 receipt per profile, and runs a fail-closed fan-in `integration_gate` job
-over the expected receipts. Despite that job's name, **this entire workflow
-is advisory** — it is not in branch protection's required-status-checks
-list, and nothing here can block a merge. Full detail:
-[docs/integration-profiles.md](docs/integration-profiles.md).
+over the expected receipts. A separate `cross_build_equivalence` job then
+compares the three profiles' own staged output directly against each
+other (exported symbols, SONAME, dynamic dependencies, headers), and a
+`scenarios_cmake` job proves an initial subset of the scenario oracle
+(`add_function`/`remove_function`) detects the same compatible/breaking
+changes under CMake, not just Bazel. Despite the gate job's name, **this
+entire workflow is advisory** — it is not in branch protection's
+required-status-checks list, and nothing here can block a merge.
+Two more workflows keep each profile's own baseline current:
+`profile-baseline.yml` refreshes `abi/profiles/<id>/*.abicheck.json` on
+every push to `main`, and `release.yml` re-certifies and publishes an
+immutable per-profile baseline asset on every published release (today,
+only for the one `contract: true` profile). Full detail:
+[docs/integration-profiles.md](docs/integration-profiles.md) and
+[docs/operations.md](docs/operations.md#multi-build-system-profile-baseline-lifecycle).
 
 **Scenarios and capabilities.** A machine-readable scenario oracle
 (`scenarios/manifest.yaml` + `fixtures/*`) asserts abicheck's actual verdict
@@ -102,12 +113,21 @@ Bazel and abicheck cache speedups; a committed baseline lifecycle
   inline/template body change, or any other source-level API change
   invisible at the binary symbol-table level — that requires the real
   ABICheck scanner, which this checker is not.
-- **No cross-build-system equivalence checking exists yet.** Each profile
-  is compared only against its own baseline, not against the other two
-  profiles' own reports.
+- **Cross-build-system equivalence checking exists but is advisory only.**
+  `ci/compare_build_outputs.py` (the `cross_build_equivalence` job)
+  compares each pair of profiles' own staged output directly — exported
+  symbols, SONAME, dynamic dependencies, public headers — and classifies
+  every difference as a real public-contract mismatch or expected
+  build-system bookkeeping. It is real (run against this repo's own three
+  profiles, it found a genuine SONAME mismatch — see
+  [integration-profiles.md](docs/integration-profiles.md#cross-build-system-equivalence))
+  but, like every other advisory job, cannot block a merge.
 - **Not every profile has a production release baseline**, and not every
-  scenario runs through every build system — the scenario oracle currently
-  exercises Bazel only.
+  scenario runs through every build system — the scenario oracle exercises
+  Bazel for its full suite; CMake covers only an initial, deliberately
+  small subset (`add_function`/`remove_function`) proving both a
+  compatible and a breaking verdict work under a second build system, not
+  yet Make.
 - **Make's `bear`-captured evidence is best-effort, not authoritative** —
   when `bear` isn't on `PATH`, the Make profile degrades to "no
   compile-commands evidence" rather than failing.
@@ -239,7 +259,7 @@ for the gcc-14/g++-14 toolchain this lab pins to (installable via
 | Document | Covers |
 |---|---|
 | [docs/canonical-bazel-gate.md](docs/canonical-bazel-gate.md) | The required `abi-scan.yml` gate: baseline resolution, PR comments, coverage enforcement, Bazel evidence, consumer/aggregate/toolchain checks, determinism, capability receipts. |
-| [docs/integration-profiles.md](docs/integration-profiles.md) | Profile definitions, event policy, backends, staged output, per-profile checks and their limits, receipts, the advisory gate, planned migration. |
+| [docs/integration-profiles.md](docs/integration-profiles.md) | Profile definitions, event policy, backends, staged output, per-profile checks and their limits, receipts, the advisory gate, cross-build-system equivalence, planned migration. |
 | [docs/scenarios-and-capabilities.md](docs/scenarios-and-capabilities.md) | The scenario oracle, suppressions, receipts, the capability matrix, canary drift detection, how to add a scenario. |
 | [docs/operations.md](docs/operations.md) | Baseline refresh, branch protection, required checks, CODEOWNERS, permissions, caching, retention, scanner pinning, long-lived test PRs. |
 | [docs/roadmap.md](docs/roadmap.md) | Planned phases, no dates, no completion claims. |
@@ -249,8 +269,11 @@ for the gcc-14/g++-14 toolchain this lab pins to (installable via
 
 Run the real scanner for CMake/Make profiles → consider replacing shadow
 orchestration with a direct `check-target`/`check-project` invocation →
-cross-build-system equivalence checking → promote proven profiles to
-required contracts → accepted-main/release-contract baselines → scanner
-release-candidate dispatch → expand toolchain/platform coverage as real
-integration needs demonstrate them. Full detail, still with no dates or
-completion claims: [docs/roadmap.md](docs/roadmap.md).
+broaden cross-build-system equivalence checking (advisory version already
+exists, promote to required once build definitions are aligned and
+stable) and scenario-oracle build-system parity → promote proven profiles
+to required contracts (accepted-main/release-contract baselines already
+exist for the one profile that has one today) → scanner release-candidate
+dispatch → expand toolchain/platform coverage as real integration needs
+demonstrate them. Full detail, still with no dates or completion claims:
+[docs/roadmap.md](docs/roadmap.md).

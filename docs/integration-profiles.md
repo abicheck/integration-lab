@@ -139,6 +139,60 @@ branch-protection gate**. It is not in the required-status-checks list, and
 a CMake or Make build failure (or a red `check_profile.py` result) cannot
 block a merge today. Only `abi-scan.yml`'s Bazel `scan` job can.
 
+## Cross-build-system equivalence
+
+Every per-profile check above (`ci/check_profile.py`) answers "does this
+profile's own build still match its own baseline" — it says nothing about
+whether Bazel's, CMake's, and Make's own builds of the *identical* source
+agree with *each other*. `ci/compare_build_outputs.py` answers that
+question directly: for every pair of staged profiles built from the same
+commit, it compares the built library's exported dynamic symbol set,
+SONAME, `NEEDED` dynamic dependencies (`nm -D`/`readelf`), and the staged
+public-header inventory and content digest — reusing `ci/check_profile.py`'s
+own extraction functions rather than duplicating them.
+
+Every difference is classified into one of five categories, so a real
+divergence never gets lost among expected build-system bookkeeping:
+
+| Category | Meaning |
+|---|---|
+| `public_contract_mismatch` | A real ABI-relevant difference — the finding this check exists to catch. |
+| `toolchain_configuration_mismatch` | Same pinned toolchain intent, different link/compiler behavior (e.g. differing `NEEDED` entries from linker defaults). |
+| `expected_build_system_metadata_difference` | Target ids, generator, build command, root paths — always differ, never a finding on their own. |
+| `evidence_only_difference` | Evidence-producer path/location differences (`compile_commands.json` location, a bazel-query dir, ...). |
+| `unclassified_difference` | Anything this script can't place elsewhere — currently only a staged public-header content mismatch, which should be structurally impossible (both sides copy the exact same repo file) and likely indicates a staging bug. |
+
+Only each pair's *shared* `coverage.checked_targets` (from `ci/profiles.yaml`)
+is compared — not every target either side's `build-output.json` happens to
+mark `shared_library`. This matters concretely: the Bazel profile also
+builds `//:math_shared`, a real `cc_shared_library` alongside `//:math`'s
+`cc_binary(linkshared = True)` demo shape — a deliberately Bazel-only
+capability (see "Bazel-only diagnostics may remain Bazel-specific" in the
+design's own guidance) that must never be reported as "one profile built a
+target the other didn't."
+
+When the real `abicheck` CLI happens to be on `PATH` in the run
+(`.github/workflows/integration-shadow.yml`'s `cross_build_equivalence` job
+installs it best-effort), this script also runs one real `abicheck compare`
+directly between each pair's own built library, as a deeper signal beyond
+the symbol-table diff — it can notice a struct-layout or default-argument
+difference the ELF-level diff structurally cannot. It records `not_run`,
+never a silent "equivalent", when the CLI isn't reachable.
+
+**A real finding, left as a finding, not "fixed" here:** run against this
+repo's own three profiles, this check found that Bazel's `//:math` sets no
+SONAME at all, CMake's build sets `libmath.so.1`, and Make's build sets
+`libmath.so` — three different answers for the identical source. That's
+exactly the class of divergence this check exists to surface; aligning it
+is a build-definition decision for a future change, not something this
+comparison tooling should paper over.
+
+`cross_build_equivalence` runs this after every profile's build, uploads
+`cross-build-equivalence.{json,md}`, and `integration_gate` notes its
+result in the job summary — advisory only, same as everything else in this
+document, until the build definitions are intentionally aligned and
+stable (see [roadmap.md](roadmap.md)).
+
 ## Planned migration to the real ABICheck Action
 
 `ci/check_profile.py`'s ELF/header signal exists only because the real

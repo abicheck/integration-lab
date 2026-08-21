@@ -3,6 +3,7 @@ bazel-*
 __pycache__/
 *.pyc
 scenario-results/
+scenario-results-cmake/
 tools/abicheck/libabicheck-facts.so
 
 # PR1 (multi-build-system integration): local build trees and staged
@@ -11,3 +12,10 @@ tools/abicheck/libabicheck-facts.so
 buildsystems/cmake/build/
 buildsystems/make/build/
 /abicheck-build-*/
+
+# PR3 (cross-build-system equivalence + cmake scenario runs): local
+# ci/compare_build_outputs.py output and scripts/run_scenario.py
+# --build-system cmake's own per-fixture cmake scratch build dirs, none
+# of which is checked in -- see those scripts' own module docstrings.
+/cross-build-equivalence.json
+/cross-build-equivalence.md

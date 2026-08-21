@@ -129,12 +129,24 @@ def main(argv=None) -> int:
         dest="profile_filter",
         help="restrict output to this profile id (repeatable)",
     )
+    # PR4 item 2 (release.yml's own use): a release-contract baseline is
+    # only ever published for a profile whose result is actually trusted
+    # (ci/profiles.yaml's `contract: true`) -- release.yml needs exactly
+    # that subset of whatever an event's own policy resolves, not every
+    # advisory profile events.release's own `advisory: [core, advisory]`
+    # entry (pre-existing since PR1, never consumed by a workflow before
+    # this) would otherwise hand it.
+    parser.add_argument(
+        "--contract-only",
+        action="store_true",
+        help="restrict output to profiles ci/profiles.yaml marks contract: true",
+    )
     args = parser.parse_args(argv)
 
     try:
+        known = load_profiles(args.profiles_file)
         result = select(args.event, args.profiles_file, args.policy_file)
         if args.profile_filter:
-            known = load_profiles(args.profiles_file)
             for pid in args.profile_filter:
                 if pid not in known:
                     raise SelectionError(f"unknown profile id: {pid!r}")
@@ -142,6 +154,11 @@ def main(argv=None) -> int:
             result["required"] = [p for p in result["required"] if p in wanted]
             result["advisory"] = [p for p in result["advisory"] if p in wanted]
             result["profiles"] = [p for p in result["profiles"] if p in wanted]
+        if args.contract_only:
+            contract_ids = {pid for pid, entry in known.items() if entry.get("contract") is True}
+            result["required"] = [p for p in result["required"] if p in contract_ids]
+            result["advisory"] = [p for p in result["advisory"] if p in contract_ids]
+            result["profiles"] = [p for p in result["profiles"] if p in contract_ids]
     except SelectionError as exc:
         print(f"select_profiles: {exc}", file=sys.stderr)
         return 1

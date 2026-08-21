@@ -921,3 +921,164 @@ is for Bazel. `ci/check_profile.py`'s own `dump`/`check` CLI shape (and
 plumbing around it) should stay useful as the integration seam either way --
 only the comparison mechanism inside `check_profile.py` needs replacing,
 not the profile/receipt/gate architecture built around it.
+
+---
+
+# 2026-08-21 follow-up: no cross-build-system public-contract equivalence primitive upstream
+
+**Context:** PR3 of the multi-build-system integration effort adds
+`ci/compare_build_outputs.py` -- a pairwise (Bazel↔CMake, Bazel↔Make,
+CMake↔Make) comparison of two profiles' own staged build output for the
+same commit, answering a question neither PR2's per-profile baseline check
+nor abicheck itself can: does Bazel's build of a library mean the same
+public ABI as CMake's or Make's build of the identical source. Still
+entirely non-gating (`cross_build_equivalence` in
+`.github/workflows/integration-shadow.yml`; `abi-scan.yml`'s own required
+gate is untouched).
+
+**Gap:** abicheck has no built-in notion of "compare two build systems'
+own outputs of the same commit" at all -- `abicheck compare` (and every
+other command) takes two *candidate* artifacts (old/new, a version bump,
+a release), never two *build systems'* independent productions of the
+*same* version. This is design doc section 29's own expected gap #8
+("Cross build public-contract equivalence reporting"), now confirmed with
+a real implementation and a real finding, not just anticipated: run for
+real against this repo's own three profiles (gcc-14, Bazel 7.4.1,
+CMake+Ninja, Make+Bear -- all locally provisioned this session, unlike the
+PR2 entry above, this session's own sandbox DID have outbound network
+access, confirmed by successfully installing the real `abicheck` package
+from its git+https source), the comparison surfaced a genuine
+`public_contract_mismatch`: Bazel's `//:math` (the `cc_binary(linkshared
+= True)` demo target shape) sets **no SONAME**, CMake's build sets
+`libmath.so.1`, and Make's build sets `libmath.so` -- three real, different
+answers for the identical source, exactly the class of finding this
+comparison exists to catch, and exactly the class of finding no existing
+abicheck command could have surfaced (each side's own `abicheck dump`/
+`compare` against its own baseline reports `NO_CHANGE`; SONAME is only
+visible by directly comparing the two sides' own artifacts against each
+other, which nothing in abicheck's own command surface does).
+
+**Lab-side workaround, current state:** `ci/compare_build_outputs.py` is
+entirely bespoke lab tooling -- it reuses `ci/check_profile.py`'s own
+`nm -D`/`readelf` extraction functions (dynamic symbol table, SONAME,
+public-header digest) directly rather than through any abicheck API, adds
+its own `NEEDED`-dependency extraction, and layers a five-way
+classification taxonomy (`public_contract_mismatch`/
+`toolchain_configuration_mismatch`/`expected_build_system_metadata_
+difference`/`evidence_only_difference`/`unclassified_difference`) on top
+so a real ABI divergence doesn't get lost among build-system bookkeeping
+that's expected to differ (target ids, generator, evidence-producer
+paths). When the real `abicheck` CLI is reachable, it also opportunistically
+runs one real `abicheck compare` directly between the two profiles' own
+built libraries (old="profile A", new="profile B") as a deeper,
+best-effort signal beyond the symbol-table diff -- but this is a
+one-off subprocess call this script owns and interprets itself, not a
+first-class abicheck comparison mode.
+
+**What upstream should provide instead:** a first-class `abicheck
+compare-builds` (or an existing-command mode) that takes N build-output
+directories (or N pairs of `--binary`/`--header` inputs) already known to
+represent the SAME logical version/commit and reports build-system-to-
+build-system equivalence directly, with its own classification of
+"expected build metadata difference" versus "real public-contract
+divergence" -- built on the same DWARF/header-AST evidence `compare`
+already collects, rather than a lab-side nm/readelf reimplementation that
+can only ever see what's visible at the ELF symbol-table level (this
+lab's own `abicheck_cross_check` best-effort step is exactly the stopgap
+such a command would replace). Once available, `ci/compare_build_outputs.py`
+should become a thin driver over that command (resolving which staged
+profiles to compare, classifying/rendering the result for this repo's own
+`cross_build_equivalence` job), not a parallel comparison engine.
+
+---
+
+# 2026-08-21 P0: `abicheck scan --against` reports NOT_COMPARABLE against every `abicheck dump` baseline, deterministically, for reasons unrelated to the library
+
+**Severity: P0.** This is not a lab-only workaround entry -- it is the
+required, load-bearing `abi-scan.yml` `scan` job itself, failing on every
+single PR against `main`, confirmed on four independent CI runs (including
+a bare re-run with zero code changes) and reproduced cleanly, offline, in
+this session's own sandbox, isolated all the way down to a single root
+cause inside `abicheck` itself.
+
+**Symptom (real CI, `abicheck/integration-lab` PR #23, and every PR before
+it since the `6fb8536` pin landed):**
+
+```
+abicheck verdict: NOT_COMPARABLE (exit code 6)
+scan --against reported NOT_COMPARABLE: the candidate and baseline were not
+extracted under a comparable profile/scope contract.
+diff.reason: "old and new snapshots were extracted under different compile
+contexts (profile_fingerprint mismatch; differing fields: include_sequence)"
+```
+
+**Root cause, isolated by direct reproduction (not inference):**
+
+1. `baseline.yml`'s "Collect source-aware ABI baseline" step calls
+   `abicheck/abicheck@6fb8536` with `mode: dump`. `abi-scan.yml`'s "ABICheck
+   source scan" step calls the *same pinned Action commit* with `mode: scan`
+   (`--against <the dump baseline>`).
+2. Verified `scripts/build_bazel_evidence_pack.py`'s own output (the
+   `--build-info` evidence pack both modes consume) is **byte-identical**
+   across two entirely separate `bazel build //:math` + `cquery`/`aquery`
+   invocations from the identical commit (`sha256sum` match on both
+   `manifest.json` and `build/build_evidence.json`) -- ruling out Bazel/this
+   repo's own evidence extraction as the source of non-determinism.
+3. Verified two separate `abicheck dump` invocations against two separately
+   *built* (but content-identical) evidence packs produce structurally
+   identical `contract.profile_fingerprint`/`include_sequence` values
+   (only wall-clock timing fields differ) -- ruling out `dump` mode itself,
+   and ruling out pack-to-pack determinism, as the source.
+4. **The isolating test:** ran `abicheck scan --against <a dump.json>`
+   using the *exact same evidence pack* that `dump.json` was itself
+   produced from (same binary, same headers, same sources, same toolchain,
+   same pack -- nothing held constant except the mode). Result:
+   `NOT_COMPARABLE`, `differing fields: include_sequence`, every time.
+
+**Conclusion:** `abicheck scan`'s own internal computation of the
+`include_sequence` profile-fingerprint field for its candidate ("new")
+side does not agree with `abicheck dump`'s computation of the identical
+field, for byte-identical underlying evidence. Since `comparability.py`'s
+profile-fingerprint gate (correctly, by design) refuses to compare two
+snapshots whose extraction context doesn't match, and a `dump`-produced
+baseline compared via `scan --against` can apparently *never* match on
+this specific field, this makes `scan --against <a dump-mode baseline>`
+structurally unable to succeed -- not a flake, not environment drift, not
+anything about the library's own source or ABI.
+
+**What this means for every repo using this exact pattern** (dump-mode
+baselines + scan-mode PR gate, both via `abicheck/abicheck@6fb8536` or
+any release sharing this bug): the required gate cannot produce a real
+`COMPATIBLE`/`BREAKING`/`NO_CHANGE` verdict at all right now -- every PR
+either hits `NOT_COMPARABLE` (if `fail-on-breaking`-style gating treats it
+as a failure, as `abi-scan.yml`'s own "Enforce gate" step does) or would
+need to treat `NOT_COMPARABLE` as non-blocking (silently defeating the
+gate's whole purpose).
+
+**What this lab cannot do:** patch `abicheck` itself -- this bug is inside
+the pinned Action commit's own `comparability_fields.py`/`comparability.py`
+(the `include_sequence` computation path taken by `mode: scan`'s own
+candidate-snapshot construction), not in anything this lab repo owns.
+Refreshing `abi/math.abicheck.json` (confirmed: triggered a manual
+`baseline.yml` re-run, produced byte-identical content, landed no new
+commit) does not and cannot fix this -- the mismatch is structural between
+the two *modes*, not about baseline staleness.
+
+**What should happen upstream:** `abicheck scan`'s own new-side extraction
+path should compute `include_sequence` (and the rest of
+`profile_fields`) through the *same* code path `abicheck dump` uses for
+identical inputs -- or, if the two paths are intentionally different
+implementations, the profile-fingerprint comparability gate needs a
+`scan`-vs-`dump`-mode-aware normalization/waiver so a `dump`-produced
+baseline remains usable as a `scan --against` target at all. Right now
+neither holds, and the gate cannot pass.
+
+**What this repo should consider in the meantime** (not implemented by
+this entry -- a decision for whoever owns `abi-scan.yml`/`baseline.yml`,
+since it changes the required gate's own trusted mechanism): either (a)
+generate the committed baseline via `mode: scan` against a null/self
+comparison instead of `mode: dump`, if the CLI supports producing a
+scan-compatible snapshot that way, or (b) pin to an `abicheck` commit
+predating whatever change introduced this `scan`-vs-`dump` fingerprint
+divergence, until it's fixed upstream, or (c) report this exact
+reproduction to `abicheck/abicheck` and pin to the fix once released.

@@ -1,0 +1,227 @@
+name: Multi-build-system profile baseline refresh
+
+# PR4 item 1 (design doc section 22 Phase C: "accepted-main baseline
+# channel"). abi/profiles/<profile-id>/{math,strings}.abicheck.json (the
+# ci/check_profile.py-format baselines every profile's own advisory ABI
+# signal in integration-shadow.yml compares against) were, until this
+# workflow, seeded once and never refreshed -- unlike abi/math.abicheck.json/
+# abi/strings.abicheck.json/abi/math_shared.abicheck.json, which
+# baseline.yml already keeps continuously current for the required Bazel
+# gate. This workflow gives the three profiles' own baselines the exact
+# same "accepted main" property: every successful push to main that
+# changes the library re-dumps each profile's own baseline and commits it
+# if it actually changed.
+#
+# The exact-base-SHA property this exists to preserve is unaffected by
+# HOW the baseline is kept current -- it comes entirely from
+# .github/actions/resolve-baseline's own `git show <base-sha>:<path>`
+# (already used by integration-shadow.yml's per-profile ABI check on
+# pull_request events), which reads whatever this workflow committed at
+# any given historical commit, not the working tree. A PR's own base SHA
+# always resolves to the baseline as it stood at that exact commit,
+# whether this workflow refreshed it once, many times, or (during
+# migration) not yet at all.
+#
+# Mirrors baseline.yml's own trust model deliberately: a direct,
+# unreviewed push to main, built from main's own already-merged source
+# (never a PR branch) -- see .github/CODEOWNERS for why that's the
+# accepted trade-off (an owner-reviewed abi/profiles/** entry can only
+# change through this bot-authored path or an explicit human PR), and
+# that same file's own operational-prerequisite note about branch
+# protection bypass, which applies here identically.
+#
+# Advisory, like every other job that touches these three profiles: this
+# workflow can and does fail for real (a profile's own build breaking), but
+# nothing here gates a PR, and a failed refresh just leaves that one
+# profile's baseline stale until the next successful push -- never a
+# partial/corrupt write (see ci/apply_profile_baselines.py's own
+# module docstring for the fail-closed-per-target contract that
+# guarantees this).
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'abi/profiles/**'
+      - 'README.md'
+      - 'docs/**'
+  workflow_dispatch: {}
+
+# Explicit, minimal top-level default -- read-only. Only the `commit` job
+# below overrides this to `contents: write`, and only for the one step
+# that actually needs to push (design doc section 25 item 2's "minimum
+# needed", applied the same way integration-shadow.yml's own top-level
+# `permissions: contents: read` already is).
+permissions:
+  contents: read
+
+concurrency:
+  group: abicheck-profile-baseline-main
+  cancel-in-progress: false
+
+jobs:
+  # One matrix leg per profile, read-only, artifact-only -- per the design
+  # doc's own Phase B guidance ("generate raw snapshots in parallel
+  # profile jobs, but normalize and commit them only from one fan-in
+  # baseline job. Do not let matrix jobs independently push"), and
+  # design-doc section 25 item 15 ("do not grant baseline write
+  # permissions to advisory/manual profile runs") -- only the `commit`
+  # job below ever gets `contents: write`.
+  refresh:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+    # A single profile's own build breaking (a real, useful signal on its
+    # own -- it shows red in this job's own timeline) must never block
+    # every other profile's baseline from refreshing, and must never fail
+    # this whole workflow -- matching integration-shadow.yml's `build`
+    # job's identical `continue-on-error: true` for the same reason.
+    continue-on-error: true
+    name: refresh (${{ matrix.profile }})
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      - name: Install gcc-14/g++-14, bear, and patchelf
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 bear patchelf
+
+      - name: Set up Ninja
+        if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
+        run: sudo apt-get install -y ninja-build
+
+      - name: Build and stage this profile
+        id: run_profile
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -o pipefail
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" | tee run-profile-summary.json
+
+      # Dumped straight from main's own just-built source (no baseline
+      # resolution needed here at all -- unlike a PR's own check, this
+      # step IS what defines the new trusted baseline, not something
+      # compared against one).
+      - name: Dump math baseline
+        if: steps.run_profile.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/check_profile.py dump \
+            --profile-id "$PROFILE_ID" --target math \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --out "$RUNNER_TEMP/math.raw.abicheck.json"
+
+      - name: Dump strings baseline
+        if: steps.run_profile.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/check_profile.py dump \
+            --profile-id "$PROFILE_ID" --target strings \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --out "$RUNNER_TEMP/strings.raw.abicheck.json"
+
+      # Uploaded even when a dump step above failed/was skipped -- an
+      # absent file in this artifact is exactly what
+      # ci/apply_profile_baselines.py's own `missing` status (fan-in job
+      # below) is built to recognize and leave untouched, not something
+      # that needs to be hidden from it.
+      - name: Upload raw baseline dumps
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: raw-profile-baseline-${{ matrix.profile }}
+          path: |
+            ${{ runner.temp }}/math.raw.abicheck.json
+            ${{ runner.temp }}/strings.raw.abicheck.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The only job in this workflow with contents: write -- see this file's
+  # own header comment and ci/apply_profile_baselines.py's module
+  # docstring for why the actual commit happens only here, once, over
+  # every profile's downloaded artifact, never from a matrix leg.
+  commit:
+    needs: refresh
+    if: always()
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: true
+
+      - name: Download every profile's raw baseline dumps
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: raw-profile-baseline-*
+          path: ${{ runner.temp }}/raw-baselines
+          merge-multiple: false
+
+      # ci/apply_profile_baselines.py's own exit code distinguishes "ran
+      # fine" (0) from "ran fine, but at least one target was invalid/
+      # missing and was left untouched, not corrupted" (2) -- checked
+      # directly per profile below, no nested scripting needed. `set -e`
+      # is deliberately NOT active for the loop body: exit 2 must not
+      # abort this step (it isn't a real failure, see this workflow's own
+      # header comment), only every OTHER exit code should.
+      - name: Apply valid baselines and record what changed
+        id: apply
+        shell: bash
+        run: |
+          set -uo pipefail
+          any_invalid=0
+          for profile in \
+            linux-x86_64-gcc14-cxx17-bazel \
+            linux-x86_64-gcc14-cxx17-cmake-ninja \
+            linux-x86_64-gcc14-cxx17-make-bear; do
+            dir="$RUNNER_TEMP/raw-baselines/raw-profile-baseline-$profile"
+            python3 ci/apply_profile_baselines.py \
+              --profile-id "$profile" \
+              --raw "math=$dir/math.raw.abicheck.json" \
+              --raw "strings=$dir/strings.raw.abicheck.json" \
+              --committed-dir "abi/profiles/$profile" \
+              -o "$RUNNER_TEMP/apply-$profile.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            status="${PIPESTATUS[0]}"
+            if [ "$status" -eq 2 ]; then
+              any_invalid=1
+            elif [ "$status" -ne 0 ]; then
+              echo "::error::ci/apply_profile_baselines.py failed for profile '$profile' with exit $status" >&2
+              exit "$status"
+            fi
+          done
+          if [ "$any_invalid" -eq 1 ]; then
+            echo "::warning::at least one profile/target's baseline dump was missing or invalid this run -- its committed baseline was left untouched, not corrupted; see the per-target statuses above"
+          fi
+
+      - name: Commit refreshed profile baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A abi/profiles/
+          if git diff --cached --quiet -- abi/profiles/; then
+            echo 'Profile baselines unchanged (no semantic diff after re-dump).'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: refresh multi-build-system profile baselines'
+          git push
