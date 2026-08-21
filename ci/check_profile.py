@@ -124,6 +124,22 @@ MECHANISM_NOTE = (
     "and UPSTREAM_TO_ABICHECK.md's PR2 entry)"
 )
 
+# The mechanism string _apply_real_scan_verdict() records for cmake/make
+# backends -- module-level so every one of its return paths (the two
+# fail-closed branches included) can record the same accurate mechanism,
+# not just the successful-compare path. A report's own "mechanism" field
+# is read downstream (ci/emit_profile_receipt.py's scanner.mechanism); a
+# cmake/make report that fails closed to NOT_COMPARABLE should still say
+# the real scanner was the mechanism that was SUPPOSED to run, not
+# silently leave the initial nm/readelf MECHANISM_NOTE in place as if
+# that lighter mechanism had produced the result (Codex review, PR #25:
+# "Record the real-scanner mechanism on failed comparisons").
+REAL_SCAN_MECHANISM_NOTE = (
+    "real abicheck dump/compare (--depth source, compile_commands.json "
+    "--build-info, filtered to this target's own translation unit -- see "
+    "ci/real_scan.py)"
+)
+
 # ELF/linker-internal dynamic symbols that show up in every shared object's
 # .dynsym regardless of what the library's own source exports -- never part
 # of a library's own public ABI. The first three are exactly the ones the
@@ -828,7 +844,7 @@ def _apply_real_scan_verdict(
             ),
             loader_breaking, loader_detail,
         )
-        facts.update(verdict=verdict, detail=detail)
+        facts.update(verdict=verdict, detail=detail, mechanism=REAL_SCAN_MECHANISM_NOTE)
         return
 
     try:
@@ -846,7 +862,7 @@ def _apply_real_scan_verdict(
             f"real abicheck compare failed for {profile_id}/{target}: {exc}",
             loader_breaking, loader_detail,
         )
-        facts.update(verdict=verdict, detail=detail)
+        facts.update(verdict=verdict, detail=detail, mechanism=REAL_SCAN_MECHANISM_NOTE)
         return
 
     mapped = real_scan.map_verdict(real_report.get("verdict"))
@@ -861,11 +877,7 @@ def _apply_real_scan_verdict(
     facts.update(
         verdict=verdict,
         detail=detail,
-        mechanism=(
-            "real abicheck dump/compare (--depth source, compile_commands.json "
-            "--build-info, filtered to this target's own translation unit -- see "
-            "ci/real_scan.py)"
-        ),
+        mechanism=REAL_SCAN_MECHANISM_NOTE,
         abicheck_report=real_report,
     )
 

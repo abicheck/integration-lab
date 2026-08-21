@@ -136,16 +136,28 @@ jobs:
       # silently break release certification for it (see
       # profile-baseline.yml's identical step and its own Codex-review
       # comment for the failure mode this prevents).
-      - name: Install real abicheck scanner + pinned CastXML (cmake/make only)
-        if: >-
-          matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja' ||
-          matrix.profile == 'linux-x86_64-gcc14-cxx17-make-bear'
+      # Looked up from ci/profiles.yaml's own `backend` field at runtime,
+      # not matched against this matrix leg's exact profile id -- see
+      # integration-shadow.yml's identical step and its own comment
+      # (Codex review, PR #25) for why: a hardcoded profile-id predicate
+      # silently skips this install the moment a third cmake/make profile
+      # is added to ci/profiles.yaml, even though the generic matrix
+      # above would select and build it.
+      - name: Install real abicheck scanner + pinned CastXML (cmake/make backends only)
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
         run: |
-          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            --output "$RUNNER_TEMP/install-castxml.sh" \
-            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
-          bash "$RUNNER_TEMP/install-castxml.sh"
+          set -euo pipefail
+          backend="$(python3 ci/print_profile_backend.py --profile-id "$PROFILE_ID")"
+          if [ "$backend" = "cmake" ] || [ "$backend" = "make" ]; then
+            pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+            curl --proto '=https' --tlsv1.2 -fsSL \
+              --output "$RUNNER_TEMP/install-castxml.sh" \
+              "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+            bash "$RUNNER_TEMP/install-castxml.sh"
+          else
+            echo "profile '$PROFILE_ID' is backend '$backend' -- real scanner not needed"
+          fi
 
       - name: Build this profile from the release commit
         id: run_profile

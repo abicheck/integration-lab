@@ -135,16 +135,34 @@ jobs:
       # SHA and installer abi-scan.yml/scenarios.yml already use, so a pin
       # bump is one deliberate, reviewed change across every workflow, not
       # three independent ones.
-      - name: Install real abicheck scanner + pinned CastXML (cmake/make only)
-        if: >-
-          matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja' ||
-          matrix.profile == 'linux-x86_64-gcc14-cxx17-make-bear'
+      #
+      # Looked up from ci/profiles.yaml's own `backend` field at runtime,
+      # not matched against this matrix leg's exact profile id: an
+      # earlier revision hardcoded the two current cmake/make profile ids
+      # here, which silently skipped this install (and therefore made
+      # ci/real_scan.py fail closed to NOT_COMPARABLE for every target)
+      # the moment a THIRD cmake or make profile was added to
+      # ci/profiles.yaml/ci/event-policy.yaml -- the generic profile
+      # matrix would select and build it, but nothing would tell this
+      # step to also install its scanner (Codex review, PR #25). Backend
+      # is the actual thing that decides whether real_scan.py's real-
+      # scanner path runs at all (ci/check_profile.py's own
+      # REAL_SCAN_BACKENDS check), so that's what this step now checks.
+      - name: Install real abicheck scanner + pinned CastXML (cmake/make backends only)
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
         run: |
-          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            --output "$RUNNER_TEMP/install-castxml.sh" \
-            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
-          bash "$RUNNER_TEMP/install-castxml.sh"
+          set -euo pipefail
+          backend="$(python3 ci/print_profile_backend.py --profile-id "$PROFILE_ID")"
+          if [ "$backend" = "cmake" ] || [ "$backend" = "make" ]; then
+            pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+            curl --proto '=https' --tlsv1.2 -fsSL \
+              --output "$RUNNER_TEMP/install-castxml.sh" \
+              "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+            bash "$RUNNER_TEMP/install-castxml.sh"
+          else
+            echo "profile '$PROFILE_ID' is backend '$backend' -- real scanner not needed"
+          fi
 
       - name: Run profile (build + stage + validate)
         id: run_profile
