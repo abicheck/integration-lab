@@ -1,0 +1,221 @@
+name: Release-contract baseline publication
+
+# PR4 item 2 (design doc section 22 Phase D: "release-contract baseline
+# channel" -- an IMMUTABLE per-profile baseline published as a GitHub
+# Release asset, distinct from profile-baseline.yml's own mutable
+# "accepted-main" channel). Every profile's own committed baseline
+# (abi/profiles/<id>/{math,strings}.abicheck.json) is already retrievable
+# at any historical commit via plain git history (the same mechanism
+# .github/actions/resolve-baseline already uses for PRs) -- what a GitHub
+# Release asset adds is a convenient, discoverable, versioned artifact for
+# a consumer who doesn't want to clone this whole lab repo and dig through
+# git history just to get one profile's baseline pair for a specific
+# release.
+#
+# Runs only on `release: published` -- never on a tag push, matching the
+# design doc's own "tags do not select build systems" / "use Releases for
+# immutable identity" guidance (section 3.5/23.2). Publishes an asset only
+# for a `contract: true` profile (today: exactly
+# linux-x86_64-gcc14-cxx17-bazel -- see ci/profiles.yaml) -- an advisory
+# profile's own baseline is not yet trusted enough to represent as part of
+# a release's contract; extending which profiles get one is a promotion
+# decision (docs/roadmap.md), not something this workflow decides on its
+# own.
+#
+# Every profile is CERTIFIED before anything is published: this exact
+# release commit is rebuilt from scratch and re-dumped, and the result
+# must byte-for-byte match what's already committed at this commit
+# (`ci/apply_profile_baselines.py --verify-only`) -- if it doesn't, this
+# release's own baseline never gets published at all (the job fails), it
+# is never silently republished from a stale/edited value. See that
+# script's own module docstring for the verify/drift contract this relies
+# on.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: abicheck-release-baseline-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Resolves which profile(s) this release actually certifies -- see
+  # ci/select_profiles.py's own `--contract-only` flag (added for this
+  # workflow's exclusive use): events.release's pre-existing
+  # `advisory: [core, advisory]` entry (declared since the profile-manifest
+  # was first added, never consumed by any workflow before this one) hands
+  # back all three profiles; `--contract-only` narrows that to just the
+  # one(s) actually trusted as a release contract today.
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml
+
+      - name: Resolve contract profiles for this release
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/select_profiles.py --event release --contract-only > selection.json
+          cat selection.json
+          matrix_json="$(python3 -c "import json; d=json.load(open('selection.json')); print(json.dumps({'profile': d['profiles']}))")"
+          profile_count="$(python3 -c "import json; print(len(json.load(open('selection.json'))['profiles']))")"
+          if [ "$profile_count" -eq 0 ]; then
+            echo "::error::no contract:true profiles declared in ci/profiles.yaml -- nothing for this release to certify" >&2
+            exit 1
+          fi
+          echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
+
+  certify_and_publish:
+    needs: plan
+    runs-on: ubuntu-24.04
+    permissions:
+      # Only this job, and only for the asset-upload step specifically,
+      # needs write access -- matching profile-baseline.yml's own
+      # minimum-permission split (design doc section 25 item 2).
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      # gh CLI's own token env var -- required for every `gh release ...`
+      # call below; github.token is this job's own scoped GITHUB_TOKEN,
+      # never a broader PAT.
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      # No explicit `ref:` -- a `release: published` event's default
+      # GITHUB_SHA/checkout already resolves to the release's own target
+      # commit, the same commit `git tag <tag>` points at. Pinning that
+      # explicitly here would be redundant, not more correct.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      - name: Install gcc-14/g++-14, bear, and patchelf
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 bear patchelf
+
+      - name: Set up Ninja
+        if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
+        run: sudo apt-get install -y ninja-build
+
+      - name: Build this profile from the release commit
+        id: run_profile
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -o pipefail
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" | tee run-profile-summary.json
+
+      - name: Dump math baseline
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/check_profile.py dump \
+            --profile-id "$PROFILE_ID" --target math \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --out "$RUNNER_TEMP/math.raw.abicheck.json"
+
+      - name: Dump strings baseline
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/check_profile.py dump \
+            --profile-id "$PROFILE_ID" --target strings \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --out "$RUNNER_TEMP/strings.raw.abicheck.json"
+
+      # The real certification gate: this exact release commit's own
+      # fresh build must reproduce its own already-committed baseline
+      # byte-for-byte. No continue-on-error -- a mismatch here means this
+      # release should NOT get a published baseline at all, and this job
+      # failing is the visible signal for that (design doc's own "fail
+      # closed" principle, applied to a release, not just a PR).
+      - name: Verify this release commit reproduces its own committed baseline
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/apply_profile_baselines.py \
+            --profile-id "$PROFILE_ID" \
+            --raw "math=$RUNNER_TEMP/math.raw.abicheck.json" \
+            --raw "strings=$RUNNER_TEMP/strings.raw.abicheck.json" \
+            --committed-dir "abi/profiles/$PROFILE_ID" \
+            --verify-only \
+            -o "$RUNNER_TEMP/verify-result.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # generation: this workflow run's own attempt number for this
+      # release tag -- a plain, honest, monotonic integer scoped to "how
+      # many times has publication for this exact tag been attempted",
+      # not a claim about how many times the underlying baseline content
+      # itself has changed (the asset-collision check below is what
+      # actually decides whether re-publishing was even necessary).
+      - name: Emit release baseline manifest
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          python3 ci/emit_release_manifest.py \
+            --release-tag "$RELEASE_TAG" \
+            --source-sha "${{ github.sha }}" \
+            --generation "${{ github.run_attempt }}" \
+            --profile-id "$PROFILE_ID" \
+            --baseline "math=abi/profiles/$PROFILE_ID/math.abicheck.json" \
+            --baseline "strings=abi/profiles/$PROFILE_ID/strings.abicheck.json" \
+            -o "$RUNNER_TEMP/manifest.json"
+
+      # Idempotent, collision-safe publish: stage every asset under its
+      # final, exact release-asset filename first (gh release upload
+      # always names an asset after the local file's own basename), then
+      # for each one -- if an asset by that name already exists on this
+      # release, compare content by digest before deciding whether to
+      # skip (identical content: a safe retry, per design doc section
+      # 9.3 item 6) or fail closed (different content: never silently
+      # overwritten, per that same section's item 5).
+      - name: Publish release baseline assets (idempotent)
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          stage_dir="$RUNNER_TEMP/release-assets"
+          mkdir -p "$stage_dir"
+          cp "abi/profiles/$PROFILE_ID/math.abicheck.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-math.abicheck.json"
+          cp "abi/profiles/$PROFILE_ID/strings.abicheck.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-strings.abicheck.json"
+          cp "$RUNNER_TEMP/manifest.json" "$stage_dir/abicheck-baseline-$PROFILE_ID-manifest.json"
+
+          existing_names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+
+          for asset_path in "$stage_dir"/*; do
+            asset_name="$(basename "$asset_path")"
+            if echo "$existing_names" | grep -qx "$asset_name"; then
+              existing_digest="$(gh release download "$RELEASE_TAG" -p "$asset_name" -O - | sha256sum | cut -d' ' -f1)"
+              new_digest="$(sha256sum "$asset_path" | cut -d' ' -f1)"
+              if [ "$existing_digest" = "$new_digest" ]; then
+                echo "$asset_name: already published with identical content -- safe retry, skipping upload"
+                continue
+              fi
+              echo "::error::$asset_name already exists on release $RELEASE_TAG with DIFFERENT content (existing sha256=$existing_digest, new sha256=$new_digest) -- refusing to overwrite a published release asset" >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "$asset_path"
+            echo "$asset_name: published"
+          done

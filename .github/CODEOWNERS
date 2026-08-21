@@ -107,4 +107,18 @@ scripts/capability_receipts.py @napetrov
 scripts/emit_capability_receipt.py @napetrov
 scripts/emit_scenario_receipts.py @napetrov
 scripts/validate_capability_receipts.py @napetrov
+
+# PR4 (baseline lifecycle): profile-baseline.yml and release.yml are the
+# first two workflows in the multi-build-system integration lab with
+# `contents: write` -- one commits directly to main (abi/profiles/**,
+# already protected above via `abi/** @napetrov`), the other publishes
+# immutable GitHub Release assets. Same trust boundary abi-scan.yml/
+# baseline.yml already established: an unreviewed PR must not be able to
+# alter what either workflow commits/publishes, or weaken the
+# certification check release.yml gates on before publishing anything.
+.github/workflows/profile-baseline.yml @napetrov
+.github/workflows/release.yml @napetrov
+ci/apply_profile_baselines.py @napetrov
+ci/emit_release_manifest.py @napetrov
+ci/select_profiles.py @napetrov
 .github/CODEOWNERS @napetrov

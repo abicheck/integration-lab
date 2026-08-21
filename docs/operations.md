@@ -13,6 +13,49 @@ the normalized content changed. This is deliberate and unreviewed by
 design — it's built from `main`'s own already-merged source, not from a PR
 branch — but see the branch-protection implication immediately below.
 
+## Multi-build-system profile baseline lifecycle
+
+Two more baseline channels exist alongside `baseline.yml`'s own (the
+canonical `abi/math.abicheck.json`/`abi/strings.abicheck.json`/
+`abi/math_shared.abicheck.json`, unchanged by either):
+
+- **Accepted-main channel (`profile-baseline.yml`).** Runs on pushes to
+  `main`: one matrix leg per profile (`refresh`, read-only, `continue-on-
+  error: true`) builds and `ci/check_profile.py dump`s that profile's
+  own `math`/`strings` baseline into an artifact; a single fan-in
+  `commit` job (the only job in this workflow with `contents: write`)
+  downloads every profile's artifact and runs `ci/apply_profile_baselines.py`
+  once, which validates each raw dump (well-formed, correct `kind`/
+  `profile_id`/`target`, non-empty `dynamic_symbols`/`public_headers`)
+  and only writes `abi/profiles/<id>/<target>.abicheck.json` over its
+  existing committed content when the dump is both valid AND actually
+  different — an invalid or missing dump for one profile/target leaves
+  that file exactly as it was and never blocks any other profile/target's
+  own refresh in the same run. Same trust model as `baseline.yml`: a
+  direct, unreviewed push, built from `main`'s own already-merged source
+  — see [CODEOWNERS](#codeowners) below.
+- **Release-contract channel (`release.yml`).** Runs on `release:
+  published`: for every `contract: true` profile (`ci/select_profiles.py
+  --event release --contract-only` — today, exactly
+  `linux-x86_64-gcc14-cxx17-bazel`), rebuilds that profile from the
+  release's own target commit and re-dumps it, then requires
+  (`ci/apply_profile_baselines.py --verify-only`) that the fresh dump
+  matches what's already committed at that exact commit byte-for-byte —
+  a real integrity check, not a formality; a mismatch fails the job and
+  nothing is published. Once verified, publishes
+  `abicheck-baseline-<profile-id>-{math,strings,manifest}` as immutable
+  release assets (`ci/emit_release_manifest.py` writes the manifest:
+  release tag, source commit, a `generation` number — this workflow run's
+  own `github.run_attempt` for this tag — profile id, and a sha256 digest
+  per baseline file). Idempotent: an asset name that already exists on
+  the release is compared by digest first — identical content is treated
+  as a safe retry (skipped, not re-uploaded), different content fails the
+  job closed rather than silently overwriting a published asset.
+
+Both are still part of the advisory multi-build-system system — neither
+is a new required gate; see
+[integration-profiles.md](integration-profiles.md).
+
 ## Branch-protection implications
 
 **Operational prerequisite for whoever turns on branch protection:**
@@ -23,7 +66,10 @@ the rule's bypass list (a repository ruleset scoped to the `github-actions`
 app or a dedicated bot identity). Turning on branch protection without that
 bypass doesn't make baseline refreshes reviewed — it makes them fail
 silently, leaving `abi/math.abicheck.json` stale while every later PR keeps
-comparing against an old baseline.
+comparing against an old baseline. `profile-baseline.yml`'s own `commit`
+job pushes directly to `main` the identical way, for the identical reason
+— it needs the identical bypass, or its own refreshes fail silently the
+same way.
 
 ## Required checks
 
@@ -38,26 +84,41 @@ scope of this repository's current promotion state; see
 ## CODEOWNERS
 
 `.github/CODEOWNERS` protects the trust boundary around the canonical gate:
-`abi/**` (the committed baselines), the gating workflows themselves
-(`baseline.yml`, `abi-scan.yml`, `scenarios.yml`), the composite actions
-they call (`.github/actions/skip-check`, `.github/actions/resolve-baseline`),
-and the scripts that implement coverage/receipt enforcement
-(`normalize_baseline.py`, `check_coverage_contract.py`,
-`render_scan_comment.py`, `paths_changed.py`, `build_bazel_evidence_pack.py`,
+`abi/**` (the committed baselines — this also covers
+`abi/profiles/**`, the multi-build-system profile baselines
+`profile-baseline.yml`/`release.yml` read and write), the gating
+workflows themselves (`baseline.yml`, `abi-scan.yml`, `scenarios.yml`),
+the composite actions they call (`.github/actions/skip-check`,
+`.github/actions/resolve-baseline`), and the scripts that implement
+coverage/receipt enforcement (`normalize_baseline.py`,
+`check_coverage_contract.py`, `render_scan_comment.py`,
+`paths_changed.py`, `build_bazel_evidence_pack.py`,
 `capability_receipts.py`, `emit_capability_receipt.py`,
 `emit_scenario_receipts.py`, `validate_capability_receipts.py`), plus
-`CODEOWNERS` itself. Each entry exists because an unreviewed edit to that
-path could make the required gate pass without the trust property it's
-supposed to enforce actually holding — see the comments in that file for
-the specific reasoning per path. **This only has teeth once branch
-protection on `main` requires code-owner review for matching paths.**
+`CODEOWNERS` itself. The same reasoning extends to the two write-capable
+multi-build-system workflows: `profile-baseline.yml`/`release.yml`
+themselves, and the scripts they trust to decide what gets committed or
+published (`ci/apply_profile_baselines.py`, `ci/emit_release_manifest.py`,
+`ci/select_profiles.py` — the last one specifically because
+`release.yml` trusts its `--contract-only` filtering to decide which
+profile(s) are trusted enough to get a release-contract baseline at all).
+Each entry exists because an unreviewed edit to that path could make the
+required gate — or, for the two newer workflows, the write/publish path
+itself — succeed without the trust property it's supposed to enforce
+actually holding — see the comments in that file for the specific
+reasoning per path. **This only has teeth once branch protection on
+`main` requires code-owner review for matching paths.**
 
 ## GitHub Actions permissions
 
 Workflows in this repo request the minimum permissions their job needs
 (typically `contents: read`; `abi-scan.yml`'s comment-posting steps need
 `pull-requests: write`; `baseline.yml` needs `contents: write` to commit).
-Check each workflow's own `permissions:` block before widening it.
+`profile-baseline.yml`/`release.yml` both default to `contents: read` at
+the workflow level and grant `contents: write` only on the one job (and,
+implicitly, only for the one step) that actually pushes or publishes —
+every other job/step in either workflow stays read-only. Check each
+workflow's own `permissions:` block before widening it.
 
 ## Cache behavior
 

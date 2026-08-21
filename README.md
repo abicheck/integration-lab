@@ -76,8 +76,14 @@ other (exported symbols, SONAME, dynamic dependencies, headers), and a
 (`add_function`/`remove_function`) detects the same compatible/breaking
 changes under CMake, not just Bazel. Despite the gate job's name, **this
 entire workflow is advisory** — it is not in branch protection's
-required-status-checks list, and nothing here can block a merge. Full
-detail: [docs/integration-profiles.md](docs/integration-profiles.md).
+required-status-checks list, and nothing here can block a merge.
+Two more workflows keep each profile's own baseline current:
+`profile-baseline.yml` refreshes `abi/profiles/<id>/*.abicheck.json` on
+every push to `main`, and `release.yml` re-certifies and publishes an
+immutable per-profile baseline asset on every published release (today,
+only for the one `contract: true` profile). Full detail:
+[docs/integration-profiles.md](docs/integration-profiles.md) and
+[docs/operations.md](docs/operations.md#multi-build-system-profile-baseline-lifecycle).
 
 **Scenarios and capabilities.** A machine-readable scenario oracle
 (`scenarios/manifest.yaml` + `fixtures/*`) asserts abicheck's actual verdict
@@ -266,7 +272,8 @@ orchestration with a direct `check-target`/`check-project` invocation →
 broaden cross-build-system equivalence checking (advisory version already
 exists, promote to required once build definitions are aligned and
 stable) and scenario-oracle build-system parity → promote proven profiles
-to required contracts → accepted-main/release-contract baselines →
-scanner release-candidate dispatch → expand toolchain/platform coverage as
-real integration needs demonstrate them. Full detail, still with no dates
-or completion claims: [docs/roadmap.md](docs/roadmap.md).
+to required contracts (accepted-main/release-contract baselines already
+exist for the one profile that has one today) → scanner release-candidate
+dispatch → expand toolchain/platform coverage as real integration needs
+demonstrate them. Full detail, still with no dates or completion claims:
+[docs/roadmap.md](docs/roadmap.md).

@@ -160,6 +160,61 @@ def test_cli_main_profile_filter_narrows_output(repo_paths, capsys):
     assert doc["profiles"] == ["linux-x86_64-gcc14-cxx17-bazel"]
 
 
+def test_cli_main_contract_only_narrows_to_contract_true_profiles(repo_paths, capsys):
+    from select_profiles import main
+
+    profiles_path, policy_path = repo_paths
+    rc = main(
+        [
+            "--event",
+            "release",
+            "--profiles-file",
+            str(profiles_path),
+            "--policy-file",
+            str(policy_path),
+            "--contract-only",
+        ]
+    )
+    assert rc == 0
+    import json
+
+    doc = json.loads(capsys.readouterr().out)
+    # ci/profiles.yaml declares exactly one contract: true profile today
+    # (linux-x86_64-gcc14-cxx17-bazel) -- this asserts against the real
+    # file, not a synthetic fixture, so it breaks loudly the day a second
+    # profile is promoted (a real, useful signal, not staleness).
+    assert doc["profiles"] == ["linux-x86_64-gcc14-cxx17-bazel"]
+    assert doc["required"] == []  # events.release.required is [] today
+
+
+def test_cli_main_contract_only_with_synthetic_multi_contract_profiles(tmp_path):
+    from select_profiles import main
+
+    profiles_path = _write_profiles(tmp_path)  # ids[0] ("p-a") is contract: true, p-b/p-c aren't
+    policy_path = _write_policy(tmp_path, advisory=["p-a", "p-b", "p-c"])
+    import io
+    import contextlib
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(
+            [
+                "--event",
+                "pull_request",
+                "--profiles-file",
+                str(profiles_path),
+                "--policy-file",
+                str(policy_path),
+                "--contract-only",
+            ]
+        )
+    assert rc == 0
+    import json
+
+    doc = json.loads(buf.getvalue())
+    assert doc["profiles"] == ["p-a"]
+
+
 def test_cli_main_unknown_profile_filter_fails(repo_paths, capsys):
     from select_profiles import main
 

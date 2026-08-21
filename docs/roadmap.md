@@ -34,10 +34,16 @@ is implemented today.
    `contract` field and adding its check to branch-protection required
    status checks — a deliberate, separate decision from simply having the
    profile exist.
-5. **Add accepted-main and release-contract profile baselines.** Extend the
-   baseline lifecycle (`baseline.yml`'s pattern) to cover accepted-`main`
-   and release-tagged baselines per profile, not just the current
-   PR-vs-base-SHA comparison.
+5. **Accepted-main and release-contract profile baselines: done for the
+   profiles that have one today.** `profile-baseline.yml` keeps every
+   profile's own `abi/profiles/<id>/*.abicheck.json` current on every
+   push to `main` (the same pattern `baseline.yml` already uses for the
+   canonical gate); `release.yml` re-certifies and publishes an immutable
+   per-profile baseline asset on every published release, currently only
+   for the one `contract: true` profile
+   (`linux-x86_64-gcc14-cxx17-bazel`). Extending either beyond that one
+   profile is the same promotion decision as item 4 above, not separate
+   work.
 6. **Add scanner release-candidate dispatch.** A way to run the full
    profile/scenario suite against an unreleased `abicheck` release
    candidate on demand, ahead of a scheduled canary catching it, to
