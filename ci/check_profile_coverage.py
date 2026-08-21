@@ -216,7 +216,32 @@ def evaluate(
                 continue
             candidate_rel = report.get("candidate_library_path")
             target_facts = artifact_facts.get(target)
-            report_facts[target] = {"report_path": str(report_path), "candidate_library_path": candidate_rel}
+            report_facts[target] = {
+                "report_path": str(report_path),
+                "candidate_library_path": candidate_rel,
+                "report_profile_id": report.get("profile_id"),
+                "report_target": report.get("target"),
+            }
+            # The report's own profile_id/target identity must match what
+            # we're actually evaluating -- otherwise a stale report from a
+            # different profile or an earlier build could still pass this
+            # cross-check purely because every profile stages targets at
+            # the same relative path (e.g. artifacts/lib/libmath.so), which
+            # candidate_library_path alone can't distinguish (Codex review,
+            # PR #20).
+            if report.get("profile_id") != profile["id"]:
+                failures.append(
+                    f"report for target {target!r} was produced for profile "
+                    f"{report.get('profile_id')!r}, not the profile being "
+                    f"evaluated ({profile['id']!r})"
+                )
+                continue
+            if report.get("target") != target:
+                failures.append(
+                    f"report at {report_path} was produced for target "
+                    f"{report.get('target')!r}, not the target it was supplied for ({target!r})"
+                )
+                continue
             if report.get("verdict") == "NOT_COMPARABLE":
                 # Nothing to cross-check -- a NOT_COMPARABLE report never
                 # resolved a candidate library path at all.

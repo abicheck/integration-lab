@@ -97,3 +97,44 @@ def test_missing_public_headers_fails(tmp_path):
     result = evaluate(_BAZEL_PROFILE, staged)
     assert result["gate_status"] == "FAIL"
     assert any("header_roots" in f for f in result["failures"])
+
+
+def _write_report(staged, name, **fields):
+    report_path = staged / name
+    report = {"candidate_library_path": "artifacts/lib/libmath.so", "verdict": "NO_CHANGE"}
+    report.update(fields)
+    report_path.write_text(json.dumps(report))
+    return report_path
+
+
+def test_report_cross_check_passes_with_matching_identity(tmp_path):
+    staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    report_path = _write_report(staged, "report.json", profile_id="p-bazel", target="math")
+    result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
+    assert result["gate_status"] == "PASS", result["failures"]
+
+
+def test_report_cross_check_fails_on_wrong_profile_id(tmp_path):
+    staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    # A report actually produced for a different profile (e.g. cmake's math
+    # baseline check) but pointed at the same staged-relative path -- must
+    # not be trusted just because candidate_library_path happens to match.
+    report_path = _write_report(staged, "report.json", profile_id="p-cmake", target="math")
+    result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
+    assert result["gate_status"] == "FAIL"
+    assert any("was produced for profile" in f for f in result["failures"])
+
+
+def test_report_cross_check_fails_on_wrong_target(tmp_path):
+    staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    report_path = _write_report(staged, "report.json", profile_id="p-bazel", target="strings")
+    result = evaluate(_BAZEL_PROFILE, staged, {"math": report_path})
+    assert result["gate_status"] == "FAIL"
+    assert any("was produced for target" in f for f in result["failures"])
+
+
+def test_report_cross_check_fails_when_target_missing_report(tmp_path):
+    staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]}, sha256=None)
+    result = evaluate(_BAZEL_PROFILE, staged, {})
+    assert result["gate_status"] == "FAIL"
+    assert any("no --report was supplied" in f for f in result["failures"])
