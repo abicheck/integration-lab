@@ -124,6 +124,16 @@ _NON_PUBLIC_SYMBOL_NAMES = frozenset({
 # itself a real ABI-relevant signal this diff should not silently collapse.
 _NM_LINE_RE = re.compile(r"^(?P<name>\S+)\s+(?P<type>[A-Za-z])(?:\s+(?P<value>[0-9a-fA-F]+))?(?:\s+(?P<size>[0-9a-fA-F]+))?$")
 
+# nm type letters for code (T/t text, W/w weak -- almost always a function
+# in a dynamic symbol table): a changed *code size* here is normal for any
+# recompiled function body (a bugfix, an optimization level change, a
+# compiler version bump) and is not itself an ABI break -- unlike a changed
+# *data* symbol's size (D/d/B/b/R/r/G/g/S/s), which really is ABI-relevant
+# (a struct/array a consumer links against grew or shrank). Comparing size
+# for every symbol regardless of type flagged ordinary recompiles as
+# BREAKING (Codex review, PR #20); type changes are still always compared.
+_CODE_SYMBOL_TYPES = frozenset({"T", "t", "W", "w"})
+
 
 class CheckProfileError(RuntimeError):
     pass
@@ -291,7 +301,13 @@ def compare_profile(
     changed = []
     for name in sorted(set(base_symbols) & set(cand_symbols)):
         before, after = base_symbols[name], cand_symbols[name]
-        if before.get("type") != after.get("type") or before.get("size") != after.get("size"):
+        type_changed = before.get("type") != after.get("type")
+        # Only a data symbol's size is ABI-relevant; a code symbol's size
+        # (its compiled function body) legitimately changes on every
+        # ordinary recompile and is not a breaking change on its own.
+        size_relevant = before.get("type") not in _CODE_SYMBOL_TYPES
+        size_changed = size_relevant and before.get("size") != after.get("size")
+        if type_changed or size_changed:
             changed.append({
                 "name": name,
                 "before": {"type": before.get("type"), "size": before.get("size")},
@@ -306,13 +322,27 @@ def compare_profile(
         if base_headers.get(path) != candidate_headers.get(path)
     )
 
-    if removed or changed:
+    # A SONAME change (e.g. CMake's SOVERSION 1 -> 2) is breaking on its
+    # own even when the symbol table and headers are otherwise identical:
+    # every existing consumer's NEEDED entry names the OLD soname, which
+    # the new library no longer provides, so it can't be loaded at
+    # runtime. candidate_soname was already computed for the receipt but
+    # never compared against the baseline's -- symbol/header comparisons
+    # alone can (and did) report NO_CHANGE/COMPATIBLE for a soname bump
+    # (Codex review, PR #20).
+    candidate_soname = _soname(library_path)
+    baseline_soname = baseline.get("soname")
+    soname_changed = baseline_soname is not None and candidate_soname != baseline_soname
+
+    if removed or changed or soname_changed:
         verdict = "BREAKING"
         detail_parts = []
         if removed:
             detail_parts.append(f"{len(removed)} exported symbol(s) removed: {', '.join(removed)}")
         if changed:
             detail_parts.append(f"{len(changed)} exported symbol(s) changed type/size: {', '.join(c['name'] for c in changed)}")
+        if soname_changed:
+            detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
         detail = "; ".join(detail_parts)
     elif added or headers_changed:
         verdict = "COMPATIBLE"
@@ -335,7 +365,7 @@ def compare_profile(
         symbols={"added": added, "removed": removed, "changed": changed, "unchanged_count": unchanged_count},
         public_headers_changed=headers_changed,
         candidate_library_path=str(library_path.relative_to(staged_dir)),
-        candidate_soname=_soname(library_path),
+        candidate_soname=candidate_soname,
     )
     return facts
 
