@@ -1,0 +1,135 @@
+name: Multi-build-system integration shadow
+
+# PR1 of the multi-build-system integration plan (see
+# UPSTREAM_TO_ABICHECK.md and README.md's "ABICheck Integration Lab:
+# multi-build-system profiles" section). Proves the SAME source
+# (include/, src/, strings_lib/, consumer/) builds cleanly under three
+# independent build systems -- Bazel (the existing, unchanged, required
+# gate), CMake+Ninja, and a handwritten Makefile -- and stages each into
+# the canonical abicheck-build-<profile-id>/ output shape
+# (ci/emit_build_output.py). It does NOT run any ABICheck scan (that is a
+# later PR's scope) and it NEVER fails the overall required-check surface:
+# every per-profile job step below runs `continue-on-error: true`, and
+# this workflow is deliberately never added to branch-protection required
+# status checks. .github/workflows/abi-scan.yml's own Bazel gate is
+# completely untouched by this file.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Restrict to one profile id (ci/profiles.yaml); leave empty to run every profile ci/select_profiles.py resolves for the manual event.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-shadow-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml
+
+      - name: Resolve profiles for this event
+        id: select
+        shell: bash
+        env:
+          DISPATCH_PROFILE: ${{ inputs.profile }}
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request) event=pull_request ;;
+            push) event=main ;;
+            workflow_dispatch) event=manual ;;
+            *) event=manual ;;
+          esac
+
+          extra_args=()
+          if [ -n "$DISPATCH_PROFILE" ]; then
+            extra_args+=(--profile "$DISPATCH_PROFILE")
+          fi
+
+          python3 ci/select_profiles.py --event "$event" "${extra_args[@]}" > selection.json
+          cat selection.json
+          matrix_json="$(python3 -c "import json; d=json.load(open('selection.json')); print(json.dumps({'profile': d['profiles']}))")"
+          profile_count="$(python3 -c "import json; print(len(json.load(open('selection.json'))['profiles']))")"
+          if [ "$profile_count" -eq 0 ]; then
+            echo "::error::no profiles resolved for event '$event' -- refusing to emit an empty matrix" >&2
+            exit 1
+          fi
+          echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: select
+    if: needs.select.outputs.matrix != ''
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select.outputs.matrix) }}
+    # This workflow's entire non-gating contract lives on this one line:
+    # a profile's own build/stage/validate failure is recorded (this step
+    # shows red in the job's own timeline) but never fails the job, and
+    # this workflow is never wired into branch-protection required checks
+    # -- see this file's own header comment.
+    continue-on-error: true
+    name: build (${{ matrix.profile }})
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyyaml jsonschema
+
+      # gcc-14/g++-14 (ci/profiles.yaml's pinned intent for every profile,
+      # including the Bazel one's own describe() identity, even though
+      # Bazel doesn't consult $PATH for its own toolchain -- see that
+      # profile's own comment) is not preinstalled on ubuntu-24.04 runners;
+      # gcc-13 is. bear (for the make profile's optional compile_commands.json)
+      # and patchelf (bazel.py's stage() uses it to rewrite the staged
+      # consumer_app's RUNPATH so it can find libmath.so without Bazel's own
+      # bazel-bin/_solib_*/ tree -- Codex review, PR #19) aren't preinstalled
+      # either. Installed here, once, for whichever profile this matrix leg
+      # runs -- a no-op for the bazel profile's own actual build (Bazel
+      # resolves its own toolchain independently), but keeps its
+      # describe()/provenance output accurate and patchelf available.
+      - name: Install gcc-14/g++-14, bear, and patchelf
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 bear patchelf
+
+      - name: Set up Ninja
+        if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
+        run: sudo apt-get install -y ninja-build
+
+      - name: Run profile (build + stage + validate)
+        id: run_profile
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -o pipefail
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" | tee run-profile-summary.json
+
+      - name: Upload staged build output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-build-${{ matrix.profile }}
+          path: |
+            abicheck-build-${{ matrix.profile }}/
+            run-profile-summary.json
+          if-no-files-found: warn
+          retention-days: 14

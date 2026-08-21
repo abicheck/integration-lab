@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/build-output.schema.json",
+  "title": "abicheck-bazel-lab canonical per-profile build output",
+  "description": "Schema for the build-output.json written into each staged abicheck-build-<profile-id>/ directory (see ci/emit_build_output.py). PR1: this schema describes the current staged shape; a future PR may add first-class build-system/generator identity fields directly here instead of only in profile.id + provenance/build-system.json (see UPSTREAM_TO_ABICHECK.md's 2026-08-21 entry).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "git",
+    "profile",
+    "compiler",
+    "generated_at",
+    "targets",
+    "header_roots",
+    "evidence",
+    "provenance",
+    "diagnostics",
+    "success"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "git": {
+      "type": "object",
+      "required": ["sha"],
+      "additionalProperties": false,
+      "properties": {
+        "sha": { "type": "string" },
+        "ref": { "type": ["string", "null"] }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["id", "backend", "contract", "root"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "enum": ["bazel", "cmake", "make"] },
+        "contract": { "type": "boolean" },
+        "root": { "type": "string" },
+        "generator": { "type": ["string", "null"] }
+      }
+    },
+    "compiler": {
+      "type": "object",
+      "required": ["family", "cc", "cxx", "standard"],
+      "additionalProperties": true,
+      "properties": {
+        "family": { "type": "string" },
+        "cc": { "type": "string" },
+        "cxx": { "type": "string" },
+        "standard": { "type": "string" },
+        "cc_version": { "type": ["string", "null"] },
+        "cxx_version": { "type": ["string", "null"] }
+      }
+    },
+    "generated_at": { "type": "string" },
+    "duration_s": { "type": "number" },
+    "targets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind", "built"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "enum": ["shared_library", "executable"] },
+          "built": { "type": "boolean" },
+          "path": { "type": ["string", "null"] },
+          "sha256": { "type": ["string", "null"] },
+          "size_bytes": { "type": ["integer", "null"] }
+        }
+      }
+    },
+    "header_roots": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["dir"],
+      "additionalProperties": true,
+      "properties": {
+        "dir": { "type": "string" },
+        "backend_evidence": { "type": "object" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["dir"],
+      "additionalProperties": true,
+      "properties": {
+        "dir": { "type": "string" }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "success": { "type": "boolean" }
+  }
+}

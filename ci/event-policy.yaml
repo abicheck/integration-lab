@@ -1,0 +1,78 @@
+# Which profiles (ci/profiles.yaml) run for which trigger event, and
+# whether each is required or merely advisory for that event.
+#
+# This file and ci/profiles.yaml are read by ci/select_profiles.py, which
+# is the only thing that turns "an event fired" into "a list of profile ids
+# to run" -- keeping that decision in one script (rather than duplicated
+# `if:` conditions across workflow YAML) means a workflow can always ask
+# "what should run for this event" instead of hand-encoding the answer.
+#
+# PR1 note: `required` here means "declared required by this policy", not
+# "actually gates a PR today". The only thing that gates a PR right now is
+# abi-scan.yml's own `scan` job, entirely independent of this file (see
+# ci/profiles.yaml's `contract: true` comment). integration-shadow.yml (the
+# only workflow this PR wires to this file) runs every profile it's handed
+# in continue-on-error mode regardless of `required`/`advisory` membership
+# -- the required/advisory split here is groundwork for a later PR to
+# actually enforce, not an enforcement mechanism this PR adds.
+
+schema_version: 1
+
+# Named groups of profile ids, referenced by id below instead of repeating
+# lists. `core` / `bazel` / `cmake` / `make` are convenience groupings over
+# ci/profiles.yaml's own `backend` field; `advisory` is every profile this
+# PR does NOT mark contract: true.
+profile_sets:
+  bazel:
+    - linux-x86_64-gcc14-cxx17-bazel
+  cmake:
+    - linux-x86_64-gcc14-cxx17-cmake-ninja
+  make:
+    - linux-x86_64-gcc14-cxx17-make-bear
+  core:
+    - linux-x86_64-gcc14-cxx17-bazel
+  advisory:
+    - linux-x86_64-gcc14-cxx17-cmake-ninja
+    - linux-x86_64-gcc14-cxx17-make-bear
+
+events:
+  # Every profile-touching PR: build+stage all three, none of them gating
+  # (bazel's own gate is abi-scan.yml, untouched and independent of this
+  # policy file).
+  pull_request:
+    required: []
+    advisory:
+      - core
+      - advisory
+
+  # Push to main: same shadow coverage as pull_request today. A later PR
+  # may widen `required` once a build-system profile earns contract: true.
+  main:
+    required: []
+    advisory:
+      - core
+      - advisory
+
+  # Release tag builds: same three profiles, kept advisory here too -- PR1
+  # does not change what a release gate enforces.
+  release:
+    required: []
+    advisory:
+      - core
+      - advisory
+
+  # Scheduled canary (mirrors scenarios-canary.yml's posture: broad,
+  # non-blocking, catches drift independent of any one PR's activity).
+  canary:
+    required: []
+    advisory:
+      - core
+      - advisory
+
+  # workflow_dispatch: run everything by default; a caller can still narrow
+  # with select_profiles.py's own --profile filter.
+  manual:
+    required: []
+    advisory:
+      - core
+      - advisory

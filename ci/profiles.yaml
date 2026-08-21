@@ -1,0 +1,120 @@
+# Declarative build-profile manifest: the single source of truth for which
+# (build system x compiler x standard) combinations this lab exercises, and
+# which of them are the required ABI gate versus advisory/shadow builds.
+#
+# This is PR1 of a larger phased plan (see UPSTREAM_TO_ABICHECK.md and the
+# capabilities.yaml precedent this file follows: a declarative table one
+# script -- here, ci/select_profiles.py -- checks reality against, instead
+# of hand-typed job lists that can silently drift). PR1 only adds the
+# manifest, the backends that can execute it, and canonical staged output --
+# it does NOT wire ABICheck scans into the new build systems and does NOT
+# change what gates a PR. `contract: true` marks the one profile whose
+# result is trusted for anything beyond "did the source build" today
+# (abi-scan.yml's existing Bazel-only gate, untouched by this file).
+#
+# Environment note (verified, not assumed): the sandbox this manifest was
+# authored/validated in ships Ubuntu 24.04 with system gcc/g++ at 13.3.0 by
+# default (`gcc --version`) -- gcc-14/g++-14 are NOT preinstalled, but ARE
+# installable via `apt-get install -y gcc-14 g++-14` (verified: apt has the
+# package, install succeeds, `gcc-14 --version` reports 14.2.0). GitHub's
+# own ubuntu-24.04 runner image is the same story: gcc-13 by default,
+# gcc-14 installable via apt. Every profile below is therefore named and
+# pinned by INTENT to gcc-14/g++-14 (the `compiler.cc`/`compiler.cxx`
+# fields name the exact executables CI installs and every backend actually
+# invokes) -- there is no silent fallback to "whatever gcc happens to be on
+# PATH" anywhere in ci/backends/. A runner (local or CI) that hasn't
+# installed gcc-14/g++-14 yet gets a clear "executable not found" failure
+# from verify_environment(), not a quietly-different toolchain.
+#
+# Profile id scheme: <os>-<arch>-<compiler+version>-cxx<standard>-<backend>.
+
+schema_version: 1
+
+profiles:
+  - id: linux-x86_64-gcc14-cxx17-bazel
+    backend: bazel
+    # The one profile this PR keeps load-bearing: it describes the
+    # pre-existing Bazel build abi-scan.yml already gates on. `contract:
+    # true` means its result is trusted beyond "did it build" -- nothing
+    # about that trust changes in this PR; it is asserted here only so a
+    # future PR (ABICheck wiring) has a single place to read "which
+    # profile(s) may gate" from instead of hardcoding a job name.
+    contract: true
+    description: >
+      The existing root Bazel build (.bazelrc-pinned toolchain, C++17).
+      Unchanged by this PR -- abi-scan.yml's `scan` job remains the only
+      required ABI gate and does not read this file.
+    root: "."
+    generator: null
+    compiler:
+      family: gcc
+      # Bazel's own default host toolchain on this workspace is NOT
+      # explicitly pinned to gcc-14 today (.bazelrc pins -std=c++17 and
+      # the lockfile, not a specific gcc major -- see .bazelrc's own
+      # comment). Documented honestly rather than overclaimed: this field
+      # names the *intent* this manifest tracks toward, matching the other
+      # two profiles' actual pinned executables, not a flag this backend
+      # currently passes to Bazel. bazel.py's verify_environment() checks
+      # for a `bazel`/`bazelisk` executable, not for gcc-14 specifically,
+      # since Bazel resolves its own C++ toolchain independently of $PATH.
+      cc: gcc-14
+      cxx: g++-14
+      standard: c++17
+    targets:
+      math: "//:math"
+      math_shared: "//:math_shared"
+      strings: "//strings_lib:strings"
+      consumer: "//consumer:consumer_app"
+    header_roots:
+      - include
+      - strings_lib/include
+    build_command: "bazel build //:math //:math_shared //strings_lib:strings //consumer:consumer_app"
+
+  - id: linux-x86_64-gcc14-cxx17-cmake-ninja
+    backend: cmake
+    # PR1 keeps this advisory/shadow only: it proves the same sources
+    # build cleanly under CMake+Ninja and emits canonical staged output,
+    # but nothing gates on it yet (no ABICheck scan is run against it in
+    # this PR -- see the shadow workflow's own header comment).
+    contract: false
+    description: >
+      CMake (Ninja generator) build of the same math/strings/consumer
+      sources CMakeLists.txt references directly from ../../{include,src,
+      strings_lib,consumer} rather than copying them.
+    root: "buildsystems/cmake"
+    generator: Ninja
+    compiler:
+      family: gcc
+      cc: gcc-14
+      cxx: g++-14
+      standard: c++17
+    targets:
+      math: math
+      strings: strings
+      consumer: consumer_app
+    header_roots:
+      - include
+      - strings_lib/include
+    build_command: "cmake --preset gcc14-cxx17 && cmake --build --preset gcc14-cxx17"
+
+  - id: linux-x86_64-gcc14-cxx17-make-bear
+    backend: make
+    contract: false
+    description: >
+      Handwritten Makefile build of the same sources, with an optional
+      `bear`-generated compile_commands.json when `bear` is on PATH.
+    root: "buildsystems/make"
+    generator: null
+    compiler:
+      family: gcc
+      cc: gcc-14
+      cxx: g++-14
+      standard: c++17
+    targets:
+      math: libmath.so
+      strings: libstrings.so
+      consumer: consumer_app
+    header_roots:
+      - include
+      - strings_lib/include
+    build_command: "make -C buildsystems/make CC=gcc-14 CXX=g++-14"

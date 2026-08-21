@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "gcc14-cxx17",
+      "displayName": "gcc-14, C++17, Ninja",
+      "description": "Matches ci/profiles.yaml's linux-x86_64-gcc14-cxx17-cmake-ninja profile. CI installs gcc-14/g++-14 via apt (see ci/profiles.yaml's environment note); locally this preset resolves whatever gcc-14/g++-14 actually is on PATH.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_COMPILER": "g++-14",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "gcc14-cxx17",
+      "configurePreset": "gcc14-cxx17"
+    }
+  ]
+}

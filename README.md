@@ -16,6 +16,56 @@ A small public C++ shared-library project used to validate ABICheck GitHub Actio
 Test PRs intentionally exercise compatible additions, binary ABI breaks,
 source/API breaks, and implementation-only changes.
 
+## ABICheck Integration Lab: multi-build-system profiles (in progress)
+
+This repo's real ABI gate has, until now, only ever exercised one build
+system: the root Bazel build (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`).
+A new, deliberately staged effort is adding a **profile** concept -- a
+named (build system x compiler x C++ standard) combination, declared once
+in `ci/profiles.yaml`, that any tooling (a CI workflow, a local script)
+can build, stage, and eventually scan uniformly, instead of every new
+build system needing its own hand-written job from scratch.
+
+**PR1 (this change) adds three profiles and proves each one builds the
+same source cleanly and stages canonical output -- it does NOT run any
+ABICheck scan against the two new build systems, and it does NOT change
+what gates a PR:**
+
+- `linux-x86_64-gcc14-cxx17-bazel` -- the existing, unchanged root Bazel
+  build. `contract: true` in `ci/profiles.yaml`: this is the one profile
+  whose result is (still, exactly as before) trusted for anything beyond
+  "did it build" -- `abi-scan.yml`'s `scan` job remains the sole required
+  ABI gate and doesn't read `ci/profiles.yaml` at all.
+- `linux-x86_64-gcc14-cxx17-cmake-ninja` -- a real CMake+Ninja build
+  (`buildsystems/cmake/`) of the identical `include/`, `src/`,
+  `strings_lib/`, `consumer/` sources, referenced directly rather than
+  copied. `contract: false`: advisory/shadow only.
+- `linux-x86_64-gcc14-cxx17-make-bear` -- a handwritten Makefile build
+  (`buildsystems/make/`) of the same sources, with an optional
+  `bear`-generated `compile_commands.json` when `bear` is on `PATH`.
+  `contract: false`: advisory/shadow only.
+
+`.github/workflows/integration-shadow.yml` is the new, entirely
+non-gating workflow that builds and stages all three on every PR and push
+to `main`: `ci/select_profiles.py` resolves which profiles a given event
+runs (from `ci/profiles.yaml` + `ci/event-policy.yaml`), `ci/run_profile.py`
+drives one profile's `ci/backends/{bazel,cmake,make}.py` backend through a
+real build, and `ci/emit_build_output.py` stages the result into a
+canonical `abicheck-build-<profile-id>/` directory (`build-output.json`,
+validated against `ci/schemas/build-output.schema.json`, plus staged
+`artifacts/`, `headers/`, `evidence/`, `provenance/`). Every per-profile
+step runs `continue-on-error: true`, and this workflow is never added to
+branch-protection required status checks -- a CMake or Make build failure
+can never block a merge; only `abi-scan.yml`'s own Bazel gate still can.
+
+See `ci/profiles.yaml` for the full profile manifest (including an honest
+note on this lab's actual local/CI gcc-14 availability), `buildsystems/cmake/`
+and `buildsystems/make/` for the two new build definitions, and
+`UPSTREAM_TO_ABICHECK.md`'s 2026-08-21 entry for a build-system-identity
+gap this staging work surfaced upstream. Wiring an ABICheck scan into the
+CMake/Make profiles, and deciding whether either should ever become
+`contract: true`, is explicitly out of scope for this PR.
+
 ## Gate / PR-comment architecture
 
 The `scan` job runs exactly one gating `abicheck` invocation (`mode: scan`,

@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 scenario-results/
 tools/abicheck/libabicheck-facts.so
+
+# PR1 (multi-build-system integration): local build trees and staged
+# per-profile output, none of which is checked in -- see
+# ci/profiles.yaml/ci/emit_build_output.py.
+buildsystems/cmake/build/
+buildsystems/make/build/
+/abicheck-build-*/
