@@ -61,6 +61,10 @@
           "verdict": {
             "type": "string",
             "enum": ["NO_CHANGE", "COMPATIBLE", "BREAKING", "NOT_COMPARABLE", "NOT_RUN"]
+          },
+          "mechanism": {
+            "type": ["string", "null"],
+            "description": "The mechanism that actually produced this report's own verdict (ci/check_profile.py's facts[\"mechanism\"], carried through by ci/emit_profile_receipt.py's build_reports()) -- null when the report file itself was missing/unreadable (NOT_RUN) and no mechanism could be read at all. Distinct from the top-level scanner.mechanism guess: that field is derived from backend alone as a fallback for when no report is readable; this per-report field is the one CodeRabbit's PR #25 review asked for so a fail-closed report (e.g. a bear-absent degrade) isn't misattributed as the real scanner."
           }
         }
       }

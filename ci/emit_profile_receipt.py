@@ -115,11 +115,25 @@ def build_reports(report_paths: Dict[str, Path]) -> List[Dict[str, Any]]:
         verdict = doc.get("verdict") if isinstance(doc, dict) else "NOT_RUN"
         if verdict not in ("NO_CHANGE", "COMPATIBLE", "BREAKING", "NOT_COMPARABLE", "NOT_RUN"):
             verdict = "NOT_RUN"
+        # ci/check_profile.py stamps facts["mechanism"] with whichever
+        # mechanism actually produced THIS report's own verdict -- including
+        # on its fail-closed branches (a missing baseline snapshot, a bear-
+        # absent degrade, a real-scan invocation failure), each of which
+        # uses a different, accurate string, not always the same one a
+        # single backend-derived guess in build_receipt() below would pick
+        # (Codex review, PR #25: "Deriving scanner.mechanism from backend
+        # reintroduces misattribution in the opposite direction" -- e.g. a
+        # make-backend profile's bear-absent report actually used the
+        # nm/readelf mechanism, which a backend-only guess of "real abicheck
+        # dump/compare" would misattribute). Carried through so build_receipt()
+        # can prefer each report's own recorded fact over that guess.
+        report_mechanism = doc.get("mechanism") if isinstance(doc, dict) else None
         reports.append({
             "target": target,
             "path": str(path) if digest else None,
             "digest": digest,
             "verdict": verdict,
+            "mechanism": report_mechanism if isinstance(report_mechanism, str) and report_mechanism else None,
         })
     return reports
 
@@ -210,23 +224,41 @@ def build_receipt(
     # lighter mechanism (Codex review, PR #25: "the uploaded profile
     # receipts -- the durable provenance consumed for integration results
     # -- misidentify real ABICheck verdicts as the old lightweight
-    # signal"). Derived from backend, not re-parsed out of each report's
-    # own "mechanism" field, since every report for a given profile run
-    # was produced by the same ci/check_profile.py invocation and
-    # therefore the same mechanism -- see that script's own module
-    # docstring for the two mechanisms this mirrors exactly.
+    # signal").
+    #
+    # A single backend-derived guess is not the whole story, though: a
+    # profile's own reports can legitimately have been produced by
+    # DIFFERENT mechanisms within the same run -- e.g. a make-backend
+    # profile's bear-absent degrade (ci/check_profile.py's
+    # _bear_legitimately_absent()) genuinely used the nm/readelf mechanism
+    # for that one target, even though this profile's backend is "make"
+    # and would otherwise guess "real abicheck dump/compare" (Codex review,
+    # PR #25, round 3: "Deriving scanner.mechanism from backend reintroduces
+    # misattribution in the opposite direction ... the report's own
+    # mechanism, not a backend-derived guess, is authoritative"). Prefer
+    # each readable report's own recorded facts["mechanism"] (build_reports()
+    # already carries it through); the backend-derived guess below is only
+    # the fallback for when no report at all could be read (so this receipt
+    # still records SOMETHING rather than nothing).
+    recorded_mechanisms = sorted({r["mechanism"] for r in reports if r["mechanism"]})
+
     if backend in _REAL_SCAN_BACKENDS:
-        scanner_mechanism = (
+        scanner_mechanism_fallback = (
             "real abicheck dump/compare (--depth source, compile_commands.json "
             "--build-info, filtered to each target's own translation unit -- "
             "see ci/real_scan.py)"
         )
     else:
-        scanner_mechanism = (
+        scanner_mechanism_fallback = (
             "nm/readelf dynamic-symbol-table + public-header-digest diff (ci/check_profile.py) "
             "-- see UPSTREAM_TO_ABICHECK.md's PR2 entry for what this simplifies versus the full "
             "abicheck scanner"
         )
+
+    if recorded_mechanisms:
+        scanner_mechanism = "; ".join(recorded_mechanisms)
+    else:
+        scanner_mechanism = scanner_mechanism_fallback
 
     return {
         "schema_version": SCHEMA_VERSION,
