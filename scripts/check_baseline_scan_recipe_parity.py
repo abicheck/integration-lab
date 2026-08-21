@@ -159,8 +159,14 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?\$RUNNER_
 # The pip install line -- captures the whole `pip install ...` invocation,
 # which is where the abicheck git ref used to *build the evidence pack
 # itself* (a separate pin from the `uses: abicheck/abicheck@<sha>` scanner
-# Action pin already checked above) lives.
-_PIP_INSTALL_RE = re.compile(r"pip install\b.*")
+# Action pin already checked above) lives. Matches specifically the line
+# naming the `abicheck @ git+...` requirement, not merely the first `pip
+# install` line in the step (Codex review, fresh evidence: a step could
+# gain an identical preliminary command, e.g. `pip install wheel`, ahead of
+# the real abicheck install on only one side, and a first-match search
+# would silently keep comparing that identical preliminary line while the
+# real, differing abicheck pin went unchecked).
+_PIP_INSTALL_RE = re.compile(r"pip install\b.*abicheck @ git\+\S*")
 
 
 def _normalize_shell(text: str) -> str:
@@ -430,9 +436,9 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     dump_pip_pin = _abicheck_pip_pin(baseline_wf, "collect")
     scan_pip_pin = _abicheck_pip_pin(abi_scan_wf, "scan")
     if dump_pip_pin is None:
-        errors.append(f"{BASELINE_PATH}: could not find a 'pip install' line in job 'collect''s abicheck_pip step")
+        errors.append(f"{BASELINE_PATH}: could not find a 'pip install ... abicheck @ git+...' line in job 'collect''s abicheck_pip step")
     if scan_pip_pin is None:
-        errors.append(f"{ABI_SCAN_PATH}: could not find a 'pip install' line in job 'scan''s abicheck_pip step")
+        errors.append(f"{ABI_SCAN_PATH}: could not find a 'pip install ... abicheck @ git+...' line in job 'scan''s abicheck_pip step")
     if dump_pip_pin is not None and scan_pip_pin is not None and dump_pip_pin != scan_pip_pin:
         errors.append(
             "BUILD_EVIDENCE_PIP_PIN_MISMATCH: baseline.yml's and abi-scan.yml's abicheck_pip "

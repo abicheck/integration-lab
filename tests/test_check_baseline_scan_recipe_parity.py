@@ -235,6 +235,21 @@ class TestCheck:
         errors = check(_dump_wf(), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_behind_an_identical_preliminary_command_is_caught(self):
+        # The exact regression a prior revision of the pip-pin regex would
+        # have missed (Codex review, fresh evidence): if both sides gain an
+        # identical preliminary command (e.g. `pip install wheel`) ahead of
+        # the real abicheck install, a first-match search on `pip install`
+        # would keep comparing that identical preliminary line while the
+        # real, differing abicheck pin went unchecked.
+        good = f"pip install --quiet wheel\n{_PIP_LINE}"
+        drifted = (
+            'pip install --quiet wheel\n'
+            'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"'
+        )
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_evidence_pack_bazel_pack_script_drift_is_caught(self):
         # A structural difference in the bazel_pack invocation itself
         # (beyond --root-target, which is checked separately) -- e.g. one
