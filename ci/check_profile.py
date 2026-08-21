@@ -632,6 +632,33 @@ def compare_profile(
         and not (library_path.parent / candidate_soname).exists()
     )
 
+    # Captured separately from the BREAKING branch's own detail_parts
+    # below (same three conditions, deliberately duplicated rather than
+    # threaded through): these are loadability facts about which files
+    # are physically staged on disk -- something a real `abicheck
+    # compare` structurally cannot see, since it only ever inspects the
+    # two snapshot files it's handed, not the staged directory around
+    # them (Codex review, PR #25). For cmake/make backends,
+    # _apply_real_scan_verdict() below must never let the real scanner's
+    # own verdict silently override or downgrade a loader-level break
+    # this mechanism already found independently -- it combines the two
+    # instead.
+    loader_detail_parts = []
+    if soname_changed:
+        loader_detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
+    if filename_changed:
+        loader_detail_parts.append(
+            f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
+        )
+    if soname_file_missing:
+        loader_detail_parts.append(
+            f"candidate's own embedded SONAME is {candidate_soname!r}, but no file named that exists "
+            f"alongside {library_path.name!r} in the staged output -- consumers linked against this "
+            "SONAME cannot resolve it at runtime"
+        )
+    loader_breaking = bool(loader_detail_parts)
+    loader_detail = "; ".join(loader_detail_parts)
+
     if removed or changed or soname_changed or filename_changed or soname_file_missing:
         verdict = "BREAKING"
         detail_parts = []
@@ -714,9 +741,35 @@ def compare_profile(
 
     backend = build_output.get("profile", {}).get("backend")
     if backend in real_scan.REAL_SCAN_BACKENDS:
-        _apply_real_scan_verdict(facts, profile_id, target, staged_dir, build_output, baseline)
+        _apply_real_scan_verdict(
+            facts, profile_id, target, staged_dir, build_output, baseline,
+            loader_breaking=loader_breaking, loader_detail=loader_detail,
+        )
 
     return facts
+
+
+def _combine_with_loader_break(verdict: str, detail: str, loader_breaking: bool, loader_detail: str) -> tuple[str, str]:
+    """A loader-level break (SONAME/filename change, or the SONAME-named
+    file missing from staged output) is invisible to a real `abicheck
+    compare` -- it only ever inspects the two snapshot files it's handed,
+    not which files are physically staged alongside them on disk (Codex
+    review, PR #25: a CMake candidate that drops its own `libmath.so.1`
+    companion while leaving `libmath.so` byte-identical would otherwise
+    have this checker's own independently-detected BREAKING verdict
+    silently replaced by whatever NO_CHANGE/COMPATIBLE the real scanner
+    reports for the snapshot content it CAN see). When loader_breaking is
+    set, the combined verdict is always BREAKING regardless of what
+    verdict/detail the real scanner produced -- the two signals are
+    combined in the detail text, never one silently discarding the other.
+    """
+    if not loader_breaking:
+        return verdict, detail
+    combined_detail = (
+        f"{loader_detail} (loader-level break, detected independently of the real "
+        f"scanner, which cannot see staged file layout); additionally: {detail}"
+    )
+    return "BREAKING", combined_detail
 
 
 def _apply_real_scan_verdict(
@@ -726,16 +779,21 @@ def _apply_real_scan_verdict(
     staged_dir: Path,
     build_output: Dict[str, Any],
     baseline: Dict[str, Any],
+    *,
+    loader_breaking: bool,
+    loader_detail: str,
 ) -> None:
     """Overrides facts["verdict"]/["detail"] with the real `abicheck
     compare` result for cmake/make backends -- the nm/readelf-derived
     fields facts.update() already wrote above (symbols/public_headers_changed/
     etc.) are left in place as informational context, but the winning
     verdict/detail for these two backends now comes from the real scanner,
-    not the symbol-table diff.
+    not the symbol-table diff -- EXCEPT a loader-level break
+    (loader_breaking), which always wins (see _combine_with_loader_break).
 
     Fails closed to NOT_COMPARABLE (never silently keeps the nm/readelf
-    verdict as if the real scanner had agreed) when:
+    verdict as if the real scanner had agreed), unless loader_breaking
+    overrides it to BREAKING, when:
     - the baseline predates this integration (no embedded abicheck_snapshot
       -- e.g. a committed baseline from before this PR); or
     - the real dump/compare invocation itself fails (missing castxml, a
@@ -743,16 +801,18 @@ def _apply_real_scan_verdict(
     """
     baseline_snapshot = baseline.get("abicheck_snapshot")
     if not isinstance(baseline_snapshot, dict):
-        facts.update(
-            verdict="NOT_COMPARABLE",
-            detail=(
+        verdict, detail = _combine_with_loader_break(
+            "NOT_COMPARABLE",
+            (
                 "this profile's committed baseline has no embedded abicheck_snapshot "
                 "(real-scanner integration) -- run `ci/check_profile.py dump` to "
                 "produce one; refusing to report a verdict derived only from the "
                 "nm/readelf symbol-table diff for a backend that should have real "
                 "scanner evidence"
             ),
+            loader_breaking, loader_detail,
         )
+        facts.update(verdict=verdict, detail=detail)
         return
 
     try:
@@ -765,10 +825,12 @@ def _apply_real_scan_verdict(
             candidate_path.write_text(json.dumps(candidate_snapshot), encoding="utf-8")
             real_report = real_scan.compare_real_snapshots(baseline_path, candidate_path, tmp_path / "compare.json")
     except (real_scan.RealScanError, CheckProfileError) as exc:
-        facts.update(
-            verdict="NOT_COMPARABLE",
-            detail=f"real abicheck compare failed for {profile_id}/{target}: {exc}",
+        verdict, detail = _combine_with_loader_break(
+            "NOT_COMPARABLE",
+            f"real abicheck compare failed for {profile_id}/{target}: {exc}",
+            loader_breaking, loader_detail,
         )
+        facts.update(verdict=verdict, detail=detail)
         return
 
     mapped = real_scan.map_verdict(real_report.get("verdict"))
@@ -778,8 +840,10 @@ def _apply_real_scan_verdict(
     elif isinstance(real_report.get("summary"), str) and real_report["summary"]:
         detail += f" -- {real_report['summary']}"
 
+    verdict, detail = _combine_with_loader_break(mapped["verdict"], detail, loader_breaking, loader_detail)
+
     facts.update(
-        verdict=mapped["verdict"],
+        verdict=verdict,
         detail=detail,
         mechanism=(
             "real abicheck dump/compare (--depth source, compile_commands.json "

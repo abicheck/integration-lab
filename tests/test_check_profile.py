@@ -397,3 +397,38 @@ def test_compare_profile_missing_baseline_backend_is_not_a_mismatch(tmp_path):
 
     result = compare_profile("p1", "math", staged, baseline)
     assert result["verdict"] == "NO_CHANGE"
+
+
+def test_compare_profile_real_scan_backend_preserves_loader_break(tmp_path):
+    # A loader-level break (the SONAME-named file missing from staged
+    # output) is invisible to a real `abicheck compare` -- it only ever
+    # inspects the two snapshot files it's handed, not which files are
+    # physically staged alongside them on disk. For a cmake/make backend,
+    # this must never be silently discarded just because the real-scan
+    # path itself can't run (here: baseline predates the real-scanner
+    # integration, so this hits _apply_real_scan_verdict's own
+    # missing-abicheck_snapshot fail-closed branch) -- the combined
+    # verdict must stay BREAKING, not fall back to NOT_COMPARABLE (Codex
+    # review, PR #25: "Preserve loader failures when applying the scanner
+    # verdict").
+    lib_before = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so", extra_args=["-Wl,-soname,libmath.so.1"]
+    )
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    baseline = build_baseline("p1", "math", baseline_staged)  # backend "bazel" -- no abicheck_snapshot
+    baseline["backend"] = "cmake"  # match the candidate's backend below, avoiding the mismatch guard
+
+    lib_after = _compile_shared_lib(
+        tmp_path, "int foo(void) { return 1; }\n", name="lib_after.so", extra_args=["-Wl,-soname,libmath.so.1"]
+    )
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="libmath.so")
+    # No libmath.so.1 written alongside libmath.so -- the loader-level break.
+    build_output_path = candidate_staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "cmake"
+    build_output_path.write_text(json.dumps(build_output))
+
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+    assert result["verdict"] == "BREAKING"
+    assert "no file named that exists" in result["detail"]
+    assert "loader-level break" in result["detail"]
