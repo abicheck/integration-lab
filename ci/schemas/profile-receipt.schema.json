@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/profile-receipt.schema.json",
+  "title": "abicheck-bazel-lab per-profile integration receipt",
+  "description": "Schema for the receipt ci/emit_profile_receipt.py writes per profile per CI run: 'this run, this workflow, this job actually ran a check/coverage pass for this profile, and here is what it found'. See ci/emit_profile_receipt.py's module docstring (schema id abicheck.integration-profile-receipt/v1) and scripts/capability_receipts.py, whose passed/failed/skipped status contract this deliberately mirrors.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "profile_id",
+    "status",
+    "workflow",
+    "job",
+    "run_id",
+    "run_attempt",
+    "sha",
+    "build",
+    "build_system",
+    "reports"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "abicheck.integration-profile-receipt/v1" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "required": { "type": "boolean" },
+    "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+    "workflow": { "type": "string", "minLength": 1 },
+    "job": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string" },
+    "run_attempt": { "type": "string" },
+    "sha": { "type": "string" },
+    "build": {
+      "type": "object",
+      "required": ["success"],
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" }
+      }
+    },
+    "scanner": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mechanism": { "type": "string" }
+      }
+    },
+    "build_system": { "type": "string" },
+    "compiler": { "type": "object" },
+    "build_output_digest": { "type": ["string", "null"] },
+    "reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "path", "digest", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "target": { "type": "string" },
+          "path": { "type": ["string", "null"] },
+          "digest": { "type": ["string", "null"] },
+          "verdict": {
+            "type": "string",
+            "enum": ["NO_CHANGE", "COMPATIBLE", "BREAKING", "NOT_COMPARABLE", "NOT_RUN"]
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": ["object", "null"],
+      "additionalProperties": true
+    },
+    "detail": { "type": "string" }
+  }
+}
