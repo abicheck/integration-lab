@@ -280,7 +280,7 @@ def main():
     parser.add_argument("output", help="Path to write the normalized, commit-ready JSON")
     parser.add_argument(
         "--repo-root-marker",
-        default="abicheck-bazel-lab",
+        default="integration-lab",
         help="Repo directory name to strip from absolute paths (default: %(default)s)",
     )
     args = parser.parse_args()

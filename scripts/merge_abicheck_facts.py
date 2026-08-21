@@ -59,7 +59,7 @@ def main(argv: list[str]) -> int:
             "abicheck_inputs_version": 1,
             "binary": "",
             "compile_db": "",
-            "created_by": "abicheck-bazel-lab merge_abicheck_facts.py",
+            "created_by": "abicheck-integration-lab merge_abicheck_facts.py",
             "exported_symbols": [],
             "headers": [],
             "kind": "abicheck_inputs",

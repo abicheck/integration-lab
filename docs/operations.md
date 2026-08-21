@@ -164,3 +164,46 @@ kept open as reusable acceptance cases rather than merged or closed. Do not
 treat an old, open PR with a "breaking" or "compatible" title as
 abandoned work — check whether it's referenced as a scenario or test case
 before closing it.
+
+## Repository transfer readiness checklist
+
+The repository already lives at `abicheck/integration-lab`; this section
+is the checklist for whoever moves it again (a fork consolidation, an org
+rename, or an actual GitHub "Transfer ownership") without silently
+breaking a hard-coded assumption. None of these items *perform* a
+transfer — see the top-level design doc's explicit non-goal against
+transferring a repository as part of a code-only PR.
+
+- [ ] `ci/emit_build_output.py`'s `project.name` and
+  `scripts/merge_abicheck_facts.py`'s `created_by` string are cosmetic
+  provenance labels, not comparability inputs — update them to match
+  the new repository slug, but they do not need to match any git remote
+  at runtime.
+- [ ] `scripts/normalize_baseline.py --repo-root-marker` defaults to the
+  checkout directory name (`integration-lab`) so absolute paths recorded
+  during `dump` get stripped consistently. If the repository directory
+  name changes (a rename, not just an org move), update the default and
+  regenerate every committed baseline
+  (`abi/*.abicheck.json`, `abi/profiles/*/*.abicheck.json`) — a stale
+  marker doesn't break comparability, it just leaves host-specific
+  absolute-path fragments un-stripped in freshly generated snapshots.
+- [ ] Grep for the literal old slug across `.github/workflows/`, `docs/`,
+  `README.md`, and `ci/`/`scripts/` before closing out a transfer:
+  `grep -rln "<old-org>/<old-repo>"` should return nothing outside this
+  file's own historical record and `UPSTREAM_TO_ABICHECK.md` (which
+  intentionally keeps the lab revision this doc audited under its
+  original name for traceability).
+- [ ] Branch protection, required status checks (currently the Bazel
+  `abi-scan.yml` gate; see `docs/canonical-bazel-gate.md`), and
+  `CODEOWNERS` are GitHub repository settings, not files — they do not
+  migrate automatically on a transfer and must be re-verified against
+  the destination repository afterward.
+- [ ] `release.yml`'s and `canary.yml`'s `repository_dispatch`
+  integration (scanner-candidate certification from `abicheck/abicheck`)
+  is configured from the sender side against this repository's
+  `owner/repo` — confirm the upstream dispatch target is updated if the
+  slug changes.
+- [ ] README badges and any status-check links that hard-code the
+  current `owner/repo` in their URL need updating alongside the actual
+  transfer, not before — updating them early just points a badge at a
+  repository that doesn't exist yet.
