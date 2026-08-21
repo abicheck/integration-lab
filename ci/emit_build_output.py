@@ -204,7 +204,13 @@ def stage_profile(
         "evidence": {"dir": "evidence", "backend_evidence": evidence_summary},
         "provenance": {"dir": "provenance"},
         "diagnostics": list(build_result.diagnostics) + header_diagnostics,
-        "success": bool(build_result.success),
+        # A declared-but-missing header_roots entry must fail staging, not
+        # just get noted: run_profile.py/the workflow both key off this
+        # flag alone to decide exit code/continue-on-error visibility, so
+        # `success: true` here previously meant "the build succeeded" even
+        # when a downstream consumer of this staged output would be
+        # missing headers it was told to expect (Codex review, PR #19).
+        "success": bool(build_result.success) and not header_diagnostics,
     }
 
     (out_dir / "build-output.json").write_text(

@@ -45,6 +45,28 @@ class BazelBackend(BuildBackend):
     def _labels(self) -> Dict[str, str]:
         return dict(self.profile["targets"])
 
+    def _toolchain_args(self) -> list:
+        # ci/profiles.yaml's compiler.cc/cxx previously named intent only
+        # ("Bazel resolves its own C++ toolchain independently of $PATH")
+        # while `bazel build` ran with no CC/CXX override at all -- meaning
+        # a bare `bazel build` here actually used whatever `cc`/`gcc`
+        # resolves to by default (e.g. gcc-13 on ubuntu-24.04, the
+        # non-versioned default), while emit_build_output.py's provenance
+        # unconditionally reported the *declared* gcc-14/g++-14 version
+        # instead of what was actually used to produce the shipped binary
+        # (Codex review, PR #19). Bazel's autoconfigured cc toolchain reads
+        # CC/CXX from the repository rule's environment, so pass them as
+        # --repo_env to make the declared compiler the one Bazel truly
+        # invokes, closing the intent/reality gap instead of just
+        # correcting the report.
+        compiler = self.profile.get("compiler", {})
+        args = []
+        if compiler.get("cc"):
+            args.append(f"--repo_env=CC={compiler['cc']}")
+        if compiler.get("cxx"):
+            args.append(f"--repo_env=CXX={compiler['cxx']}")
+        return args
+
     def build(self) -> BuildResult:
         started = time.time()
         labels = self._labels()
@@ -52,7 +74,9 @@ class BazelBackend(BuildBackend):
         build_log = ""
         success = True
         try:
-            proc = self._run([self._bazel_executable(), "build", *labels.values()])
+            proc = self._run(
+                [self._bazel_executable(), "build", *self._toolchain_args(), *labels.values()]
+            )
             build_log = proc.stdout
         except BackendError as exc:
             build_log = str(exc)
