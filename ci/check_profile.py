@@ -1,30 +1,48 @@
 #!/usr/bin/env python3
-"""PR2: run a real ABI comparison against one profile's staged build output
+"""PR2 (extended by a later PR -- roadmap.md item 1): run a real ABI
+comparison against one profile's staged build output
 (`abicheck-build-<profile-id>/`, produced by `ci/run_profile.py`/
 `ci/emit_build_output.py`) and against a committed baseline
 (`abi/profiles/<profile-id>/<target>.abicheck.json`).
 
-## What this actually is, and what it is not
+## Two mechanisms, by backend
 
-The real `abicheck` scanner (`pip install abicheck @ git+https://github.com/
-abicheck/abicheck.git@...`, the same package `.github/workflows/abi-scan.yml`
-installs) is not available in this sandbox -- there is no network access here
-(verified: `pip download` against that same git+https URL times out with no
-response), and nothing under `tools/abicheck/` is a vendored copy of the
-scanner itself. `tools/abicheck/facts.bzl`/`BUILD.bazel` are Bazel-only
-*glue* that feeds a source-fact pack to the real, externally-installed
-`abicheck` CLI (see that CLI's `--build-info` flag) -- they do not implement
-comparison logic on their own, and they only apply to Bazel-built targets in
-the first place.
+**cmake and make backends: the real `abicheck` scanner.** `ci/real_scan.py`
+runs an actual `abicheck dump --depth source` (using the profile's own
+`compile_commands.json` as `--build-info`, filtered to the target's own
+translation unit -- see that module's own docstring for why the filtering
+is necessary) and `abicheck compare` between two such snapshots. This is
+the real, source-level scanner -- the same package `.github/workflows/
+abi-scan.yml` installs for the Bazel profile -- not a reimplementation.
+`build_baseline()` embeds the raw dump snapshot as `abicheck_snapshot`;
+`compare_profile()` (via `_apply_real_scan_verdict`) runs a fresh dump of
+the candidate and a real `abicheck compare` against the baseline's
+embedded snapshot, then overrides this report's `verdict`/`detail` with
+the real scanner's own verdict (mapped through `ci/real_scan.py`'s
+`_VERDICT_MAP`). A baseline that predates this integration (no embedded
+`abicheck_snapshot`) or a real-scanner invocation failure both fail closed
+to `NOT_COMPARABLE` -- never silently falls back to the mechanism
+described below as if it were equivalent evidence.
 
-So this script is deliberately NOT a reimplementation of, wrapper around, or
+**bazel backend: the nm/readelf mechanism below, unchanged.** The Bazel
+profile already has its own real, required ABI gate elsewhere
+(`abi-scan.yml`'s `scan` job, using Bazel's own `cquery`/`aquery` evidence
+pack), so this shadow/advisory workflow's own Bazel leg keeps the
+lightweight mechanism this file originally shipped with -- it was never
+meant to be Bazel's authoritative gate, only a same-shape advisory signal
+alongside the other two profiles.
+
+## What the nm/readelf mechanism (still used for `bazel`) actually is, and
+is not
+
+This mechanism is deliberately NOT a reimplementation of, wrapper around, or
 stand-in claiming to be `abicheck`. It is a small, honest, source-of-truth
 ABI *compatibility signal* built directly from the ELF binary and toolchain
 utilities every one of this lab's runners already has (`nm`, `readelf` --
-part of `binutils`, present on every Ubuntu runner and this sandbox, no
-install step needed): a diff of each staged shared library's **dynamic
-symbol table** (the same table the real `abicheck` also ultimately anchors
-its binary-level evidence to) between a committed baseline and this profile's
+part of `binutils`, present on every Ubuntu runner, no install step
+needed): a diff of each staged shared library's **dynamic symbol table**
+(the same table the real `abicheck` also ultimately anchors its
+binary-level evidence to) between a committed baseline and this profile's
 freshly-built candidate, plus a content-hash diff of the target's staged
 public headers.
 
@@ -83,8 +101,15 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+CI_DIR = Path(__file__).resolve().parent
+if str(CI_DIR) not in sys.path:
+    sys.path.insert(0, str(CI_DIR))
+
+import real_scan  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -238,6 +263,10 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _header_root_prefix(target: str) -> str:
+    return "strings_lib/include" if target == "strings" else "include"
+
+
 def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], target: str) -> Dict[str, str]:
     """{staged-relative header path: sha256} for every header staged under
     this target's own header root(s) -- `include/` for `math`,
@@ -247,8 +276,7 @@ def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], t
     layout (verified against `ci/profiles.yaml` and the real repo tree),
     not a generic inference.
     """
-    root_prefix = "strings_lib/include" if target == "strings" else "include"
-    headers_dir = staged_dir / "headers" / root_prefix
+    headers_dir = staged_dir / "headers" / _header_root_prefix(target)
     result: Dict[str, str] = {}
     if not headers_dir.is_dir():
         # A missing header root used to return {} on both the baseline and
@@ -288,17 +316,55 @@ def build_baseline(profile_id: str, target: str, staged_dir: Path) -> Dict[str, 
         )
 
     library_path = _target_library_path(staged_dir, build_output, target)
-    return {
+    backend = build_output.get("profile", {}).get("backend")
+    baseline: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": BASELINE_KIND,
         "profile_id": profile_id,
         "target": target,
-        "backend": build_output.get("profile", {}).get("backend"),
+        "backend": backend,
         "library_filename": library_path.name,
         "soname": _soname(library_path),
         "dynamic_symbols": dynamic_symbols(library_path),
         "public_headers": _public_headers_for_target(staged_dir, build_output, target),
     }
+
+    if backend in real_scan.REAL_SCAN_BACKENDS:
+        # Real scanner path (roadmap.md item 1): embed an actual
+        # `abicheck dump --depth source` snapshot alongside the existing
+        # nm/readelf fields above -- the latter stay for
+        # backward-compatible receipt/coverage fields (candidate_soname,
+        # symbols diff, etc.), the former is what compare_profile() below
+        # actually compares for these two backends. A failure here fails
+        # `dump` closed (raises, so no baseline is written at all) rather
+        # than silently committing a baseline with no real evidence for a
+        # backend that's supposed to have it (design doc section 3.9, "no
+        # magic fallbacks").
+        baseline["abicheck_snapshot"] = _real_dump_for_target(profile_id, target, staged_dir, build_output)
+
+    return baseline
+
+
+def _real_dump_for_target(
+    profile_id: str, target: str, staged_dir: Path, build_output: Dict[str, Any]
+) -> Dict[str, Any]:
+    library_path = _target_library_path(staged_dir, build_output, target)
+    header_dir = staged_dir / "headers" / _header_root_prefix(target)
+    compile_db = staged_dir / "evidence" / "compile_commands.json"
+    try:
+        with tempfile.TemporaryDirectory(prefix="abicheck-real-scan-") as tmp:
+            tmp_path = Path(tmp)
+            filtered_db = real_scan.filter_compile_db_for_target(compile_db, target, tmp_path / "compile_commands.json")
+            return real_scan.dump_real_snapshot(
+                library_path=library_path,
+                header_dir=header_dir,
+                compile_db=filtered_db,
+                sources_root=REPO_ROOT,
+                version=f"{profile_id}-{target}",
+                out_path=tmp_path / "dump.json",
+            )
+    except real_scan.RealScanError as exc:
+        raise CheckProfileError(f"real abicheck dump failed for {profile_id}/{target}: {exc}") from exc
 
 
 def _index_by_name(symbols: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -614,7 +680,83 @@ def compare_profile(
         # not just its path (Codex review, PR #20).
         candidate_library_sha256=_sha256_file(library_path),
     )
+
+    backend = build_output.get("profile", {}).get("backend")
+    if backend in real_scan.REAL_SCAN_BACKENDS:
+        _apply_real_scan_verdict(facts, profile_id, target, staged_dir, build_output, baseline)
+
     return facts
+
+
+def _apply_real_scan_verdict(
+    facts: Dict[str, Any],
+    profile_id: str,
+    target: str,
+    staged_dir: Path,
+    build_output: Dict[str, Any],
+    baseline: Dict[str, Any],
+) -> None:
+    """Overrides facts["verdict"]/["detail"] with the real `abicheck
+    compare` result for cmake/make backends -- the nm/readelf-derived
+    fields facts.update() already wrote above (symbols/public_headers_changed/
+    etc.) are left in place as informational context, but the winning
+    verdict/detail for these two backends now comes from the real scanner,
+    not the symbol-table diff.
+
+    Fails closed to NOT_COMPARABLE (never silently keeps the nm/readelf
+    verdict as if the real scanner had agreed) when:
+    - the baseline predates this integration (no embedded abicheck_snapshot
+      -- e.g. a committed baseline from before this PR); or
+    - the real dump/compare invocation itself fails (missing castxml, a
+      header-context ambiguity, etc.) -- see real_scan.py's own docstring.
+    """
+    baseline_snapshot = baseline.get("abicheck_snapshot")
+    if not isinstance(baseline_snapshot, dict):
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                "this profile's committed baseline has no embedded abicheck_snapshot "
+                "(real-scanner integration) -- run `ci/check_profile.py dump` to "
+                "produce one; refusing to report a verdict derived only from the "
+                "nm/readelf symbol-table diff for a backend that should have real "
+                "scanner evidence"
+            ),
+        )
+        return
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="abicheck-real-scan-") as tmp:
+            tmp_path = Path(tmp)
+            baseline_path = tmp_path / "baseline.json"
+            baseline_path.write_text(json.dumps(baseline_snapshot), encoding="utf-8")
+            candidate_snapshot = _real_dump_for_target(profile_id, target, staged_dir, build_output)
+            candidate_path = tmp_path / "candidate.json"
+            candidate_path.write_text(json.dumps(candidate_snapshot), encoding="utf-8")
+            real_report = real_scan.compare_real_snapshots(baseline_path, candidate_path, tmp_path / "compare.json")
+    except (real_scan.RealScanError, CheckProfileError) as exc:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=f"real abicheck compare failed for {profile_id}/{target}: {exc}",
+        )
+        return
+
+    mapped = real_scan.map_verdict(real_report.get("verdict"))
+    detail = f"real abicheck compare verdict: {real_report.get('verdict')!r}"
+    if mapped["unmapped_abicheck_verdict"] is not None:
+        detail += " (not recognized by ci/real_scan.py's _VERDICT_MAP -- failing closed)"
+    elif isinstance(real_report.get("summary"), str) and real_report["summary"]:
+        detail += f" -- {real_report['summary']}"
+
+    facts.update(
+        verdict=mapped["verdict"],
+        detail=detail,
+        mechanism=(
+            "real abicheck dump/compare (--depth source, compile_commands.json "
+            "--build-info, filtered to this target's own translation unit -- see "
+            "ci/real_scan.py)"
+        ),
+        abicheck_report=real_report,
+    )
 
 
 def _write_json(doc: Dict[str, Any], out_path: Path) -> None:

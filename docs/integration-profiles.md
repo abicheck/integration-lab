@@ -85,12 +85,37 @@ CMake/Make: `min_compile_units` via a non-empty `compile_commands.json`
 (`require_compile_commands: false` on the Make profile, since `bear` is
 optional there).
 
-## The current lab checker and its limitations (`ci/check_profile.py`)
+## The current lab checker (`ci/check_profile.py`): real scanner for
+cmake/make, a lab-only signal for bazel's own leg
 
-**This is the single most important limitation to understand about this
-whole system.** `ci/check_profile.py` is a lab-specific compatibility
-signal, not the real ABICheck source-level scanner. It diffs each staged
-shared library's:
+`ci/check_profile.py` routes to two different mechanisms depending on the
+profile's own backend:
+
+**cmake and make: the real ABICheck scanner (`ci/real_scan.py`,
+roadmap.md item 1).** A real `abicheck dump --depth source` (using the
+profile's own staged `compile_commands.json` as `--build-info`, filtered
+to the target's own translation unit -- see `ci/real_scan.py`'s own
+docstring for why filtering the whole-project database down to one target
+is necessary: an unfiltered database includes the consumer app's own TU,
+which includes the same public header under a materially different
+compile context, and abicheck correctly refuses to guess which context to
+parse the header under) and a real `abicheck compare` between two such
+snapshots. `build_baseline()` embeds the raw snapshot as
+`abicheck_snapshot`; `compare_profile()` re-dumps the candidate and
+compares it against the baseline's embedded snapshot, then reports the
+real scanner's own verdict (mapped onto this lab's NO_CHANGE/COMPATIBLE/
+BREAKING/NOT_COMPARABLE model). A baseline predating this integration, or
+a real-scanner invocation failure, fails closed to `NOT_COMPARABLE` —
+never silently falls back to the mechanism below as if it were equivalent
+evidence.
+
+**bazel (this advisory workflow's own leg only): a lab-specific ELF/header
+signal, not the real scanner.** The Bazel profile already has its own
+real, required gate elsewhere (`abi-scan.yml`'s `scan` job, using Bazel's
+own `cquery`/`aquery` evidence pack) — this shadow workflow's own Bazel leg
+never needed a second real-scanner path, so it kept the lighter mechanism
+this file originally shipped with for all three profiles. It diffs each
+staged shared library's:
 
 - ELF dynamic symbol table (`nm -D`/`readelf`) — symbols added/removed;
 - symbol kinds and ABI-relevant data sizes;
@@ -102,15 +127,18 @@ It reliably catches an exported symbol being removed or resized, a SONAME
 change, or a header content change. **It cannot** classify a struct/class
 layout change with no symbol rename, a default-argument change, an
 inline/template body change, or any other source/API change invisible at
-the binary symbol-table level. When headers changed and nothing else did,
-the verdict is `NOT_COMPARABLE` — reported as unclassified, not as a proven
-compatible change. See that script's own module docstring for the full
-accounting.
+the binary symbol-table level — exactly the class of change the real
+scanner now catches for the other two profiles. See that script's own
+module docstring for the full accounting.
 
 `dump`/`check` modes write and compare against
 `abi/profiles/<profile-id>/{math,strings}.abicheck.json` — a baseline
 schema and mechanism entirely separate from `abi/math.abicheck.json`, which
-`abi-scan.yml`'s real scan still reads unchanged.
+`abi-scan.yml`'s real scan still reads unchanged. For the cmake/make
+profiles, this file's `abicheck_snapshot` field is what the real scanner
+actually compares; the other fields (`dynamic_symbols`, `public_headers`,
+`soname`) remain populated too, for backward-compatible receipt/coverage
+fields and as a secondary, informational cross-check.
 
 ## Profile receipts (`ci/emit_profile_receipt.py`)
 
@@ -247,19 +275,26 @@ only, like every other workflow in this document: `canary.yml` is not a
 required status check, and cannot be — it never runs against a PR's own
 commit in the first place.
 
-## Planned migration to the real ABICheck Action
+## Real scanner migration for CMake/Make: done (roadmap.md item 1)
 
-`ci/check_profile.py`'s ELF/header signal exists only because the real
-`abicheck` scanner isn't installable in this lab's own validation sandbox
-(no network access there). A real CI run does have network access. The
-planned migration (see [roadmap.md](roadmap.md)) replaces
-`check_profile.py`'s comparison mechanism with a real `abicheck
-scan`/`compare` invocation for the CMake and Make profiles — CMake's
-`compile_commands.json` and Make's `bear`-generated equivalent are both
-legitimate `--build-info`-shaped inputs once wired up — while keeping the
-profile/receipt/gate architecture built around it. Promoting any profile
-from advisory to `contract: true` is a separate, later decision, not
-implied by this migration alone.
+`ci/check_profile.py`'s ELF/header signal was originally used for all
+three profiles because the real `abicheck` scanner wasn't installable in
+an earlier validation sandbox (no network access there). A real CI run
+does have network access, and this lab's own later validation confirmed
+the same: `ci/real_scan.py` now runs a real `abicheck dump --depth
+source`/`compare` invocation for the CMake and Make profiles — CMake's
+`compile_commands.json` and Make's `bear`-generated equivalent both feed
+`--build-info` directly, filtered per-target (see that module's own
+docstring) — while keeping the profile/receipt/gate architecture built
+around it unchanged; `ci/emit_profile_receipt.py` and
+`ci/check_profile_coverage.py` needed no changes at all, since both only
+ever read a report's `verdict`/`profile_id`/`target`/`candidate_library_*`
+fields. The Bazel profile's own leg of this same advisory workflow
+deliberately keeps the ELF/header mechanism (see the section above) —
+Bazel already has its own real, required gate in `abi-scan.yml`, so it
+never needed a second real-scanner path here. Promoting any profile from
+advisory to `contract: true` remains a separate, later decision, not
+implied by this migration alone (roadmap.md item 4).
 
 ## Adding a profile
 

@@ -6,11 +6,13 @@ name: Multi-build-system integration shadow
 # three independent build systems -- Bazel (the existing, unchanged,
 # required gate), CMake+Ninja, and a handwritten Makefile -- stages each
 # into the canonical abicheck-build-<profile-id>/ output shape
-# (ci/emit_build_output.py), and runs a lab-specific per-profile ABI signal
-# (ci/check_profile.py: an ELF dynamic-symbol/SONAME/header-digest diff,
-# NOT the real ABICheck source-level scanner -- see that script's own
-# module docstring) against each profile's own committed baseline. It
-# NEVER fails the overall required-check surface: every per-profile job
+# (ci/emit_build_output.py), and runs a per-profile ABI check against each
+# profile's own committed baseline: for cmake/make, a REAL `abicheck
+# dump`/`compare` invocation (ci/real_scan.py, roadmap.md item 1); for
+# bazel, the original ELF dynamic-symbol/SONAME/header-digest diff
+# (ci/check_profile.py's own module docstring explains why bazel keeps the
+# lighter mechanism -- it already has its own real, required gate in
+# abi-scan.yml). It NEVER fails the overall required-check surface: every per-profile job
 # step below runs `continue-on-error: true`, and despite the fail-closed
 # `integration_gate` fan-in job at the bottom of this file, this workflow
 # is deliberately never added to branch-protection required status checks.
@@ -123,6 +125,26 @@ jobs:
       - name: Set up Ninja
         if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
         run: sudo apt-get install -y ninja-build
+
+      # cmake/make legs route ci/check_profile.py through a REAL `abicheck
+      # dump`/`compare` invocation (ci/real_scan.py, roadmap.md item 1) --
+      # both the scanner package itself and a compatible CastXML build are
+      # needed for that; the bazel leg keeps its existing nm/readelf-only
+      # mechanism and needs neither (abi-scan.yml installs its own pinned
+      # abicheck/CastXML independently for the Bazel gate). Same pinned
+      # SHA and installer abi-scan.yml/scenarios.yml already use, so a pin
+      # bump is one deliberate, reviewed change across every workflow, not
+      # three independent ones.
+      - name: Install real abicheck scanner + pinned CastXML (cmake/make only)
+        if: >-
+          matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja' ||
+          matrix.profile == 'linux-x86_64-gcc14-cxx17-make-bear'
+        run: |
+          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
 
       - name: Run profile (build + stage + validate)
         id: run_profile

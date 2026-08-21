@@ -858,6 +858,37 @@ for the CMake/Make profiles.
 
 # 2026-08-21 follow-up: PR2's ABI check is a symbol-table diff, not the real scanner -- because the real scanner is unreachable, not by choice
 
+**2026-08-21 update: resolved for cmake/make, not a general pattern to
+follow for bazel's own advisory leg.** A later session's own sandbox DID
+have network access (`pip download`/`pip install` against the exact pinned
+`abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67
+a2f444bc097cfe24cd2d99c3` URL both succeeded), confirming this entry's own
+"a real CI run does have network access and could install the real
+scanner" prediction. `ci/real_scan.py` now runs a real `abicheck dump
+--depth source`/`compare` invocation for the cmake and make profiles,
+verified end-to-end against this repo's own real CMake+Ninja build: a
+self-comparison reports `NO_CHANGE`, and a real function removal from
+`src/math.cc`/`include/abicheck_lab/math.h` reproducibly reports
+`BREAKING` via `abicheck compare` -- not the symbol-table mechanism this
+entry originally documented. `ci/check_profile.py`'s nm/readelf mechanism
+(the rest of this entry, kept as the historical record of what it is and
+is not) remains in place only for the Bazel profile's own leg of this same
+advisory workflow -- Bazel already has its own real, required gate in
+`abi-scan.yml`, so its leg here never needed the real-scanner path this
+update describes. One integration detail worth recording for anyone
+repeating this: both CMake's and Make's own `compile_commands.json`
+describe the whole project (all of `math`/`strings`/`consumer` in one
+database), and handing the unfiltered database to `abicheck dump -H
+<target's header dir>` fails closed with a real, correct error -- the
+consumer's own TU also includes the target's public header under a
+materially different compile context (`-fPIE` vs the library's own
+`-fPIC`), so abicheck refuses to guess which context to parse the header
+under, exactly analogous to this doc's own P0.2 entry for Bazel's
+`deps(//...)` scope. `ci/real_scan.py`'s `filter_compile_db_for_target`
+pre-filters the database to the target's own translation unit before it
+reaches `abicheck dump`, the same way Bazel's own target-scoped
+`cquery`/`aquery` already does for that profile.
+
 **Context:** PR2 of the multi-build-system integration effort wires an
 actual ABI comparison into all three `ci/profiles.yaml` profiles
 (`ci/check_profile.py`, per-profile receipts via

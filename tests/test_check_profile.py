@@ -6,6 +6,17 @@ Builds real, tiny shared objects with `gcc` (skipped, not failed, when gcc
 isn't on PATH -- matching tests/test_backends.py's own precedent) rather
 than mocking nm/readelf output -- the whole point of this script is that it
 shells out to the real toolchain.
+
+These fixtures stage a synthetic build_output with backend "bazel" -- not
+because these tests are Bazel-specific, but because a later PR
+(ci/real_scan.py) wires cmake/make backends to a REAL `abicheck
+dump`/`compare` invocation requiring an actual compile_commands.json this
+synthetic single-.c-file fixture doesn't have. "bazel" is the one backend
+that still exercises exactly the nm/readelf mechanism these tests target,
+unconditionally, with no real-scan branch to satisfy. See
+tests/test_real_scan.py for the real-scan module's own unit tests, and
+test_check_profile.py's own test_compare_profile_real_scan_* tests below
+for the cmake/make override behavior.
 """
 from __future__ import annotations
 
@@ -45,7 +56,7 @@ def _stage_profile(tmp_path, lib_path, header_text="int foo(void);\nint bar(void
     (headers_dir / "api.h").write_text(header_text)
     build_output = {
         "schema_version": 1,
-        "profile": {"id": profile_id, "backend": "make"},
+        "profile": {"id": profile_id, "backend": "bazel"},
         "targets": {
             "math": {
                 "kind": "shared_library",
@@ -313,3 +324,33 @@ def test_compare_profile_not_comparable_on_missing_target(tmp_path):
     result = compare_profile("p1", "math", empty_staged, baseline)
     assert result["verdict"] == "NOT_COMPARABLE"
     assert "has no target" in result["detail"]
+
+
+def test_compare_profile_real_scan_backend_fails_closed_on_baseline_without_snapshot(tmp_path):
+    # cmake/make backends route through ci/real_scan.py (roadmap.md item
+    # 1). A baseline predating that integration (no embedded
+    # abicheck_snapshot -- e.g. a pre-existing committed
+    # abi/profiles/<id>/math.abicheck.json) must never silently fall back
+    # to the nm/readelf-only verdict as if the real scanner had agreed --
+    # it fails closed to NOT_COMPARABLE with an explicit reason (design
+    # doc section 3.9, "no magic fallbacks"). This does not require a real
+    # abicheck/castxml toolchain: the identity/kind checks and the
+    # nm/readelf pipeline run unchanged first (same symbols, same
+    # headers), and this fixture's baseline lacks abicheck_snapshot before
+    # ci/real_scan.py is ever invoked.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)  # backend "bazel" -- no abicheck_snapshot
+    assert "abicheck_snapshot" not in baseline
+
+    # Re-stage as a cmake backend (same library/headers -- only the
+    # declared backend changes) so compare_profile()'s real-scan branch
+    # fires against this same baseline.
+    build_output_path = staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "cmake"
+    build_output_path.write_text(json.dumps(build_output))
+
+    result = compare_profile("p1", "math", staged, baseline)
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert "no embedded abicheck_snapshot" in result["detail"]
