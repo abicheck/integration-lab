@@ -95,6 +95,37 @@ def test_receipt_failed_when_report_is_non_object_json(tmp_path):
     assert validate_document(receipt, SCHEMA_PATH) == []
 
 
+def test_receipt_failed_when_build_output_is_non_object_json(tmp_path):
+    # A failed/corrupted profile run can leave build-output.json as
+    # syntactically valid but non-object JSON (e.g. `[]`) -- this must
+    # fall through to the same "no valid build-output.json" handling as
+    # a missing/unparseable file, not crash with AttributeError.
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "build-output.json").write_text(json.dumps([]))
+    report_paths = {"math": _report(tmp_path, "math", "NO_CHANGE")}
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=None,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["build"]["success"] is False
+    assert validate_document(receipt, SCHEMA_PATH) == []
+
+
+def test_receipt_failed_when_coverage_result_is_non_object_json(tmp_path):
+    staged = _stage(tmp_path)
+    report_paths = {"math": _report(tmp_path, "math", "NO_CHANGE")}
+    coverage_path = tmp_path / "coverage.json"
+    coverage_path.write_text(json.dumps([]))
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=coverage_path,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["status"] == "failed"
+    assert validate_document(receipt, SCHEMA_PATH) == []
+
+
 def test_receipt_failed_when_coverage_fails(tmp_path):
     staged = _stage(tmp_path)
     report_paths = {"math": _report(tmp_path, "math", "NO_CHANGE")}

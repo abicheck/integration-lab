@@ -125,11 +125,25 @@ def build_receipt(
 ) -> Dict[str, Any]:
     build_output_path = staged_dir / "build-output.json"
     build_output = _load_json(build_output_path)
+    # A failed/corrupted profile run can leave syntactically valid JSON with
+    # a non-object top level (e.g. `[]`) at build-output.json -- that's
+    # truthy and not None, so every .get() call below would raise
+    # AttributeError instead of falling through to the "no valid
+    # build-output.json" status this function already handles for a
+    # missing/unparseable file. Since this emitter runs under `if: always()`
+    # specifically to record failed runs, that crash would drop the failed
+    # receipt entirely and lose the integration gate's build diagnostics
+    # (Codex review, PR #20; same shape as build_reports()'s report-JSON fix
+    # above).
+    if not isinstance(build_output, dict):
+        build_output = None
     build_output_digest = _sha256_file(build_output_path)
 
     reports = build_reports(report_paths)
 
     coverage_doc = _load_json(coverage_result) if coverage_result else None
+    if not isinstance(coverage_doc, dict):
+        coverage_doc = None
 
     detail_parts = []
     status = "passed"
