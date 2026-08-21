@@ -365,6 +365,56 @@ class TestCheck:
     def test_evidence_pack_queries_agreeing_is_clean(self):
         assert check(_dump_wf(), _scan_wf()) == []
 
+    def test_a_later_repeated_root_target_drift_is_caught(self):
+        # --root-target is documented and implemented (action="append")
+        # as repeatable -- comparing only the first occurrence would
+        # silently ignore a drift in any later one, even though both
+        # workflows' evidence pack is scoped to the FULL set of roots
+        # passed (Codex review, fresh evidence).
+        dump_wf = _dump_wf()
+        scan_wf = _scan_wf()
+        base_flags = (
+            'python3 x.py --cquery "$RUNNER_TEMP/bazel-cquery.json" '
+            '--aquery "$RUNNER_TEMP/bazel-aquery.json" --root-target "//:math"'
+        )
+        dump_wf["jobs"]["collect"]["steps"][2]["run"] = f'{base_flags} --root-target "//:extra"'
+        scan_wf["jobs"]["scan"]["steps"][2]["run"] = f'{base_flags} --root-target "//:different"'
+        errors = check(dump_wf, scan_wf)
+        assert any("BUILD_EVIDENCE_ROOT_TARGET_MISMATCH" in e for e in errors)
+
+    def test_multiple_matching_root_targets_is_clean(self):
+        dump_wf = _dump_wf()
+        scan_wf = _scan_wf()
+        run = (
+            'python3 x.py --cquery "$RUNNER_TEMP/bazel-cquery.json" '
+            '--aquery "$RUNNER_TEMP/bazel-aquery.json" '
+            '--root-target "//:math" --root-target "//:extra"'
+        )
+        dump_wf["jobs"]["collect"]["steps"][2]["run"] = run
+        scan_wf["jobs"]["scan"]["steps"][2]["run"] = run
+        assert check(dump_wf, scan_wf) == []
+
+    def test_evidence_pack_pip_pin_drift_via_named_ref_reinstall_is_caught(self):
+        # A second round on the same finding (Codex review, fresh
+        # evidence): pip accepts a named ref (`@main`) or no `@ref` suffix
+        # at all just as validly as a pinned SHA. A prior revision of the
+        # regex required `@[0-9a-f]{7,40}`, which silently ignored a later
+        # reinstall onto a moving ref.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        named_ref_reinstall = "pip install --force-reinstall git+https://github.com/abicheck/abicheck.git@main"
+        drifted = f"{shared_first_install}\n{named_ref_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_drift_via_no_ref_reinstall_is_caught(self):
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        no_ref_reinstall = "pip install --force-reinstall git+https://github.com/abicheck/abicheck.git"
+        drifted = f"{shared_first_install}\n{no_ref_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1

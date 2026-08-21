@@ -148,19 +148,25 @@ def _find_step(
     return None
 
 
-def _bazel_pack_root_target(workflow: dict[str, Any], job_id: str) -> str | None:
-    """The `--root-target` value the job's own `bazel_pack` step's shell
-    script passes to `build_bazel_evidence_pack.py` -- read out of the
-    step's `run:` block, since that's the only place this value lives (it
-    never reaches a typed Action input)."""
+def _bazel_pack_root_targets(workflow: dict[str, Any], job_id: str) -> list[str] | None:
+    """Every `--root-target` value the job's own `bazel_pack` step's shell
+    script passes to `build_bazel_evidence_pack.py`, in argv order -- read
+    out of the step's `run:` block, since that's the only place this value
+    lives (it never reaches a typed Action input). `--root-target` is
+    documented and implemented (`action="append"`) as repeatable (Codex
+    review, fresh evidence): comparing only the first occurrence would
+    silently ignore a drift in any *later* one, since both workflows'
+    evidence pack is scoped to the FULL set of roots passed, not just the
+    first. Returns `None` (not `[]`) when the step is missing entirely, so
+    a caller can still distinguish "no bazel_pack step" from "a bazel_pack
+    step with zero --root-target flags"."""
     step = _find_step(workflow, job_id, step_id="bazel_pack")
     if step is None:
         return None
     run = step.get("run")
     if not isinstance(run, str):
         return None
-    m = re.search(r"--root-target\s+\"([^\"]+)\"", run)
-    return m.group(1) if m else None
+    return re.findall(r"--root-target\s+\"([^\"]+)\"", run)
 
 
 # Matches a `bazel cquery`/`bazel aquery` invocation and captures both the
@@ -174,17 +180,31 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # which is where the abicheck git ref used to *build the evidence pack
 # itself* (a separate pin from the `uses: abicheck/abicheck@<sha>` scanner
 # Action pin already checked above) lives. Matches any `pip install` line
-# whose eventual VCS requirement resolves the `abicheck` repo at a ref --
-# both the PEP 508 form (`abicheck @ git+https://.../abicheck.git@<sha>`)
-# and a bare VCS-URL reinstall (`pip install --force-reinstall
-# git+https://.../abicheck.git@<sha>`, which pip's own `<vcs project url>`
+# whose eventual VCS requirement resolves the `abicheck` repo -- both the
+# PEP 508 form (`abicheck @ git+https://.../abicheck.git@<ref>`) and a
+# bare VCS-URL reinstall (`pip install --force-reinstall
+# git+https://.../abicheck.git@<ref>`, which pip's own `<vcs project url>`
 # operand accepts identically -- Codex review, fresh evidence: the PEP-508-
 # only pattern silently ignored this second, equally-real spelling, so a
 # later bare-URL reinstall replacing the package actually used to build
 # the evidence pack went unchecked). Doesn't require the literal
 # `abicheck @ ` prefix -- only that the URL eventually names the
-# `abicheck` repo at a hex ref, which both spellings share.
-_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?:\.git)?@[0-9a-f]{7,40}\S*", re.IGNORECASE)
+# `abicheck` repo, which both spellings share.
+#
+# The ref itself is OPTIONAL and unconstrained to a hex SHA (Codex review,
+# fresh evidence, a second round on this same pattern): pip accepts a
+# named ref (`@main`) or no `@ref` suffix at all (installing from the
+# repo's own default branch) exactly as validly as a pinned SHA -- an
+# earlier revision of this pattern required `@[0-9a-f]{7,40}`, which
+# silently ignored either of those, so a later reinstall onto a moving
+# ref went unrecognized and uncompared. `(?!/)` immediately after
+# `/abicheck` is load-bearing, not cosmetic: with the trailing `.git`/`@ref`
+# both optional, a naive `/abicheck` alone is satisfied by the *organization*
+# segment of `.../abicheck/abicheck...` (non-greedy `\S*?` takes the
+# shortest match), so without it this pattern would silently truncate at
+# `.../github.com/abicheck` and never see the real repo name or its ref at
+# all -- confirmed by testing without the lookahead before adding it.
+_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE)
 
 
 def _normalize_shell(text: str) -> str:
@@ -261,7 +281,7 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
     """The job's own `bazel_pack` step script, normalized, with the
     `--root-target` VALUE masked out -- that value is already compared
-    directly by `_bazel_pack_root_target`/`BUILD_EVIDENCE_ROOT_TARGET_
+    directly by `_bazel_pack_root_targets`/`BUILD_EVIDENCE_ROOT_TARGET_
     MISMATCH` above, so masking it here avoids reporting the identical
     drift twice under two different error codes."""
     step = _find_step(workflow, job_id, step_id="bazel_pack")
@@ -463,18 +483,19 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"{ABI_SCAN_PATH}: scan step's build-info={scan_build_info!r}, expected "
             f"{_EXPECTED_BUILD_INFO_EXPR!r} (steps.bazel_pack.outputs.pack_dir)"
         )
-    dump_root_target = _bazel_pack_root_target(baseline_wf, "collect")
-    scan_root_target = _bazel_pack_root_target(abi_scan_wf, "scan")
-    if dump_root_target is None:
+    dump_root_targets = _bazel_pack_root_targets(baseline_wf, "collect")
+    scan_root_targets = _bazel_pack_root_targets(abi_scan_wf, "scan")
+    if not dump_root_targets:
         errors.append(f"{BASELINE_PATH}: could not find --root-target in job 'collect''s bazel_pack step")
-    if scan_root_target is None:
+    if not scan_root_targets:
         errors.append(f"{ABI_SCAN_PATH}: could not find --root-target in job 'scan''s bazel_pack step")
-    if dump_root_target is not None and scan_root_target is not None and dump_root_target != scan_root_target:
+    if dump_root_targets and scan_root_targets and dump_root_targets != scan_root_targets:
         errors.append(
             "BUILD_EVIDENCE_ROOT_TARGET_MISMATCH: baseline.yml's evidence pack is scoped "
-            f"to --root-target {dump_root_target!r} but abi-scan.yml's is scoped to "
-            f"{scan_root_target!r} -- the baseline and the canonical scan must collect L3 "
-            "evidence for the same Bazel target"
+            f"to --root-target {dump_root_targets!r} but abi-scan.yml's is scoped to "
+            f"{scan_root_targets!r} -- the baseline and the canonical scan must collect L3 "
+            "evidence for the identical, identically-ordered set of Bazel targets "
+            "(--root-target is repeatable)"
         )
 
     # Complete evidence-pack *producer* recipe (Codex review, fresh
