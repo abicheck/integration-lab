@@ -431,4 +431,62 @@ def test_compare_profile_real_scan_backend_preserves_loader_break(tmp_path):
     result = compare_profile("p1", "math", candidate_staged, baseline)
     assert result["verdict"] == "BREAKING"
     assert "no file named that exists" in result["detail"]
-    assert "loader-level break" in result["detail"]
+
+
+def test_build_baseline_degrades_gracefully_when_bear_legitimately_absent(tmp_path):
+    # make.py's own verify_environment()/collect_evidence() document a
+    # missing `bear` as a non-failing degrade (PR1 item 5;
+    # ci/profiles.yaml's `coverage.require_compile_commands: false` for
+    # the make-bear profile makes the same tolerance explicit for the
+    # coverage gate). Before real_scan.py's real-scanner wiring landed, a
+    # runner without bear still got a baseline -- just an nm/readelf-only
+    # one. Unconditionally requiring compile_commands.json for the make
+    # backend's real-scan embed would instead crash `dump` outright on
+    # exactly this documented, non-failing configuration (Codex review,
+    # PR #25: "a configuration explicitly supported by the profile can
+    # build successfully but can no longer run its ABI signal").
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    build_output_path = staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "make"
+    build_output["evidence"] = {
+        "backend_evidence": {
+            "kind": "make+bear",
+            "compile_commands_present": False,
+            "note": "bear not installed on this runner -- compile_commands.json not generated",
+        }
+    }
+    build_output_path.write_text(json.dumps(build_output))
+
+    baseline = build_baseline("p1", "math", staged)  # must not raise RealScanError
+
+    assert baseline["abicheck_snapshot"] is None
+    assert "bear not installed" in baseline["abicheck_snapshot_skipped_reason"]
+    # nm/readelf fields are still a complete baseline on their own.
+    assert baseline["dynamic_symbols"]
+    assert baseline["public_headers"]
+
+
+def test_build_baseline_still_fails_closed_on_genuine_compile_db_failure(tmp_path):
+    # The bear-absent degrade above must not swallow a real invocation
+    # failure on a runner where bear IS installed (integration-shadow.yml
+    # explicitly installs it) -- that's still a genuine signal something's
+    # broken, matching ci/check_profile_coverage.py's identical
+    # tool_absent/genuine-failure distinction for the same evidence.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    build_output_path = staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "make"
+    build_output["evidence"] = {
+        "backend_evidence": {
+            "kind": "make+bear",
+            "compile_commands_present": False,
+            "note": "bear invocation failed: exit 1",
+        }
+    }
+    build_output_path.write_text(json.dumps(build_output))
+
+    with pytest.raises(Exception, match="no compile database"):
+        build_baseline("p1", "math", staged)

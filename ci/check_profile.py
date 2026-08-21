@@ -347,19 +347,62 @@ def build_baseline(profile_id: str, target: str, staged_dir: Path) -> Dict[str, 
     }
 
     if backend in real_scan.REAL_SCAN_BACKENDS:
-        # Real scanner path (roadmap.md item 1): embed an actual
-        # `abicheck dump --depth source` snapshot alongside the existing
-        # nm/readelf fields above -- the latter stay for
-        # backward-compatible receipt/coverage fields (candidate_soname,
-        # symbols diff, etc.), the former is what compare_profile() below
-        # actually compares for these two backends. A failure here fails
-        # `dump` closed (raises, so no baseline is written at all) rather
-        # than silently committing a baseline with no real evidence for a
-        # backend that's supposed to have it (design doc section 3.9, "no
-        # magic fallbacks").
-        baseline["abicheck_snapshot"] = _real_dump_for_target(profile_id, target, staged_dir, build_output)
+        if _bear_legitimately_absent(backend, build_output):
+            # make.py's own verify_environment()/collect_evidence() treat a
+            # missing `bear` as a documented, non-failing degrade (PR1 item
+            # 5; ci/profiles.yaml's `coverage.require_compile_commands:
+            # false` for the make-bear profile makes the same tolerance
+            # explicit for the coverage gate). Before this real-scanner
+            # wiring landed, that runner still got a baseline -- just an
+            # nm/readelf-only one. Unconditionally requiring
+            # compile_commands.json here would instead crash `dump` outright
+            # on exactly the configuration this backend was built to
+            # tolerate (Codex review, PR #25: "a configuration explicitly
+            # supported by the profile can build successfully but can no
+            # longer run its ABI signal"). Degrade the same way: no
+            # abicheck_snapshot, nm/readelf fields above remain the baseline.
+            baseline["abicheck_snapshot"] = None
+            baseline["abicheck_snapshot_skipped_reason"] = (
+                "bear not installed on this runner -- compile_commands.json was not "
+                "generated (optional evidence for the make backend; see "
+                "ci/profiles.yaml's coverage.require_compile_commands). Real-scan "
+                "snapshot omitted; nm/readelf fields above are this baseline's only "
+                "evidence, same as before the real scanner was wired in."
+            )
+        else:
+            # Real scanner path (roadmap.md item 1): embed an actual
+            # `abicheck dump --depth source` snapshot alongside the existing
+            # nm/readelf fields above -- the latter stay for
+            # backward-compatible receipt/coverage fields (candidate_soname,
+            # symbols diff, etc.), the former is what compare_profile() below
+            # actually compares for these two backends. A failure here (that
+            # ISN'T the documented bear-absent case just handled above) fails
+            # `dump` closed (raises, so no baseline is written at all) rather
+            # than silently committing a baseline with no real evidence for a
+            # backend that's supposed to have it (design doc section 3.9, "no
+            # magic fallbacks").
+            baseline["abicheck_snapshot"] = _real_dump_for_target(profile_id, target, staged_dir, build_output)
 
     return baseline
+
+
+def _bear_legitimately_absent(backend: str, build_output: Dict[str, Any]) -> bool:
+    """True only for the make backend's own documented "bear isn't
+    installed" degrade (make.py's collect_evidence(), verify_environment()) --
+    never for a genuine compile_commands.json generation failure on a runner
+    where bear IS installed (that's still a real signal something's broken,
+    matching ci/check_profile_coverage.py's identical tool_absent
+    distinction for the same evidence)."""
+    if backend != "make":
+        return False
+    evidence = build_output.get("evidence")
+    backend_evidence = evidence.get("backend_evidence") if isinstance(evidence, dict) else None
+    if not isinstance(backend_evidence, dict):
+        return False
+    if backend_evidence.get("compile_commands_present", True):
+        return False
+    note = backend_evidence.get("note") or ""
+    return note.startswith("bear not installed")
 
 
 def _real_dump_for_target(

@@ -143,6 +143,25 @@ PATH_REWRITE_PATHS = frozenset({
     ("enums", ANY_INDEX, "source_location"),
     ("enums", ANY_INDEX, "source_header"),
     ("source_path",),
+    # ci/real_scan.py's own dump_real_snapshot() invocation (cmake/make
+    # profile baselines' embedded abicheck_snapshot): --build-info is the
+    # filtered per-target compile database's own path under staged_dir,
+    # and --sources is always this repo's own absolute checkout root
+    # (REPO_ROOT). abicheck records both verbatim in the snapshot it
+    # produces, and again per-extractor -- a baseline refreshed on one
+    # checkout root (e.g. main's own CI runner) compared/verified against a
+    # dump taken from a different one (a local refresh, or release
+    # verification re-running on a fresh checkout) then differs only in
+    # this host-specific path text, not any actual ABI content
+    # (Codex review, PR #25: "the embedded snapshot still differs because
+    # the filtered compile-database path is recorded verbatim ... so
+    # apply_profile_baselines.py --verify-only can report byte-level drift
+    # despite an unchanged ABI"). Verified against a real embedded
+    # cmake-ninja/math snapshot: both fields are present exactly at these
+    # paths.
+    ("build_source", "manifest", "inputs", "build_info"),
+    ("build_source", "manifest", "inputs", "sources"),
+    ("build_source", "manifest", "extractors", ANY_INDEX, "inputs", ANY_INDEX),
 })
 
 # Exact paths whose "detail" free-text field is provenance prose that
@@ -225,6 +244,21 @@ def normalize_paths(node, repo_root_marker, path=()):
 def _normalize_path_string(value, repo_root_marker):
     if not value.startswith("/"):
         return value
+
+    # manifest.inputs.sources is always the repo root itself (--sources
+    # REPO_ROOT, see ci/real_scan.py) -- checked BEFORE the marker/rfind
+    # search below, not after: a GitHub Actions checkout doubles the repo
+    # dir name in its path (.../work/<repo>/<repo>), so a bare root value
+    # like "/home/runner/work/integration-lab/integration-lab" already
+    # contains one full "/integration-lab/" occurrence (between the two
+    # segments) even though nothing legitimately follows it -- the rfind
+    # search below would then treat the second segment's own name as if it
+    # were relative content and return the bogus "integration-lab" instead
+    # of recognizing the whole value as the root itself. "." is the same
+    # "this is the source root, nothing to strip further" placeholder
+    # abicheck's own CLI already accepts for --sources.
+    if value.endswith(f"/{repo_root_marker}"):
+        return "."
 
     # GitHub Actions checkouts land at .../work/<repo>/<repo>/..., so the
     # marker can legitimately appear twice; take the last occurrence to
