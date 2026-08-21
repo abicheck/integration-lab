@@ -117,7 +117,7 @@ import tempfile
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 CI_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CI_DIR.parent
@@ -290,14 +290,20 @@ def _compare_headers(
 def _try_abicheck_compare(
     target: str,
     library_a: Path,
-    header_a: Optional[Path],
+    headers_a: List[Path],
     library_b: Path,
-    header_b: Optional[Path],
+    headers_b: List[Path],
 ) -> Dict[str, Any]:
     """Best-effort real-scanner cross-check (see this module's docstring).
     Never raises -- any failure (abicheck not on PATH, a crash, a bad
     report) is recorded as its own outcome, never silently treated as
     "ran and agreed".
+
+    Passes EVERY staged public header for this target on each side (not
+    just one) -- every target in this repo happens to declare exactly one
+    public header today, but a future target with more than one would
+    otherwise have this deep check silently blind to any change outside
+    whichever header sorted first (CodeRabbit review, PR #23).
     """
     if shutil.which("abicheck") is None:
         return {"mechanism": "abicheck-compare", "outcome": "not_run", "reason": "abicheck not on PATH"}
@@ -321,9 +327,9 @@ def _try_abicheck_compare(
             "--policy",
             "strict_abi",
         ]
-        if header_a is not None:
+        for header_a in headers_a:
             cmd += ["--header", f"old={header_a}"]
-        if header_b is not None:
+        for header_b in headers_b:
             cmd += ["--header", f"new={header_b}"]
         try:
             # Deliberately not check=True: a real ABI difference between
@@ -431,13 +437,14 @@ def compare_target(
     diffs.extend(_compare_headers(headers_a, headers_b))
 
     if run_abicheck:
-        # Prefer the FIRST staged header path for this target on each side
-        # (headers dict is {staged-relative path: sha256}; any one file is
-        # fine -- _public_headers_for_target() already proved the sets
-        # match content-for-content above when they do).
-        header_a = staged_a / sorted(headers_a)[0] if headers_a else None
-        header_b = staged_b / sorted(headers_b)[0] if headers_b else None
-        cross = _try_abicheck_compare(target, library_a, header_a, library_b, header_b)
+        # Every staged header path for this target on each side (headers
+        # dict is {staged-relative path: sha256}) -- not just the first
+        # one alphabetically. A target with more than one public header
+        # would otherwise leave every header past the first entirely
+        # unchecked by this deep comparison (CodeRabbit review, PR #23).
+        headers_a_paths = [staged_a / name for name in sorted(headers_a)]
+        headers_b_paths = [staged_b / name for name in sorted(headers_b)]
+        cross = _try_abicheck_compare(target, library_a, headers_a_paths, library_b, headers_b_paths)
         result["abicheck_cross_check"] = cross
         if cross.get("outcome") == "ran" and cross.get("verdict") not in ("NO_CHANGE", "COMPATIBLE"):
             diffs.append(

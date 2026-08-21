@@ -395,6 +395,16 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
     scratch_dir = results_dir / "cmake-scratch"
 
+    # Same reasoning as run_one_profile()'s own output_json.unlink() above:
+    # a stale skipped.json from an earlier invocation that reused this same
+    # --results-dir (a local re-run with a narrower --only, or a future run
+    # where build-matrix.yaml covers every scenario) would otherwise sit
+    # there reporting scenarios as skipped that this run never even
+    # considered -- "no skipped.json" must always mean "zero scenarios were
+    # skipped THIS run", not "whatever the last run into this directory
+    # happened to leave behind" (CodeRabbit review, PR #23).
+    (results_dir / "skipped.json").unlink(missing_ok=True)
+
     results = []
     skipped = []
     for scenario in scenarios:
