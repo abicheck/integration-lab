@@ -185,7 +185,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "type://abicheck_lab::Calculator::Calculator",
+          "dst": "type://abicheck_lab::Calculator",
           "edge": "SOURCE_DECLARES",
           "facts": [
             {
@@ -203,7 +203,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "type://abicheck_lab::Calculator",
+          "dst": "type://abicheck_lab::Calculator::Calculator",
           "edge": "SOURCE_DECLARES",
           "facts": [
             {
@@ -519,9 +519,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Calculator::Calculator",
+          "id": "type://abicheck_lab::Calculator",
           "kind": "record_type",
-          "label": "abicheck_lab::Calculator::Calculator",
+          "label": "abicheck_lab::Calculator",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -542,9 +542,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Calculator",
+          "id": "type://abicheck_lab::Calculator::Calculator",
           "kind": "record_type",
-          "label": "abicheck_lab::Calculator",
+          "label": "abicheck_lab::Calculator::Calculator",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
