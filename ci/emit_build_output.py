@@ -46,13 +46,12 @@ for _p in (str(CI_DIR), str(BACKENDS_DIR)):
 from backends import build_backend  # noqa: E402
 from backends.base import BuildBackend, BuildResult, TargetResult  # noqa: E402
 
-
-def load_profiles(profiles_path: Path) -> Dict[str, Dict[str, Any]]:
-    import yaml
-
-    with open(profiles_path, "r", encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
-    return {p["id"]: p for p in doc.get("profiles", [])}
+# Reuse select_profiles.py's load_profiles() (id/duplicate validation
+# included) rather than re-parsing profiles.yaml with an unvalidated
+# comprehension here -- two independent loaders previously meant a
+# duplicate/missing profile id was caught in one entry point (select_profiles.py)
+# but silently accepted (dropped/KeyError) in this one (CodeRabbit review, PR #19).
+from select_profiles import load_profiles  # noqa: E402
 
 
 def _git_sha(repo_root: Path) -> str:
@@ -79,6 +78,16 @@ def _copy_header_root(repo_root: Path, header_root: str, dest_root: Path) -> Opt
     fail-closed-on-unknown-reference precedent for why a declared-but-
     missing root must not pass silently here either.
     """
+    # Reject an absolute or parent-escaping entry before it's ever joined
+    # onto repo_root/dest_root: Path("headers") / "/etc" silently yields
+    # "/etc" (Path.__truediv__ drops the left side for an absolute right
+    # side), and a "../" segment can walk dest_root back out of the staged
+    # directory. header_roots values come from the in-repo ci/profiles.yaml
+    # today, but on pull_request that file is contributor-controlled, so a
+    # future typo or malicious edit must fail closed here rather than write
+    # outside the staging directory (CodeRabbit review, PR #19).
+    if Path(header_root).is_absolute() or ".." in Path(header_root).parts:
+        return f"header_roots entry {header_root!r} must be a relative, non-parent-escaping path"
     src = repo_root / header_root
     if not src.exists():
         return f"header_roots entry {header_root!r} does not exist under {repo_root}"
@@ -109,6 +118,14 @@ def _copy_evidence(backend_evidence: Dict[str, Any], dest_dir: Path) -> Dict[str
             dest = dest_dir / src.name
             shutil.copy2(src, dest)
             result[key] = f"evidence/{src.name}"
+        else:
+            # A configured-but-missing path (e.g. the Make profile's
+            # optional bear-generated compile_commands.json) previously
+            # left the original absolute build-tree path in the staged
+            # document, breaking the "self-contained" guarantee this
+            # docstring promises and leaking local filesystem layout into
+            # an uploaded CI artifact (CodeRabbit review, PR #19).
+            result[key] = None
     label_kind = backend_evidence.get("label_kind")
     if label_kind:
         (dest_dir / "bazel-label-kind.txt").write_text(label_kind, encoding="utf-8")

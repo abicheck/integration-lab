@@ -8,7 +8,7 @@ When it isn't available (e.g. a minimal local checkout that only has
 PyYAML, same as every other script in this repo), falls back to a small,
 dependency-free structural check covering exactly the required-field/type
 constraints this schema actually uses (`type`, `required`, `enum`,
-`additionalProperties`, `const`) -- not a general JSON Schema
+`additionalProperties`, `const`, `minLength`) -- not a general JSON Schema
 implementation, just enough to catch the mistakes emit_build_output.py
 could realistically make. Every finding is returned as a human-readable
 string; an empty list means valid.
@@ -47,8 +47,8 @@ def _check_type(value: Any, type_decl) -> bool:
         py_type = _TYPE_MAP.get(t)
         if py_type is None:
             continue
-        if t == "integer" and isinstance(value, bool):
-            continue  # bool is technically an int subclass; schema means real ints
+        if t in ("integer", "number") and isinstance(value, bool):
+            continue  # bool is technically an int subclass; schema means real ints/numbers
         if isinstance(value, py_type):
             return True
     return False
@@ -64,6 +64,9 @@ def _validate_node(value: Any, schema: dict, path: str, errors: List[str]) -> No
 
     if "enum" in schema and value not in schema["enum"]:
         errors.append(f"{path}: {value!r} not in enum {schema['enum']!r}")
+
+    if isinstance(value, str) and "minLength" in schema and len(value) < schema["minLength"]:
+        errors.append(f"{path}: string shorter than minLength {schema['minLength']}")
 
     if isinstance(value, dict):
         for req in schema.get("required", []):

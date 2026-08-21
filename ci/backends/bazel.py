@@ -28,7 +28,26 @@ class BazelBackend(BuildBackend):
         version = self._tool_version(exe, "version")
         if version is None:
             return EnvironmentCheck(ok=False, missing=[exe], notes=["bazel not found on PATH"])
-        return EnvironmentCheck(ok=True, tool_versions={"bazel": version})
+        tool_versions = {"bazel": version}
+        missing = []
+        # build() now passes CC/CXX via --repo_env (_toolchain_args()), making
+        # the declared compiler a hard build dependency rather than just
+        # descriptive metadata -- verify it here too, or a runner missing
+        # gcc-14/g++-14 reports ok=True and only fails later, mid-build
+        # (Codex review, PR #19).
+        compiler = self.profile.get("compiler", {})
+        for role in ("cc", "cxx"):
+            tool = compiler.get(role)
+            if not tool:
+                continue
+            tool_version = self._tool_version(tool)
+            if tool_version is None:
+                missing.append(tool)
+            else:
+                tool_versions[role] = tool_version
+        if missing:
+            return EnvironmentCheck(ok=False, missing=missing, tool_versions=tool_versions)
+        return EnvironmentCheck(ok=True, tool_versions=tool_versions)
 
     def clean(self) -> None:
         # Deliberately NOT `bazel clean --expunge` here: that would defeat

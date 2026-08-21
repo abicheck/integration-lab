@@ -54,5 +54,18 @@ add_executable(consumer_app "${LAB_ROOT}/consumer/app.cc")
 target_include_directories(consumer_app PRIVATE "${LAB_ROOT}/include")
 target_link_libraries(consumer_app PRIVATE math)
 
+# Without an explicit RPATH, CMake's default build-tree RPATH is an
+# *absolute* path back into buildsystems/cmake/build/ (visible via `readelf
+# -d consumer_app`), which only resolves from that exact build tree -- the
+# staged copy (ci/emit_build_output.py's artifacts/bin/consumer_app +
+# artifacts/lib/libmath.so*, one directory apart) can't load its dependency
+# once the original build directory is gone (CodeRabbit review, PR #19).
+# $ORIGIN covers the build tree (consumer_app and libmath.so* colocated in
+# build/); $ORIGIN/../lib covers the staged layout.
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+set_target_properties(consumer_app PROPERTIES
+    BUILD_RPATH "$ORIGIN:$ORIGIN/../lib"
+)
+
 # Smoke-testable target list this profile's backend/driver expects to find
 # under the build directory: libmath.so, libstrings.so, consumer_app.

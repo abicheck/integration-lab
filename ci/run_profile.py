@@ -24,7 +24,7 @@ REPO_ROOT = CI_DIR.parent
 if str(CI_DIR) not in sys.path:
     sys.path.insert(0, str(CI_DIR))
 
-from emit_build_output import CI_DIR as _CI_DIR, build_and_stage  # noqa: E402
+from emit_build_output import build_and_stage  # noqa: E402
 from select_profiles import load_profiles  # noqa: E402
 from validate_build_output import validate_file  # noqa: E402
 
@@ -37,12 +37,18 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", type=Path, default=REPO_ROOT)
     args = parser.parse_args(argv)
 
-    profiles = load_profiles(args.profiles_file)
-    if args.profile_id not in profiles:
-        print(json.dumps({"profile_id": args.profile_id, "success": False, "error": "unknown profile id"}))
-        return 1
-
+    # load_profiles() (SelectionError on an empty/malformed manifest) and
+    # build_and_stage() both now run inside this one try/except: previously
+    # only build_and_stage() was covered, so a manifest-level error escaped
+    # as an unhandled traceback instead of the intended one-line JSON
+    # failure summary integration-shadow.yml's `tee` step uploads
+    # (CodeRabbit review, PR #19).
     try:
+        profiles = load_profiles(args.profiles_file)
+        if args.profile_id not in profiles:
+            print(json.dumps({"profile_id": args.profile_id, "success": False, "error": "unknown profile id"}))
+            return 1
+
         doc = build_and_stage(
             args.profile_id,
             profiles_path=args.profiles_file,

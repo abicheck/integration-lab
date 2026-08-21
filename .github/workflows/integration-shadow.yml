@@ -65,6 +65,11 @@ jobs:
           python3 ci/select_profiles.py --event "$event" "${extra_args[@]}" > selection.json
           cat selection.json
           matrix_json="$(python3 -c "import json; d=json.load(open('selection.json')); print(json.dumps({'profile': d['profiles']}))")"
+          profile_count="$(python3 -c "import json; print(len(json.load(open('selection.json'))['profiles']))")"
+          if [ "$profile_count" -eq 0 ]; then
+            echo "::error::no profiles resolved for event '$event' -- refusing to emit an empty matrix" >&2
+            exit 1
+          fi
           echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
 
   build:
@@ -109,9 +114,11 @@ jobs:
       - name: Run profile (build + stage + validate)
         id: run_profile
         shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
         run: |
           set -o pipefail
-          python3 ci/run_profile.py --profile-id "${{ matrix.profile }}" | tee run-profile-summary.json
+          python3 ci/run_profile.py --profile-id "$PROFILE_ID" | tee run-profile-summary.json
 
       - name: Upload staged build output
         if: always()

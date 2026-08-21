@@ -40,7 +40,19 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 def load_profiles(path: Path = DEFAULT_PROFILES) -> Dict[str, Dict[str, Any]]:
     doc = _load_yaml(path)
-    profiles = {p["id"]: p for p in doc.get("profiles", [])}
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for entry in doc.get("profiles", []):
+        # A duplicate id would otherwise silently overwrite the earlier
+        # entry in the dict comprehension this replaced, dropping a
+        # profile from every matrix/staging run with no error; a missing
+        # id raised an unhandled KeyError instead of the intended
+        # SelectionError (CodeRabbit review, PR #19).
+        profile_id = entry.get("id")
+        if not profile_id:
+            raise SelectionError(f"{path}: profile entry missing a non-empty 'id': {entry!r}")
+        if profile_id in profiles:
+            raise SelectionError(f"{path}: duplicate profile id {profile_id!r}")
+        profiles[profile_id] = entry
     if not profiles:
         raise SelectionError(f"{path}: no profiles declared")
     return profiles
@@ -86,6 +98,14 @@ def select(event: str, profiles_path: Path = DEFAULT_PROFILES, policy_path: Path
     known_ids = set(profiles)
 
     event_policy = events[event]
+    if not isinstance(event_policy, dict):
+        # An event key written with no body (e.g. `canary:` alone) parses
+        # as None via yaml.safe_load, not {} -- .get() below would then
+        # raise an unhandled AttributeError instead of the intended
+        # SelectionError (CodeRabbit review, PR #19).
+        raise SelectionError(
+            f"events[{event!r}] must be a mapping, got {type(event_policy).__name__}"
+        )
     required = sorted(set(_expand(event_policy.get("required", []), profile_sets, known_ids)))
     advisory = sorted(set(_expand(event_policy.get("advisory", []), profile_sets, known_ids)) - set(required))
 

@@ -62,9 +62,15 @@ $(LIBSTRINGS): $(STRINGS_SRC) | $(BUILD_DIR)
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's
 # cc_import wrapping) rather than recompiling math.cc into the binary.
+# rpath covers both layouts: $ORIGIN for the build tree (consumer_app and
+# libmath.so colocated in build/), $ORIGIN/../lib for ci/emit_build_output.py's
+# staged layout (artifacts/bin/consumer_app one directory from
+# artifacts/lib/libmath.so) -- $ORIGIN alone only resolved the former,
+# leaving a staged-only consumer_app unable to load its dependency
+# (CodeRabbit review, PR #19).
 $(CONSUMER): $(CONSUMER_SRC) $(LIBMATH) | $(BUILD_DIR)
 	$(CXX) $(CXXSTD) -I$(LAB_ROOT)/include \
-	    -o $@ $< -L$(BUILD_DIR) -lmath -Wl,-rpath,'$$ORIGIN'
+	    -o $@ $< -L$(BUILD_DIR) -lmath -Wl,-rpath,'$$ORIGIN:$$ORIGIN/../lib'
 
 # Optional compile_commands.json via `bear` (PR1 item 5's own requirement:
 # invoke it if present, degrade gracefully -- never fail hard -- if it
