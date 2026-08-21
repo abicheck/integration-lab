@@ -1,9 +1,9 @@
 {
   "ast_compile_args": [],
-  "ast_cplusplus_macro": null,
+  "ast_cplusplus_macro": "201703L",
   "ast_fallback_reason": null,
   "ast_producer": "clang",
-  "ast_resolved_standard": null,
+  "ast_resolved_standard": "probed:__cplusplus=201703L",
   "ast_sysroot": null,
   "ast_toolchain": {
     "abi_dialect": "gnu",
@@ -17,6 +17,7 @@
     "mtime_ns": "1716798380000000000",
     "producer": "clang",
     "realpath": "/usr/lib/llvm-18/bin/clang",
+    "resolved_lang_mode": "c++",
     "selected": "/usr/bin/clang++",
     "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
     "size": "140592",
@@ -83,7 +84,7 @@
         },
         "compile_units": 0,
         "edge_kinds": {
-          "SOURCE_DECLARES": 4,
+          "SOURCE_DECLARES": 6,
           "TYPE_HAS_FIELD_TYPE": 4
         },
         "include_edges": {
@@ -92,7 +93,7 @@
         },
         "node_kinds": {
           "header": 2,
-          "record_type": 8,
+          "record_type": 10,
           "source_decl": 4
         },
         "reference_edges": {
@@ -167,6 +168,42 @@
           "confidence": "high",
           "conflicts": [],
           "dst": "decl://_ZN12abicheck_lab11api_versionEv",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "type://abicheck_lab::Calculator",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "type://abicheck_lab::Calculator::Calculator",
           "edge": "SOURCE_DECLARES",
           "facts": [
             {
@@ -330,12 +367,16 @@
       "narrowed_scope": {},
       "nodes": [
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -344,15 +385,21 @@
           "kind": "header",
           "label": "include/abicheck_lab/math.h",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -361,15 +408,21 @@
           "kind": "source_decl",
           "label": "Calculator",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -378,15 +431,21 @@
           "kind": "header",
           "label": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/include/abicheck_lab/math.h",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -395,15 +454,21 @@
           "kind": "source_decl",
           "label": "add",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -412,15 +477,21 @@
           "kind": "source_decl",
           "label": "multiply",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
-          "attrs": {},
+          "attrs": {
+            "visibility": "public_header"
+          },
           "confidence": "high",
           "conflicts": [],
           "facts": [
             {
-              "attrs": {},
+              "attrs": {
+                "visibility": "public_header"
+              },
               "confidence": "high",
               "producer": "header_ast_l2"
             }
@@ -429,7 +500,55 @@
           "kind": "source_decl",
           "label": "api_version",
           "provenance": "header_ast_l2",
-          "resolved": {}
+          "resolved": {
+            "visibility": "public_header"
+          }
+        },
+        {
+          "attrs": {
+            "visibility": "public_header"
+          },
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "type://abicheck_lab::Calculator",
+          "kind": "record_type",
+          "label": "abicheck_lab::Calculator",
+          "provenance": "header_ast_l2",
+          "resolved": {
+            "visibility": "public_header"
+          }
+        },
+        {
+          "attrs": {
+            "visibility": "public_header"
+          },
+          "confidence": "high",
+          "conflicts": [],
+          "facts": [
+            {
+              "attrs": {
+                "visibility": "public_header"
+              },
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "id": "type://abicheck_lab::Calculator::Calculator",
+          "kind": "record_type",
+          "label": "abicheck_lab::Calculator::Calculator",
+          "provenance": "header_ast_l2",
+          "resolved": {
+            "visibility": "public_header"
+          }
         },
         {
           "attrs": {},
@@ -589,13 +708,13 @@
       "frontend_context_kind": "",
       "header_sequence": "[\"<single-header>\"]",
       "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\", \"1:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\"]",
-      "language_standard": "c++",
+      "language_standard": "c++:probed:__cplusplus=201703L",
       "macro_ops": "[]",
       "pass_through_flags": "[]",
       "pointer_width": "",
       "target_triple": ""
     },
-    "profile_fingerprint": "sha256:4ea5e299e9b39be50b34e5dd0b30b388011ad91b5879a59aba3a3a1255f34db1",
+    "profile_fingerprint": "sha256:9e9228c1604dde47e4cc5b9dda59145711adf601c673ec1c2323188131a401b8",
     "scope_fields": {
       "headers": "[\"<single-header>\"]",
       "public_header_dirs": "[]",
@@ -619,6 +738,7 @@
       "mtime_ns": "1716798380000000000",
       "producer": "clang",
       "realpath": "/usr/lib/llvm-18/bin/clang",
+      "resolved_lang_mode": "c++",
       "selected": "/usr/bin/clang++",
       "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
       "size": "140592",
@@ -836,7 +956,7 @@
       "is_volatile": false,
       "mangled": "_ZN12abicheck_lab10CalculatorC1Ev",
       "name": "Calculator",
-      "origin": "unknown",
+      "origin": "public_header",
       "params": [],
       "ref_qualifier": "",
       "return_pointer_depth": 0,
@@ -870,7 +990,7 @@
       "is_volatile": false,
       "mangled": "_ZNK12abicheck_lab10Calculator3addEii",
       "name": "add",
-      "origin": "unknown",
+      "origin": "public_header",
       "params": [
         {
           "default": null,
@@ -923,7 +1043,7 @@
       "is_volatile": false,
       "mangled": "_ZNK12abicheck_lab10Calculator8multiplyEii",
       "name": "multiply",
-      "origin": "unknown",
+      "origin": "public_header",
       "params": [
         {
           "default": null,
@@ -976,7 +1096,7 @@
       "is_volatile": false,
       "mangled": "_ZN12abicheck_lab11api_versionEv",
       "name": "api_version",
-      "origin": "unknown",
+      "origin": "public_header",
       "params": [],
       "ref_qualifier": "",
       "return_pointer_depth": 0,
@@ -1027,7 +1147,7 @@
       "is_union": false,
       "kind": "class",
       "name": "Calculator",
-      "origin": "unknown",
+      "origin": "public_header",
       "qualified_name": "abicheck_lab::Calculator",
       "size_bits": null,
       "source_header": "include/abicheck_lab/math.h",

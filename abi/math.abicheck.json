@@ -1,16 +1,28 @@
 {
-  "ast_compile_args": [],
-  "ast_cplusplus_macro": null,
+  "ast_compile_args": [
+    "-std=c++17",
+    "-D__DATE__=\"redacted\"",
+    "-D__TIMESTAMP__=\"redacted\"",
+    "-D__TIME__=\"redacted\"",
+    "-U_FORTIFY_SOURCE",
+    "-fno-omit-frame-pointer",
+    "-fPIC",
+    "-isystem",
+    "~/work/abicheck-bazel-lab/abicheck-bazel-lab/include",
+    "-isystem",
+    "~/work/abicheck-bazel-lab/abicheck-bazel-lab/bazel-out/k8-fastbuild/bin/include"
+  ],
+  "ast_cplusplus_macro": "201703L",
   "ast_fallback_reason": null,
   "ast_producer": "castxml",
-  "ast_resolved_standard": null,
+  "ast_resolved_standard": "c++17",
   "ast_sysroot": null,
   "ast_toolchain": {
     "abi_dialect": "gnu",
     "castxml_bundled_clang_version": "20.1",
     "castxml_version": "0.7.0",
     "compiler_mtime_ns": "1784923527000000000",
-    "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
+    "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
     "compiler_selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/g++",
     "compiler_sha256": "89e094803d827f36b7f535d62e68e2ad7f6d81bafe4857f1a9b8213e130ed34e",
     "compiler_size": "1964712",
@@ -18,7 +30,8 @@
     "compiler_version": "g++ (conda-forge gcc 14.3.0-20) 14.3.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
     "mtime_ns": "1772089430000000000",
     "producer": "castxml",
-    "realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/castxml",
+    "realpath": "/home/runner/work/_actions/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/.pixi/envs/scanner/bin/castxml",
+    "resolved_lang_mode": "c++",
     "selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/castxml",
     "sha256": "6d233e87fea856e8f76cdb69d687a73025771f35cd9f83a3f978d607c5153a0d",
     "size": "271544",
@@ -105,6 +118,8 @@
           "directory": "~/work/abicheck-bazel-lab/abicheck-bazel-lab",
           "id": "cu://src/math.cc#cfg:88541b70e091",
           "include_paths": [],
+          "include_paths_explicit": [],
+          "include_provenance_known": true,
           "input_files": [],
           "language": "CXX",
           "output": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
@@ -115,6 +130,10 @@
           "system_include_paths": [
             "~/work/abicheck-bazel-lab/abicheck-bazel-lab/include",
             "~/work/abicheck-bazel-lab/abicheck-bazel-lab/bazel-out/k8-fastbuild/bin/include"
+          ],
+          "system_include_paths_explicit": [
+            false,
+            false
           ],
           "target_id": "target:////:math",
           "target_triple": "",
@@ -650,7 +669,7 @@
         {
           "compile_units": null,
           "confidence": "high",
-          "detail": "scope=target, 1/1 TUs parsed, 3/6 symbols matched, 6/6 accounted, 3 unmatched, cache 0/1 hit (0%), Ns",
+          "detail": "scope=target, 1/1 TUs parsed, 3/6 symbols matched, 6/6 accounted, 0 unmatched, cache 0/1 hit (0%), Ns",
           "layer": "L4_source_abi",
           "link_units": null,
           "requested_roots": [],
@@ -776,7 +795,7 @@
         "replay_scope": "target",
         "synthesized_symbols_matched": 0,
         "template_instantiation_symbols_matched": 0,
-        "unmatched_symbols": 3
+        "unmatched_symbols": 0
       },
       "identity_collisions": [],
       "library": "",
@@ -1018,11 +1037,7 @@
         "decls_without_symbol": [
           "abicheck_lab::Calculator::Calculator"
         ],
-        "symbols_without_decl": [
-          "__bss_start",
-          "_edata",
-          "_end"
-        ]
+        "symbols_without_decl": []
       }
     },
     "source_graph": {
@@ -3658,14 +3673,14 @@
       "endianness": "",
       "frontend_context_kind": "",
       "header_sequence": "[\"<single-header>\"]",
-      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\", \"1:ext:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", \"2:hdrs:[[\\\"math.h\\\", \\\"include/abicheck_lab/math.h\\\"]]\", \"3:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\", \"4:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\"]",
-      "language_standard": "c++",
-      "macro_ops": "[]",
+      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\", \"1:ext:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", \"2:hdrs:[[\\\"math.h\\\", \\\"include/abicheck_lab/math.h\\\"]]\", \"3:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\"]",
+      "language_standard": "c++:c++17",
+      "macro_ops": "[[\"D\", \"__DATE__=\\\"redacted\\\"\"], [\"D\", \"__TIMESTAMP__=\\\"redacted\\\"\"], [\"D\", \"__TIME__=\\\"redacted\\\"\"], [\"U\", \"_FORTIFY_SOURCE\"]]",
       "pass_through_flags": "[]",
       "pointer_width": "",
       "target_triple": ""
     },
-    "profile_fingerprint": "sha256:a79021a8ea538dc3d58bb91df8f721c9e594c59784f02e890a484042ee664d14",
+    "profile_fingerprint": "sha256:676186eb42162436146c95d22e410f24597db763c5f7e92ea17806715f2985ba",
     "scope_fields": {
       "headers": "[\"<single-header>\"]",
       "public_header_dirs": "[\"<single-header-dir>\"]",
@@ -3682,7 +3697,7 @@
       "castxml_bundled_clang_version": "20.1",
       "castxml_version": "0.7.0",
       "compiler_mtime_ns": "1784923527000000000",
-      "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
+      "compiler_realpath": "/home/runner/work/_actions/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/.pixi/envs/scanner/bin/x86_64-conda-linux-gnu-g++",
       "compiler_selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/g++",
       "compiler_sha256": "89e094803d827f36b7f535d62e68e2ad7f6d81bafe4857f1a9b8213e130ed34e",
       "compiler_size": "1964712",
@@ -3690,7 +3705,8 @@
       "compiler_version": "g++ (conda-forge gcc 14.3.0-20) 14.3.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
       "mtime_ns": "1772089430000000000",
       "producer": "castxml",
-      "realpath": "/home/runner/work/_actions/abicheck/abicheck/891bd9d7157dda8af38a8b9e145e564dc7fc1c71/.pixi/envs/scanner/bin/castxml",
+      "realpath": "/home/runner/work/_actions/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/.pixi/envs/scanner/bin/castxml",
+      "resolved_lang_mode": "c++",
       "selected": "/home/runner/work/_temp/abicheck-conda-forge-bin/castxml",
       "sha256": "6d233e87fea856e8f76cdb69d687a73025771f35cd9f83a3f978d607c5153a0d",
       "size": "271544",
@@ -4280,7 +4296,7 @@
     "consumes_array_api": false,
     "consumes_ufunc_api": false
   },
-  "parsed_with_build_context": false,
+  "parsed_with_build_context": true,
   "pe": null,
   "platform": "elf",
   "python_api": null,
