@@ -302,6 +302,39 @@ def compare_profile(
 
     try:
         build_output = _load_build_output(staged_dir)
+    except CheckProfileError as exc:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=str(exc),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
+    # The baseline/target identity check above only proves the *caller's*
+    # arguments match -- it says nothing about which profile actually
+    # produced the staged_dir we're about to read from. staged_dir is a
+    # plain CLI argument (e.g. --staged-dir abicheck-build-<profile-id>);
+    # nothing stopped a caller from passing --profile-id p-cmake alongside
+    # a staged_dir that was actually built by the make profile. Both
+    # backends can have matching symbol tables and headers for the same
+    # target, so this would report NO_CHANGE against a build that was
+    # never actually produced by the profile it claims to be (Codex
+    # review, PR #20).
+    staged_profile_id = build_output.get("profile", {}).get("id")
+    if staged_profile_id != profile_id:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"staged_dir's own build-output.json was produced by profile "
+                f"{staged_profile_id!r}, not the requested profile_id={profile_id!r}"
+            ),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
+    try:
         library_path = _target_library_path(staged_dir, build_output, target)
     except CheckProfileError as exc:
         facts.update(
@@ -356,7 +389,24 @@ def compare_profile(
     baseline_soname = baseline.get("soname")
     soname_changed = baseline_soname is not None and candidate_soname != baseline_soname
 
-    if removed or changed or soname_changed:
+    # Bazel's cc_shared_library outputs carry no SONAME at all (baseline_soname
+    # is None), so the check above can never fire for them -- but the loader
+    # still has to find the library by its on-disk filename in that case
+    # (DT_NEEDED records the filename itself when there's no SONAME to record
+    # instead). If //:math started producing librenamed.so with identical
+    # symbols and headers, this would previously report NO_CHANGE while
+    # existing consumers still look for libmath.so and can't load the
+    # candidate at runtime. Only meaningful when there's no SONAME to compare
+    # instead -- a SONAME change already governs loadability when one exists,
+    # regardless of the on-disk filename (Codex review, PR #20).
+    baseline_filename = baseline.get("library_filename")
+    filename_changed = (
+        baseline_soname is None
+        and baseline_filename is not None
+        and library_path.name != baseline_filename
+    )
+
+    if removed or changed or soname_changed or filename_changed:
         verdict = "BREAKING"
         detail_parts = []
         if removed:
@@ -365,6 +415,10 @@ def compare_profile(
             detail_parts.append(f"{len(changed)} exported symbol(s) changed type/size: {', '.join(c['name'] for c in changed)}")
         if soname_changed:
             detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
+        if filename_changed:
+            detail_parts.append(
+                f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
+            )
         detail = "; ".join(detail_parts)
     elif headers_changed:
         # A public header edit that doesn't touch the exported symbol

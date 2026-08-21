@@ -31,21 +31,26 @@ def _compile_shared_lib(tmp_path, source: str, name: str = "libfake.so"):
     return out
 
 
-def _stage_profile(tmp_path, lib_path, header_text="int foo(void);\nint bar(void);\n"):
+def _stage_profile(tmp_path, lib_path, header_text="int foo(void);\nint bar(void);\n", profile_id="p1", staged_name="libmath.so"):
+    # staged_name is deliberately a fixed, canonical target filename
+    # (mirroring how a real profile's target -- e.g. libmath.so -- keeps
+    # the same on-disk name across rebuilds), independent of whatever
+    # scratch filename _compile_shared_lib happened to use for this
+    # particular test compile.
     staged = tmp_path / "staged"
     (staged / "artifacts" / "lib").mkdir(parents=True)
-    shutil.copy2(lib_path, staged / "artifacts" / "lib" / lib_path.name)
+    shutil.copy2(lib_path, staged / "artifacts" / "lib" / staged_name)
     headers_dir = staged / "headers" / "include"
     headers_dir.mkdir(parents=True)
     (headers_dir / "api.h").write_text(header_text)
     build_output = {
         "schema_version": 1,
-        "profile": {"backend": "make"},
+        "profile": {"id": profile_id, "backend": "make"},
         "targets": {
             "math": {
                 "kind": "shared_library",
                 "built": True,
-                "path": f"artifacts/lib/{lib_path.name}",
+                "path": f"artifacts/lib/{staged_name}",
                 "sha256": None,
                 "size_bytes": None,
             }
@@ -105,6 +110,40 @@ def test_compare_profile_compatible_on_added_symbol(tmp_path):
 
     assert result["verdict"] == "COMPATIBLE"
     assert "bar" in result["symbols"]["added"]
+
+
+def test_compare_profile_breaking_on_filename_change_without_soname(tmp_path):
+    # Bazel's cc_shared_library outputs carry no SONAME, so the loader
+    # locates them by their on-disk filename instead. A rename here is
+    # just as breaking to existing consumers as a removed symbol would be.
+    lib_before = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    baseline = build_baseline("p1", "math", baseline_staged)
+    assert baseline["soname"] is None  # gcc -shared with no -Wl,-soname
+
+    lib_after = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="librenamed.so")
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+
+    assert result["verdict"] == "BREAKING"
+    assert "loader filename changed" in result["detail"]
+
+
+def test_compare_profile_not_comparable_on_wrong_staged_profile(tmp_path):
+    # staged_dir's own build-output.json says which profile actually
+    # produced it -- a caller passing --profile-id p1 alongside a
+    # staged_dir that build-output.json itself says belongs to a
+    # different profile must not be trusted just because the symbol
+    # tables happen to match.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    baseline_staged = _stage_profile(tmp_path, lib, profile_id="p1")
+    baseline = build_baseline("p1", "math", baseline_staged)
+
+    wrong_profile_staged = _stage_profile(tmp_path / "wrong", lib, profile_id="p2")
+    result = compare_profile("p1", "math", wrong_profile_staged, baseline)
+
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert "not the requested profile_id" in result["detail"]
 
 
 def test_compare_profile_not_comparable_on_missing_build(tmp_path):
