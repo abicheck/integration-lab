@@ -318,8 +318,11 @@ def test_compare_profile_not_comparable_on_missing_target(tmp_path):
 
     empty_staged = tmp_path / "empty-staged"
     empty_staged.mkdir()
+    # backend "bazel" -- matching baseline's own backend (from
+    # _stage_profile's default), so this reaches the missing-target check
+    # rather than the separate backend-identity guard.
     (empty_staged / "build-output.json").write_text(
-        json.dumps({"profile": {"id": "p1", "backend": "make"}, "targets": {}})
+        json.dumps({"profile": {"id": "p1", "backend": "bazel"}, "targets": {}})
     )
     result = compare_profile("p1", "math", empty_staged, baseline)
     assert result["verdict"] == "NOT_COMPARABLE"
@@ -341,11 +344,16 @@ def test_compare_profile_real_scan_backend_fails_closed_on_baseline_without_snap
     lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
     staged = _stage_profile(tmp_path, lib)
     baseline = build_baseline("p1", "math", staged)  # backend "bazel" -- no abicheck_snapshot
-    assert "abicheck_snapshot" not in baseline
 
     # Re-stage as a cmake backend (same library/headers -- only the
     # declared backend changes) so compare_profile()'s real-scan branch
-    # fires against this same baseline.
+    # fires against this same baseline. The baseline's own "backend" must
+    # be changed to match too -- otherwise this hits the separate
+    # backend-identity guard (see the dedicated test for that below)
+    # instead of the missing-abicheck_snapshot path this test targets.
+    baseline["backend"] = "cmake"
+    assert "abicheck_snapshot" not in baseline
+
     build_output_path = staged / "build-output.json"
     build_output = json.loads(build_output_path.read_text())
     build_output["profile"]["backend"] = "cmake"
@@ -354,3 +362,38 @@ def test_compare_profile_real_scan_backend_fails_closed_on_baseline_without_snap
     result = compare_profile("p1", "math", staged, baseline)
     assert result["verdict"] == "NOT_COMPARABLE"
     assert "no embedded abicheck_snapshot" in result["detail"]
+
+
+def test_compare_profile_backend_mismatch_fails_closed(tmp_path):
+    # A profile whose backend was migrated (e.g. cmake -> bazel) while
+    # keeping the same profile_id/target passes every identity check that
+    # only compares profile_id/target -- but backend is exactly what
+    # decides which comparison mechanism runs (real abicheck for
+    # cmake/make, nm/readelf for bazel). Comparing across a backend change
+    # must fail closed rather than silently falling through to whichever
+    # mechanism the candidate's own (possibly weaker) backend selects
+    # (Codex review, PR #25).
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    baseline["backend"] = "cmake"  # baseline claims a different backend than the staged build
+
+    result = compare_profile("p1", "math", staged, baseline)
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert "backend" in result["detail"]
+    assert "cmake" in result["detail"] and "bazel" in result["detail"]
+
+
+def test_compare_profile_missing_baseline_backend_is_not_a_mismatch(tmp_path):
+    # A baseline with no "backend" field at all (predating that field, or
+    # hand-edited) has no opinion to contradict -- this must not be
+    # confused with an actual mismatch and must not itself block the
+    # existing nm/readelf comparison from running normally.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\nint bar(void) { return 2; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    assert "backend" in baseline
+    del baseline["backend"]
+
+    result = compare_profile("p1", "math", staged, baseline)
+    assert result["verdict"] == "NO_CHANGE"

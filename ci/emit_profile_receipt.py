@@ -45,6 +45,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+CI_DIR = Path(__file__).resolve().parent
+if str(CI_DIR) not in sys.path:
+    sys.path.insert(0, str(CI_DIR))
+
+from real_scan import REAL_SCAN_BACKENDS as _REAL_SCAN_BACKENDS  # noqa: E402
+
 SCHEMA_VERSION = 1
 KIND = "abicheck.integration-profile-receipt/v1"
 
@@ -188,6 +194,32 @@ def build_receipt(
     if not isinstance(compiler, dict):
         compiler = {}
 
+    # cmake/make backends run through the REAL abicheck scanner
+    # (ci/real_scan.py, via ci/check_profile.py's compare_profile()) --
+    # this receipt's own scanner.mechanism previously hard-coded the
+    # nm/readelf description unconditionally, misattributing every real
+    # abicheck verdict for those two backends as if it came from the
+    # lighter mechanism (Codex review, PR #25: "the uploaded profile
+    # receipts -- the durable provenance consumed for integration results
+    # -- misidentify real ABICheck verdicts as the old lightweight
+    # signal"). Derived from backend, not re-parsed out of each report's
+    # own "mechanism" field, since every report for a given profile run
+    # was produced by the same ci/check_profile.py invocation and
+    # therefore the same mechanism -- see that script's own module
+    # docstring for the two mechanisms this mirrors exactly.
+    if backend in _REAL_SCAN_BACKENDS:
+        scanner_mechanism = (
+            "real abicheck dump/compare (--depth source, compile_commands.json "
+            "--build-info, filtered to each target's own translation unit -- "
+            "see ci/real_scan.py)"
+        )
+    else:
+        scanner_mechanism = (
+            "nm/readelf dynamic-symbol-table + public-header-digest diff (ci/check_profile.py) "
+            "-- see UPSTREAM_TO_ABICHECK.md's PR2 entry for what this simplifies versus the full "
+            "abicheck scanner"
+        )
+
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,
@@ -201,7 +233,7 @@ def build_receipt(
         "sha": sha,
         "build": {"success": bool(build_output.get("success")) if build_output is not None else False},
         "scanner": {
-            "mechanism": "nm/readelf dynamic-symbol-table + public-header-digest diff (ci/check_profile.py) -- see UPSTREAM_TO_ABICHECK.md's PR2 entry for what this simplifies versus the full abicheck scanner",
+            "mechanism": scanner_mechanism,
         },
         "build_system": backend,
         "compiler": compiler,

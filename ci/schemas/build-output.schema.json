@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/build-output.schema.json",
-  "title": "abicheck-bazel-lab canonical per-profile build output",
+  "$id": "https://github.com/abicheck/integration-lab/ci/schemas/build-output.schema.json",
+  "title": "abicheck-integration-lab canonical per-profile build output",
   "description": "Schema for the build-output.json written into each staged abicheck-build-<profile-id>/ directory (see ci/emit_build_output.py). PR1: this schema describes the current staged shape; a future PR may add first-class build-system/generator identity fields directly here instead of only in profile.id + provenance/build-system.json (see UPSTREAM_TO_ABICHECK.md's 2026-08-21 entry).",
   "type": "object",
   "required": [

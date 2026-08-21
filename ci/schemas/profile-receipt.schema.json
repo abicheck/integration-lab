@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/profile-receipt.schema.json",
-  "title": "abicheck-bazel-lab per-profile integration receipt",
+  "$id": "https://github.com/abicheck/integration-lab/ci/schemas/profile-receipt.schema.json",
+  "title": "abicheck-integration-lab per-profile integration receipt",
   "description": "Schema for the receipt ci/emit_profile_receipt.py writes per profile per CI run: 'this run, this workflow, this job actually ran a check/coverage pass for this profile, and here is what it found'. See ci/emit_profile_receipt.py's module docstring (schema id abicheck.integration-profile-receipt/v1) and scripts/capability_receipts.py, whose passed/failed/skipped status contract this deliberately mirrors.",
   "type": "object",
   "required": [

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/abicheck-bazel-lab/ci/schemas/cross-build-equivalence.schema.json",
-  "title": "abicheck-bazel-lab cross-build-system equivalence result",
+  "$id": "https://github.com/abicheck/integration-lab/ci/schemas/cross-build-equivalence.schema.json",
+  "title": "abicheck-integration-lab cross-build-system equivalence result",
   "description": "Schema for cross-build-equivalence.json, written by ci/compare_build_outputs.py (PR3 item 1). Advisory-only: see that script's own module docstring.",
   "type": "object",
   "required": [

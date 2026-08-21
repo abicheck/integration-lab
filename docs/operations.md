@@ -187,22 +187,39 @@ transferring a repository as part of a code-only PR.
   (`abi/*.abicheck.json`, `abi/profiles/*/*.abicheck.json`) — a stale
   marker doesn't break comparability, it just leaves host-specific
   absolute-path fragments un-stripped in freshly generated snapshots.
-- [ ] Grep for the literal old slug across `.github/workflows/`, `docs/`,
-  `README.md`, and `ci/`/`scripts/` before closing out a transfer:
-  `grep -rln "<old-org>/<old-repo>"` should return nothing outside this
-  file's own historical record and `UPSTREAM_TO_ABICHECK.md` (which
-  intentionally keeps the lab revision this doc audited under its
-  original name for traceability).
-- [ ] Branch protection, required status checks (currently the Bazel
-  `abi-scan.yml` gate; see `docs/canonical-bazel-gate.md`), and
-  `CODEOWNERS` are GitHub repository settings, not files — they do not
-  migrate automatically on a transfer and must be re-verified against
-  the destination repository afterward.
-- [ ] `release.yml`'s and `canary.yml`'s `repository_dispatch`
-  integration (scanner-candidate certification from `abicheck/abicheck`)
-  is configured from the sender side against this repository's
-  `owner/repo` — confirm the upstream dispatch target is updated if the
-  slug changes.
+- [ ] Grep for the literal old slug — both `<old-org>/<old-repo>` (e.g.
+  `abicheck/bazel-lab`) AND the bare old repo name by itself (e.g.
+  `abicheck-bazel-lab`, which appears with no org prefix in `ci/schemas/
+  *.json`'s own `$id`/`title` fields) — before closing out a transfer:
+  ```
+  grep -rln '<old-org>/<old-repo>' . ; grep -rln '<old-repo-bare-name>' .
+  ```
+  Replace both placeholders with this repository's actual previous
+  identity before running. Either command returning anything outside
+  this file's own historical example above and `UPSTREAM_TO_ABICHECK.md`
+  (which intentionally keeps the lab revision it audited under its
+  original name for traceability) is a real stale reference, not
+  history — fix it.
+- [ ] Branch protection and required status checks (currently the Bazel
+  `abi-scan.yml` gate; see `docs/canonical-bazel-gate.md`) are GitHub
+  repository settings, not files — they do not migrate automatically on
+  a transfer and must be re-verified against the destination repository
+  afterward.
+- [ ] `.github/CODEOWNERS`, unlike branch protection, IS a tracked file
+  that migrates with the repository — a transfer to an organization
+  where the current owners (`@napetrov`, throughout that file) lack
+  write access leaves every protected path (`abi/**`, workflow files,
+  etc. — see that file itself) without an eligible reviewer, silently
+  defeating required code-owner review rather than erroring. Update its
+  owners as part of the transfer, not after, and confirm each still has
+  write access to the destination repository.
+- [ ] `canary.yml`'s `repository_dispatch: {types: [scanner-candidate]}`
+  trigger is the receiver side only — nothing in *this* repository sends
+  that event (confirmed: `release.yml` has no `repository_dispatch` step
+  at all). The sender lives in the upstream `abicheck/abicheck` workflow
+  and targets this repository's current `owner/repo` explicitly; that
+  upstream dispatch target is what needs updating when this repository's
+  slug changes, not anything on this side.
 - [ ] README badges and any status-check links that hard-code the
   current `owner/repo` in their URL need updating alongside the actual
   transfer, not before — updating them early just points a badge at a

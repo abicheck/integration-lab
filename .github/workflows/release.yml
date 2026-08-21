@@ -124,6 +124,29 @@ jobs:
         if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
         run: sudo apt-get install -y ninja-build
 
+      # Latent today (this job's own matrix is --contract-only, and only
+      # the bazel profile is contract: true right now -- see
+      # ci/profiles.yaml), but load-bearing the moment a cmake/make
+      # profile is promoted (roadmap.md item 4): the "Dump {math,strings}
+      # baseline" steps below unconditionally invoke the real abicheck
+      # scanner for those two backends (ci/real_scan.py), which needs both
+      # the scanner package and a compatible CastXML build. Same pinned
+      # SHA and installer every other workflow already uses. Added
+      # proactively so promoting a profile to contract: true doesn't
+      # silently break release certification for it (see
+      # profile-baseline.yml's identical step and its own Codex-review
+      # comment for the failure mode this prevents).
+      - name: Install real abicheck scanner + pinned CastXML (cmake/make only)
+        if: >-
+          matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja' ||
+          matrix.profile == 'linux-x86_64-gcc14-cxx17-make-bear'
+        run: |
+          pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
       - name: Build this profile from the release commit
         id: run_profile
         shell: bash

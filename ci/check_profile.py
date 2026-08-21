@@ -428,6 +428,37 @@ def compare_profile(
         )
         return facts
 
+    # Confirm the candidate's own backend matches the baseline's. Without
+    # this, a profile whose backend was migrated (e.g. cmake -> bazel)
+    # while keeping the same profile_id/target would still pass every
+    # identity check above (they only compare profile_id/target, not
+    # backend) -- but this is exactly the choice that decides which
+    # comparison mechanism runs below: real abicheck for cmake/make,
+    # nm/readelf for bazel. A baseline dumped under the real-scanner
+    # mechanism (with its own embedded abicheck_snapshot) compared against
+    # a candidate now built by bazel would silently fall through to the
+    # nm/readelf-only mechanism instead -- a source-level ABI break
+    # invisible to exported symbols could then pass as NO_CHANGE/COMPATIBLE
+    # even though the baseline's own backend never agreed to that weaker
+    # mechanism (Codex review, PR #25). A missing baseline "backend" field
+    # (baselines predating this field, or a hand-edited baseline) is not
+    # itself an error here -- older baselines simply don't have an opinion
+    # to contradict.
+    baseline_backend = baseline.get("backend")
+    candidate_backend = build_output.get("profile", {}).get("backend")
+    if baseline_backend is not None and baseline_backend != candidate_backend:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"baseline was dumped for backend {baseline_backend!r}, but this staged build "
+                f"is backend {candidate_backend!r} -- refusing to compare across a backend change "
+                "with whichever mechanism the candidate's own backend would otherwise select"
+            ),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
     # The baseline/target identity check above only proves the *caller's*
     # arguments match -- it says nothing about which profile actually
     # produced the staged_dir we're about to read from. staged_dir is a
