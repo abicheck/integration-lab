@@ -989,3 +989,96 @@ such a command would replace). Once available, `ci/compare_build_outputs.py`
 should become a thin driver over that command (resolving which staged
 profiles to compare, classifying/rendering the result for this repo's own
 `cross_build_equivalence` job), not a parallel comparison engine.
+
+---
+
+# 2026-08-21 P0: `abicheck scan --against` reports NOT_COMPARABLE against every `abicheck dump` baseline, deterministically, for reasons unrelated to the library
+
+**Severity: P0.** This is not a lab-only workaround entry -- it is the
+required, load-bearing `abi-scan.yml` `scan` job itself, failing on every
+single PR against `main`, confirmed on four independent CI runs (including
+a bare re-run with zero code changes) and reproduced cleanly, offline, in
+this session's own sandbox, isolated all the way down to a single root
+cause inside `abicheck` itself.
+
+**Symptom (real CI, `abicheck/integration-lab` PR #23, and every PR before
+it since the `6fb8536` pin landed):**
+
+```
+abicheck verdict: NOT_COMPARABLE (exit code 6)
+scan --against reported NOT_COMPARABLE: the candidate and baseline were not
+extracted under a comparable profile/scope contract.
+diff.reason: "old and new snapshots were extracted under different compile
+contexts (profile_fingerprint mismatch; differing fields: include_sequence)"
+```
+
+**Root cause, isolated by direct reproduction (not inference):**
+
+1. `baseline.yml`'s "Collect source-aware ABI baseline" step calls
+   `abicheck/abicheck@6fb8536` with `mode: dump`. `abi-scan.yml`'s "ABICheck
+   source scan" step calls the *same pinned Action commit* with `mode: scan`
+   (`--against <the dump baseline>`).
+2. Verified `scripts/build_bazel_evidence_pack.py`'s own output (the
+   `--build-info` evidence pack both modes consume) is **byte-identical**
+   across two entirely separate `bazel build //:math` + `cquery`/`aquery`
+   invocations from the identical commit (`sha256sum` match on both
+   `manifest.json` and `build/build_evidence.json`) -- ruling out Bazel/this
+   repo's own evidence extraction as the source of non-determinism.
+3. Verified two separate `abicheck dump` invocations against two separately
+   *built* (but content-identical) evidence packs produce structurally
+   identical `contract.profile_fingerprint`/`include_sequence` values
+   (only wall-clock timing fields differ) -- ruling out `dump` mode itself,
+   and ruling out pack-to-pack determinism, as the source.
+4. **The isolating test:** ran `abicheck scan --against <a dump.json>`
+   using the *exact same evidence pack* that `dump.json` was itself
+   produced from (same binary, same headers, same sources, same toolchain,
+   same pack -- nothing held constant except the mode). Result:
+   `NOT_COMPARABLE`, `differing fields: include_sequence`, every time.
+
+**Conclusion:** `abicheck scan`'s own internal computation of the
+`include_sequence` profile-fingerprint field for its candidate ("new")
+side does not agree with `abicheck dump`'s computation of the identical
+field, for byte-identical underlying evidence. Since `comparability.py`'s
+profile-fingerprint gate (correctly, by design) refuses to compare two
+snapshots whose extraction context doesn't match, and a `dump`-produced
+baseline compared via `scan --against` can apparently *never* match on
+this specific field, this makes `scan --against <a dump-mode baseline>`
+structurally unable to succeed -- not a flake, not environment drift, not
+anything about the library's own source or ABI.
+
+**What this means for every repo using this exact pattern** (dump-mode
+baselines + scan-mode PR gate, both via `abicheck/abicheck@6fb8536` or
+any release sharing this bug): the required gate cannot produce a real
+`COMPATIBLE`/`BREAKING`/`NO_CHANGE` verdict at all right now -- every PR
+either hits `NOT_COMPARABLE` (if `fail-on-breaking`-style gating treats it
+as a failure, as `abi-scan.yml`'s own "Enforce gate" step does) or would
+need to treat `NOT_COMPARABLE` as non-blocking (silently defeating the
+gate's whole purpose).
+
+**What this lab cannot do:** patch `abicheck` itself -- this bug is inside
+the pinned Action commit's own `comparability_fields.py`/`comparability.py`
+(the `include_sequence` computation path taken by `mode: scan`'s own
+candidate-snapshot construction), not in anything this lab repo owns.
+Refreshing `abi/math.abicheck.json` (confirmed: triggered a manual
+`baseline.yml` re-run, produced byte-identical content, landed no new
+commit) does not and cannot fix this -- the mismatch is structural between
+the two *modes*, not about baseline staleness.
+
+**What should happen upstream:** `abicheck scan`'s own new-side extraction
+path should compute `include_sequence` (and the rest of
+`profile_fields`) through the *same* code path `abicheck dump` uses for
+identical inputs -- or, if the two paths are intentionally different
+implementations, the profile-fingerprint comparability gate needs a
+`scan`-vs-`dump`-mode-aware normalization/waiver so a `dump`-produced
+baseline remains usable as a `scan --against` target at all. Right now
+neither holds, and the gate cannot pass.
+
+**What this repo should consider in the meantime** (not implemented by
+this entry -- a decision for whoever owns `abi-scan.yml`/`baseline.yml`,
+since it changes the required gate's own trusted mechanism): either (a)
+generate the committed baseline via `mode: scan` against a null/self
+comparison instead of `mode: dump`, if the CLI supports producing a
+scan-compatible snapshot that way, or (b) pin to an `abicheck` commit
+predating whatever change introduced this `scan`-vs-`dump` fingerprint
+divergence, until it's fixed upstream, or (c) report this exact
+reproduction to `abicheck/abicheck` and pin to the fix once released.
