@@ -125,7 +125,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -143,7 +143,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -161,7 +161,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -179,7 +179,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -197,7 +197,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {
@@ -331,13 +331,13 @@
         "by_file": {},
         "by_source_decl": {
           "decl://_ZN12abicheck_lab19strings_api_versionEv": [
-            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+            "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
           ],
           "decl://_ZN12abicheck_lab6JoinerC1Ev": [
-            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+            "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
           ],
           "decl://_ZNK12abicheck_lab6Joiner12total_lengthEPKcS2_": [
-            "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h"
+            "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
           ]
         },
         "by_target": {}
@@ -406,9 +406,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "header:///home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h",
+          "id": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
           "kind": "header",
-          "label": "/home/runner/work/abicheck-bazel-lab/abicheck-bazel-lab/strings_lib/include/abicheck_lab/strings.h",
+          "label": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -928,8 +928,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "strings_lib/include/abicheck_lab/strings.h:29",
+      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:29",
       "visibility": "public",
       "vtable_index": null
     },
@@ -981,8 +981,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "strings_lib/include/abicheck_lab/strings.h:30",
+      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:30",
       "visibility": "public",
       "vtable_index": null
     },
@@ -1015,8 +1015,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "strings_lib/include/abicheck_lab/strings.h:33",
+      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:33",
       "visibility": "public",
       "vtable_index": null
     }
@@ -1064,8 +1064,8 @@
       "origin": "public_header",
       "qualified_name": "abicheck_lab::Joiner",
       "size_bits": null,
-      "source_header": "strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "strings_lib/include/abicheck_lab/strings.h:27",
+      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:27",
       "virtual_bases": [],
       "vptr_offset_bits": null,
       "vtable": []
