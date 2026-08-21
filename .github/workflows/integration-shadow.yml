@@ -133,3 +133,167 @@ jobs:
             run-profile-summary.json
           if-no-files-found: warn
           retention-days: 14
+
+      # PR2: an actual ABI comparison against this profile's own committed
+      # baseline (abi/profiles/<profile-id>/<target>.abicheck.json), for
+      # every target ci/profiles.yaml's coverage.checked_targets declares.
+      # See ci/check_profile.py's own module docstring for exactly what
+      # this mechanism is (a real nm/readelf dynamic-symbol-table diff) and
+      # is not (the full abicheck source-level scanner, unreachable in this
+      # sandbox -- no network). `if: steps.run_profile.outcome == 'success'`
+      # (not always()): a profile whose own build failed has no candidate
+      # library to check at all -- check_profile.py's own NOT_COMPARABLE
+      # path exists for a missing/broken baseline, not a missing build, so
+      # this step is skipped outright rather than producing a report that
+      # would read as "we tried and it wasn't comparable" for a build that
+      # never even ran. continue-on-error: true throughout -- like the rest
+      # of this workflow, a check failure never fails the job itself; the
+      # `integration_gate` job below is what turns a real red result into a
+      # visible (still advisory) gate outcome.
+      - name: Run ABI check (math)
+        id: check_math
+        if: steps.run_profile.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          python3 ci/check_profile.py check \
+            --profile-id "$PROFILE_ID" --target math \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --baseline "abi/profiles/$PROFILE_ID/math.abicheck.json" \
+            --out "$RUNNER_TEMP/report-math.json"
+
+      - name: Run ABI check (strings)
+        id: check_strings
+        if: steps.run_profile.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          python3 ci/check_profile.py check \
+            --profile-id "$PROFILE_ID" --target strings \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --baseline "abi/profiles/$PROFILE_ID/strings.abicheck.json" \
+            --out "$RUNNER_TEMP/report-strings.json"
+
+      - name: Check profile coverage contract
+        id: coverage
+        if: always() && steps.run_profile.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          python3 ci/check_profile_coverage.py \
+            --profile-id "$PROFILE_ID" \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --report "math=$RUNNER_TEMP/report-math.json" \
+            --report "strings=$RUNNER_TEMP/report-strings.json" \
+            -o "$RUNNER_TEMP/coverage.json"
+
+      # Emitted regardless of whether the steps above succeeded, failed, or
+      # were skipped (a build failure) -- emit_profile_receipt.py itself
+      # reads whatever report/coverage files exist (a report that never got
+      # written reads as verdict NOT_RUN, never silently omitted) and
+      # derives status: passed/failed from that, matching
+      # scripts/capability_receipts.py's own "a receipt is written every
+      # time, status says why" contract.
+      - name: Emit profile receipt
+        if: always()
+        shell: bash
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/profile-receipts"
+          python3 ci/emit_profile_receipt.py \
+            --profile-id "$PROFILE_ID" \
+            --staged-dir "abicheck-build-$PROFILE_ID" \
+            --report "math=$RUNNER_TEMP/report-math.json" \
+            --report "strings=$RUNNER_TEMP/report-strings.json" \
+            --coverage-result "$RUNNER_TEMP/coverage.json" \
+            --workflow integration-shadow.yml \
+            --job "build (${{ matrix.profile }})" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --sha "${{ github.sha }}" \
+            --out "$RUNNER_TEMP/profile-receipts/$PROFILE_ID.json"
+
+      - name: Upload profile receipt and reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: profile-receipt-${{ matrix.profile }}
+          path: |
+            ${{ runner.temp }}/profile-receipts/
+            ${{ runner.temp }}/report-math.json
+            ${{ runner.temp }}/report-strings.json
+            ${{ runner.temp }}/coverage.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # PR2 item 3: the final, advisory integration gate. Runs after every
+  # profile's build+check+receipt steps (needs: build, if: always() -- must
+  # run even when a profile leg failed, since a missing receipt is exactly
+  # what this job is supposed to catch) and validates the full set of
+  # receipts, not just whichever ones happened to get uploaded --
+  # ci/render_integration_gate.py fails closed on a missing/invalid receipt
+  # the same way abi-scan.yml's own `aggregate` job does for its manifest
+  # (see that job's own P0.6 comment) rather than only reporting on
+  # whatever showed up (`--discovered-only`-shaped silence). Deliberately
+  # NOT added to branch-protection required status checks -- see this
+  # workflow's own header comment and README.md's PR2 section: this job can
+  # and does fail for real, it just doesn't yet block a merge.
+  integration_gate:
+    needs: [select, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet jsonschema
+
+      - name: Download per-profile receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: profile-receipt-*
+          path: ${{ runner.temp }}/profile-receipts
+          merge-multiple: true
+
+      - name: Render integration gate summary
+        id: gate
+        shell: bash
+        # MATRIX_JSON read through `env`, not interpolated directly into
+        # this script, matching abi-scan.yml's own RELEVANT/SCAN_OUTCOME/
+        # COVERAGE_OUTCOME precedent (see that workflow's "Emit
+        # math-source-gate capability receipt" step) -- the standard fix
+        # for GitHub's own template-expansion code-injection hazard.
+        env:
+          MATRIX_JSON: ${{ needs.select.outputs.matrix }}
+        run: |
+          set -o pipefail
+          expected_args=()
+          while IFS= read -r pid; do
+            expected_args+=(--expected-profile "$pid")
+          done < <(python3 -c "import json, os; print('\n'.join(json.loads(os.environ['MATRIX_JSON'])['profile']))")
+          python3 ci/render_integration_gate.py \
+            --receipts-dir "$RUNNER_TEMP/profile-receipts" \
+            "${expected_args[@]}" \
+            -o "$RUNNER_TEMP/integration-gate-result.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload integration gate result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-gate-result
+          path: ${{ runner.temp }}/integration-gate-result.json
+          if-no-files-found: warn
+          retention-days: 14
