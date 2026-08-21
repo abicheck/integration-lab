@@ -33,6 +33,10 @@ on:
       - 'tests/**'
       - 'README.md'
       - '.github/workflows/*.yml'
+      # scripts/check_recipe_parity.py discovers both extensions (Codex
+      # review, fresh evidence: a *.yaml-only workflow change would
+      # otherwise never trigger the one workflow that runs it).
+      - '.github/workflows/*.yaml'
   workflow_dispatch:
 
 permissions:
