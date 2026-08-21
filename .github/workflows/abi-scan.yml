@@ -162,31 +162,11 @@ jobs:
           bazel query 'buildfiles(deps(//:math))' \
             > "$RUNNER_TEMP/bazel-buildfiles.txt"
 
-      # Codex review, fresh evidence: kept on the OLDER pin deliberately,
-      # unlike every other abicheck reference in this file. abicheck main
-      # @6fb8536 fixes two real bugs this repo previously reported
-      # upstream (dump/compare header_roots parity,
-      # _probe_default_language_standard) -- but it also has a third,
-      # still-open, upstream-tracked issue (see abicheck's own AGENTS.md
-      # "Known gaps": dump's baseline and scan's `--depth source`
-      # candidate resolution reach a matched include directory through
-      # two structurally different channels and disagree on
-      # include_sequence) that makes THIS job's `scan --against` a
-      # persisted baseline with `--depth source`+`--build-info` return
-      # NOT_COMPARABLE -- which `fail-on-breaking: true`/
-      # `fail-on-api-break: true` below turn into a required-gate
-      # failure for every ABI-relevant PR, not just this one. The
-      # `mode: compare`/non-gating `mode: scan` steps elsewhere in this
-      # file don't hit that path (compare mode never derives L3 evidence
-      # the way `--depth source` does) and stay on the new pin. Bump this
-      # one back to 6fb8536 once the upstream include_sequence-parity fix
-      # lands and this repo's baselines are re-dumped against it -- not
-      # before, or this required gate breaks for every future PR.
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
         if: steps.bazel_queries.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@891bd9d7157dda8af38a8b9e145e564dc7fc1c71"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -220,16 +200,11 @@ jobs:
       # (verified against cli_scan.py) and extra-args passes it through --
       # this is what turns the four provenance-gated crosschecks from
       # "skipped: no public-header provenance" into real evidence.
-      # Kept on the older pin -- see the `abicheck_pip` step's own comment
-      # above for why (`--depth source`+`--build-info`+`against:` a
-      # persisted baseline hits a still-open upstream include_sequence
-      # NOT_COMPARABLE issue on the new pin, which fail-on-breaking below
-      # turns into a required-gate failure).
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@891bd9d7157dda8af38a8b9e145e564dc7fc1c71 # abicheck/main @ 891bd9d
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
         with:
           mode: scan
           new-library: bazel-bin/libmath.so
