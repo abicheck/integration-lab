@@ -141,6 +141,21 @@ REAL_SCAN_MECHANISM_NOTE = (
     "ci/real_scan.py)"
 )
 
+# Used only for the documented bear-absent degrade (build_baseline()'s
+# _bear_legitimately_absent()) -- distinct from REAL_SCAN_MECHANISM_NOTE,
+# which claims the real scanner actually ran. Here it deliberately didn't:
+# the nm/readelf-derived verdict facts.update() already wrote earlier in
+# compare_profile() is what's being reported (Codex review, PR #25: "Keep
+# Bear-less baselines comparable").
+BEAR_ABSENT_MECHANISM_NOTE = (
+    "nm/readelf dynamic-symbol-table + public-header-digest diff -- bear is not "
+    "installed on this runner (documented, non-failing degrade for the make "
+    "backend; see ci/profiles.yaml's coverage.require_compile_commands), so no "
+    "real abicheck snapshot was available on at least one side of this "
+    "comparison; falling back to the same nm/readelf mechanism the bazel "
+    "profile always uses"
+)
+
 # ELF/linker-internal dynamic symbols that show up in every shared object's
 # .dynsym regardless of what the library's own source exports -- never part
 # of a library's own public ABI. The first three are exactly the ones the
@@ -867,9 +882,26 @@ def _apply_real_scan_verdict(
       -- e.g. a committed baseline from before this PR); or
     - the real dump/compare invocation itself fails (missing castxml, a
       header-context ambiguity, etc.) -- see real_scan.py's own docstring.
+
+    The ONE exception to that fail-closed rule: a baseline whose missing
+    snapshot is the documented, non-failing bear-absent degrade
+    (build_baseline()'s abicheck_snapshot_skipped_reason -- see
+    _bear_legitimately_absent()) is not the same as a baseline that simply
+    predates this integration or a genuine scanner failure. That
+    configuration is explicitly supported (ci/profiles.yaml's
+    coverage.require_compile_commands: false); forcing NOT_COMPARABLE for
+    it would mean it could never pass a check or receipt at all, on either
+    side of the fail-closed intent above (Codex review, PR #25: "Keep
+    Bear-less baselines comparable"). The nm/readelf-derived verdict
+    facts.update() already wrote earlier in compare_profile() -- which
+    already folds in the loader-break conditions itself -- is used as-is
+    instead.
     """
     baseline_snapshot = baseline.get("abicheck_snapshot")
     if not isinstance(baseline_snapshot, dict):
+        if "abicheck_snapshot_skipped_reason" in baseline:
+            facts.update(mechanism=BEAR_ABSENT_MECHANISM_NOTE)
+            return
         verdict, detail = _combine_with_loader_break(
             "NOT_COMPARABLE",
             (

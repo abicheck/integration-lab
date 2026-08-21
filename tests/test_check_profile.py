@@ -490,3 +490,49 @@ def test_build_baseline_still_fails_closed_on_genuine_compile_db_failure(tmp_pat
 
     with pytest.raises(Exception, match="no compile database"):
         build_baseline("p1", "math", staged)
+
+
+def test_compare_profile_falls_back_to_nm_readelf_when_bear_legitimately_absent(tmp_path):
+    # A baseline dumped with the documented bear-absent degrade
+    # (abicheck_snapshot: None + abicheck_snapshot_skipped_reason, see the
+    # build_baseline test above) must still be able to produce a passing
+    # comparison -- _apply_real_scan_verdict() previously rejected ANY
+    # non-dict abicheck_snapshot as NOT_COMPARABLE, indistinguishable from
+    # "this baseline predates the real-scanner integration", which made
+    # this documented, non-failing configuration unable to ever pass a
+    # check or receipt at all (Codex review, PR #25: "Keep Bear-less
+    # baselines comparable").
+    def _make_build_output(staged_name):
+        return {
+            "profile": {"id": "p1", "backend": "make"},
+            "evidence": {
+                "backend_evidence": {
+                    "kind": "make+bear",
+                    "compile_commands_present": False,
+                    "note": "bear not installed on this runner -- compile_commands.json not generated",
+                }
+            },
+            "targets": {
+                "math": {
+                    "kind": "shared_library",
+                    "built": True,
+                    "path": f"artifacts/lib/{staged_name}",
+                    "sha256": None,
+                    "size_bytes": None,
+                }
+            },
+        }
+
+    lib_before = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_before.so")
+    baseline_staged = _stage_profile(tmp_path / "before", lib_before, staged_name="libmath.so")
+    (baseline_staged / "build-output.json").write_text(json.dumps(_make_build_output("libmath.so")))
+    baseline = build_baseline("p1", "math", baseline_staged)
+    assert baseline["abicheck_snapshot"] is None  # sanity: this is the degrade path
+
+    lib_after = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n", name="lib_after.so")
+    candidate_staged = _stage_profile(tmp_path / "after", lib_after, staged_name="libmath.so")
+    (candidate_staged / "build-output.json").write_text(json.dumps(_make_build_output("libmath.so")))
+
+    result = compare_profile("p1", "math", candidate_staged, baseline)
+    assert result["verdict"] == "NO_CHANGE"
+    assert "bear is not installed" in result["mechanism"]

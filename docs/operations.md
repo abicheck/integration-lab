@@ -192,14 +192,22 @@ transferring a repository as part of a code-only PR.
   `abicheck-bazel-lab`, which appears with no org prefix in `ci/schemas/
   *.json`'s own `$id`/`title` fields) — before closing out a transfer:
   ```shell
-  grep -rln '<old-org>/<old-repo>' . ; grep -rln '<old-repo-bare-name>' .
+  git grep -ln '<old-org>/<old-repo>' ; git grep -ln '<old-repo-bare-name>'
   ```
-  Replace both placeholders with this repository's actual previous
-  identity before running. Either command returning anything outside
-  this file's own historical example above and `UPSTREAM_TO_ABICHECK.md`
-  (which intentionally keeps the lab revision it audited under its
-  original name for traceability) is a real stale reference, not
-  history — fix it.
+  `git grep`, not a plain recursive `grep -r . .` -- the latter descends
+  into `.git` itself (`-r`/`--recursive` has no notion of tracked vs.
+  untracked, and `.git/FETCH_HEAD`/`.git/config`/packed refs legitimately
+  retain the old remote's name after a transfer) and reports that stale
+  Git-internal metadata as if it were a real reference needing a fix
+  (verified: `grep --help` confirms `-r` means recurse-into-directories,
+  full stop; excluding `.git` would need `--exclude-dir=.git` on top --
+  `git grep` already scopes to tracked files with none of that ceremony)
+  (Codex review, PR #25). Replace both placeholders with this
+  repository's actual previous identity before running. Either command
+  returning anything outside this file's own historical example above
+  and `UPSTREAM_TO_ABICHECK.md` (which intentionally keeps the lab
+  revision it audited under its original name for traceability) is a
+  real stale reference, not history — fix it.
 - [ ] Branch protection and required status checks (currently the Bazel
   `abi-scan.yml` gate; see `docs/canonical-bazel-gate.md`) are GitHub
   repository settings, not files — they do not migrate automatically on
