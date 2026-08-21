@@ -158,10 +158,16 @@ def stage_profile(
     targets_doc: Dict[str, Any] = {}
     for name, target in build_result.targets.items():
         staged = stage_manifest.get(name, {})
+        # backend.stage() returns "path" relative to artifacts_dir (e.g.
+        # "lib/libmath.so"), but every other path in this document
+        # (header_roots, evidence) is relative to out_dir -- prefix with
+        # "artifacts/" so build-output.json is consistently root-relative
+        # throughout (Codex review, PR #19).
+        staged_path = staged.get("path")
         targets_doc[name] = {
             "kind": target.kind,
             "built": target.built,
-            "path": staged.get("path"),
+            "path": f"artifacts/{staged_path}" if staged_path else None,
             "sha256": target.sha256,
             "size_bytes": target.size_bytes,
         }
