@@ -91,6 +91,23 @@ def evaluate(
             rows.append({**row, "status": "SCHEMA_INVALID", "build": receipt_dict.get("build"), "reports": receipt_dict.get("reports", []), "gate_status": "FAIL"})
             continue
 
+        # The schema only requires a nonempty profile_id -- it says nothing
+        # about which profile that string names. A receipt at the expected
+        # filename (<receipts-dir>/<profile-id>.json) can still be a
+        # schema-valid, passed receipt for a *different* profile (a copied
+        # or misnamed artifact download, e.g. from PR1's per-profile
+        # artifact naming) -- this loop was keying entirely off the
+        # filename/status/verdicts and would report PASS for the expected
+        # profile with zero evidence it was ever actually checked (Codex
+        # review, PR #20).
+        if receipt.get("profile_id") != profile_id:
+            failures.append(
+                f"{profile_id}: receipt at {receipt_path} is for profile_id="
+                f"{receipt.get('profile_id')!r}, not {profile_id!r} -- wrong artifact?"
+            )
+            rows.append({**row, "status": "WRONG_PROFILE", "build": receipt.get("build"), "reports": receipt.get("reports", []), "gate_status": "FAIL"})
+            continue
+
         status = receipt.get("status")
         reports = receipt.get("reports", [])
         breaking_or_missing = [r for r in reports if r.get("verdict") in ("BREAKING", "NOT_COMPARABLE", "NOT_RUN")]

@@ -66,3 +66,15 @@ def test_gate_fails_on_schema_invalid_receipt(tmp_path):
     result = evaluate(["p1"], tmp_path)
     assert result["gate_status"] == "FAIL"
     assert any("schema validation" in f for f in result["failures"])
+
+
+def test_gate_fails_on_receipt_with_wrong_embedded_profile_id(tmp_path):
+    # p1.json is schema-valid and status=passed -- but it's actually a
+    # receipt for p2 (a copied or misnamed artifact download). The
+    # filename alone must not be trusted as proof of which profile this
+    # receipt covers.
+    _write_receipt(tmp_path, "p2")
+    (tmp_path / "p1.json").write_text((tmp_path / "p2.json").read_text())
+    result = evaluate(["p1"], tmp_path)
+    assert result["gate_status"] == "FAIL"
+    assert any("is for profile_id='p2'" in f for f in result["failures"])
