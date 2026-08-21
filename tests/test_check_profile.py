@@ -224,6 +224,34 @@ def test_compare_profile_not_comparable_on_wrong_staged_profile(tmp_path):
     assert "not the requested profile_id" in result["detail"]
 
 
+def test_compare_profile_not_comparable_on_baseline_missing_dynamic_symbols(tmp_path):
+    # A baseline with correct kind/profile_id/target but a missing (or
+    # truncated-write-corrupted) dynamic_symbols field previously
+    # defaulted to [] -- an empty base symbol table makes every candidate
+    # export look "newly added" with nothing to diff against, landing in
+    # the added -> COMPATIBLE branch despite never actually comparing
+    # against the real previous ABI at all.
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    del baseline["dynamic_symbols"]
+
+    result = compare_profile("p1", "math", staged, baseline)
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert "dynamic_symbols" in result["detail"]
+
+
+def test_compare_profile_not_comparable_on_baseline_missing_public_headers(tmp_path):
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    del baseline["public_headers"]
+
+    result = compare_profile("p1", "math", staged, baseline)
+    assert result["verdict"] == "NOT_COMPARABLE"
+    assert "public_headers" in result["detail"]
+
+
 def test_build_baseline_rejects_wrong_staged_profile(tmp_path):
     # dump's --profile-id and --staged-dir are two independent CLI
     # arguments -- nothing stops a caller from stamping a p2-built staged

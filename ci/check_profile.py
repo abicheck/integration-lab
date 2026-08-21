@@ -416,7 +416,31 @@ def compare_profile(
         )
         return facts
 
-    base_symbols = _index_by_name(baseline.get("dynamic_symbols", []))
+    # A baseline that passed the kind/profile_id/target identity checks
+    # above can still be structurally incomplete -- a truncated write, a
+    # hand-edited baseline missing a field, dynamic_symbols simply absent.
+    # `.get("dynamic_symbols", [])` previously defaulted a missing/None
+    # field to an empty list, which made every candidate export look
+    # "newly added" (nothing to diff against) and land in the `added` ->
+    # COMPATIBLE branch -- passing the gate with zero actual comparison
+    # against the real previous ABI (Codex review, PR #20). Fail closed
+    # instead: a baseline missing its own symbol inventory can't be
+    # compared at all.
+    baseline_symbols_field = baseline.get("dynamic_symbols")
+    if not isinstance(baseline_symbols_field, list):
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"baseline is missing a valid dynamic_symbols list (got "
+                f"{type(baseline_symbols_field).__name__ if baseline_symbols_field is not None else None!r}) "
+                "-- cannot compare against an incomplete baseline"
+            ),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
+    base_symbols = _index_by_name(baseline_symbols_field)
     cand_symbols = _index_by_name(candidate_symbols)
 
     removed = sorted(set(base_symbols) - set(cand_symbols))
@@ -438,7 +462,26 @@ def compare_profile(
             })
     unchanged_count = len(set(base_symbols) & set(cand_symbols)) - len(changed)
 
-    base_headers = baseline.get("public_headers", {})
+    # Same reasoning as the dynamic_symbols guard above, for the other
+    # half of the baseline's own evidence: a missing/malformed
+    # public_headers field must not silently default to {} (which would
+    # make a real, missing baseline header content look identical to "no
+    # headers at all" rather than failing closed).
+    baseline_headers_field = baseline.get("public_headers")
+    if not isinstance(baseline_headers_field, dict):
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"baseline is missing a valid public_headers mapping (got "
+                f"{type(baseline_headers_field).__name__ if baseline_headers_field is not None else None!r}) "
+                "-- cannot compare against an incomplete baseline"
+            ),
+            symbols={"added": added, "removed": removed, "changed": changed, "unchanged_count": unchanged_count},
+            public_headers_changed=[],
+        )
+        return facts
+
+    base_headers = baseline_headers_field
     headers_changed = sorted(
         path
         for path in set(base_headers) | set(candidate_headers)
