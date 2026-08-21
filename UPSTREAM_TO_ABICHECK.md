@@ -1113,3 +1113,69 @@ scan-compatible snapshot that way, or (b) pin to an `abicheck` commit
 predating whatever change introduced this `scan`-vs-`dump` fingerprint
 divergence, until it's fixed upstream, or (c) report this exact
 reproduction to `abicheck/abicheck` and pin to the fix once released.
+
+---
+
+# 2026-08-21 confirmation: reproduced fresh against `main` itself, unmodified -- this is not a regression from any open PR
+
+**Confirmed the required gate is broken on `main` right now, not just on a
+PR branch.** Re-ran the exact `abi-scan.yml` "ABICheck source scan" step
+by hand, outside any PR, against `main`'s own unmodified checkout
+(`origin/main` at `cf00f8d`) and its own committed
+`abi/math.abicheck.json`:
+
+```text
+bazel build //:math
+bazel cquery --output=jsonproto 'deps(//:math)' > bazel-cquery.json
+bazel aquery --output=jsonproto --include_param_files \
+  "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+  > bazel-aquery.json
+python3 scripts/build_bazel_evidence_pack.py --cquery bazel-cquery.json \
+  --aquery bazel-aquery.json --workspace "$(pwd)" --output bazel-evidence-pack \
+  --root-target "//:math" --summary-output bazel-evidence-summary.json
+python3 -m abicheck scan bazel-bin/libmath.so -H include/abicheck_lab/math.h \
+  --sources . --build-info bazel-evidence-pack --public-header-dir include \
+  --against abi/math.abicheck.json --depth source --format json -o scan-out.json
+```
+
+using the exact pinned commit (`abicheck @ git+https://github.com/abicheck/
+abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3`) `abi-scan.yml`
+installs. Result:
+
+```json
+{"verdict": "NOT_COMPARABLE", "exit_code": 6,
+ "diff": {"reason": "old and new snapshots were extracted under different
+   compile contexts (profile_fingerprint mismatch; differing fields:
+   compiler_version, include_sequence) — the comparison is not comparable."}}
+```
+
+Same verdict, same exit code, same class of mismatched field
+(`include_sequence`, joined here by `compiler_version` too) as every prior
+reproduction in this doc -- on `main`'s own source, `main`'s own committed
+baseline, no PR diff involved at all. This directly confirms `abi-scan.yml`'s
+own inline comment above the `scan` step ("confirmed by checking PR #16/#17's
+own CI, both on the OLDER pin, both already red for the identical reason")
+with an independent, fresh, hands-on repro rather than relying on that
+comment's own historical claim: **any PR this repo's skip-check judges
+ABI-relevant fails the required gate today, regardless of what it changes.**
+Recent PRs merged into `main` (#20 through #24) did not surface this in
+their own CI because none of them touched Bazel/`//:math` source and were
+therefore correctly judged not-relevant by the skip-check, taking the
+short-circuit path that never reaches the `scan` step at all -- their own
+green `scan` job checks are real, but for a code path that was never
+exercised, not evidence this bug is fixed.
+
+This is the same root cause `verify_capability_receipts` and `aggregate`'s
+own `math-source-gate`/`aggregate-multi-library` capability-receipt
+failures report on any ABI-relevant PR (both are downstream consumers of
+this same `scan` step's own failed outcome) -- there is exactly one root
+cause behind those two receipt failures, not two independent bugs.
+
+No lab-side workflow change can fix this: it is a bug in the pinned
+`abicheck` commit's own `scan`-mode candidate-snapshot construction, not in
+anything `abi-scan.yml`, `baseline.yml`, or any script in this repository
+controls. The three options this doc already lists above (generate the
+baseline via `scan` self-comparison instead of `dump`; pin to a commit
+predating the regression; report upstream and wait for a fix) remain the
+only real paths forward, and none has been implemented by this entry --
+this is a confirmation and repro, not a fix.
