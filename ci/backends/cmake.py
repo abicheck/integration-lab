@@ -128,6 +128,23 @@ class CMakeBackend(BuildBackend):
             out_subdir = bin_dir if target.kind == "executable" else lib_dir
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
+            if target.kind == "shared_library":
+                # target.path is the bare "lib<name>.so" dev symlink (see
+                # _resolve_output_path); consumer_app is linked against the
+                # *SONAME* ("lib<name>.so.<SOVERSION>", e.g. libmath.so.1 --
+                # SOVERSION 1 in CMakeLists.txt), not the bare name, so the
+                # staged directory needs that file too or a staged-only
+                # consumer_app can't resolve its dependency at runtime
+                # (Codex review, PR #19). CMake's own symlink chain already
+                # names it -- readlink the bare symlink's immediate target
+                # (one hop: "lib<name>.so" -> "lib<name>.so.<SOVERSION>")
+                # rather than re-deriving SOVERSION from CMakeLists.txt.
+                try:
+                    soname = target.path.readlink().name
+                except OSError:
+                    soname = None
+                if soname and soname != dest.name:
+                    shutil.copy2(target.path, out_subdir / soname)
             manifest[name] = {
                 "staged": True,
                 "path": str(dest.relative_to(dest_dir)),

@@ -129,6 +129,15 @@ def stage_profile(
     docstring. Returns the build-output.json document (also written to
     out_dir/build-output.json).
     """
+    # A re-run into the same out_dir (a repeated local `ci/run_profile.py`
+    # invocation, or a retried CI attempt reusing its workspace) must not
+    # leave behind a target/header/evidence file the current run no longer
+    # produces -- stage() and _copy_header_root() below only ever add or
+    # overwrite, never remove, so build-output.json could report something
+    # as absent while the "canonical" directory still serves a stale copy
+    # of it (Codex review, PR #19). Start from a clean directory each time.
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     artifacts_dir = out_dir / "artifacts"
     headers_dir = out_dir / "headers"
