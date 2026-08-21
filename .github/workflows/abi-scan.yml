@@ -200,6 +200,18 @@ jobs:
       # (verified against cli_scan.py) and extra-args passes it through --
       # this is what turns the four provenance-gated crosschecks from
       # "skipped: no public-header provenance" into real evidence.
+      # This step (and the `aggregate`/`verify_capability_receipts` jobs
+      # downstream of it) fail with NOT_COMPARABLE against the committed
+      # baseline regardless of which abicheck pin is used here -- confirmed
+      # by checking PR #16/#17's own CI, both on the OLDER pin, both
+      # already red for the identical reason (see PR #17's own comment
+      # thread). This is not a regression this pin bump introduces: it's a
+      # pre-existing, upstream-tracked issue (abicheck's own AGENTS.md
+      # "Known gaps": dump's baseline and scan's `--depth source` candidate
+      # resolution disagree on include_sequence via two structurally
+      # different channels). Staying on an older pin buys nothing here --
+      # it only forgoes the two other real bugs 6fb8536 fixes (see this
+      # PR's own description) while leaving this same failure in place.
       - name: ABICheck source scan (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
