@@ -567,6 +567,28 @@ jobs:
 
       - run: pip install --quiet pyyaml
 
+      # scenarios.yml's own castxml install step, exactly (see that
+      # workflow's identical step for the full rationale: Ubuntu's distro
+      # castxml package bundles too old a Clang for abicheck/main's own
+      # >=0.6.11,<0.8.0 contract, so this fetches the same
+      # checksum-verified pinned CastXML Superbuild abicheck's own CI
+      # uses, from the exact commit this job already pins abicheck itself
+      # to below). Missing here in this job's first real CI run (verified
+      # against this repo's own PR #23: every scenario/profile pair that
+      # declares a `castxml` oracle entry failed with "castxml not found
+      # in PATH", the `clang` oracle entries alongside them still passed)
+      # -- this sandbox's own local runs never caught it because castxml
+      # is ALSO unavailable there (a different, unrelated gap; see
+      # README.md's own note), so both the CMake and Bazel paths looked
+      # identically "castxml-less" locally when only the CMake path here
+      # was actually missing a real, available install step.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
       # Same pinned scanner commit abi-scan.yml's own required gate and
       # the cross_build_equivalence job above both install -- this job's
       # whole point is exercising abicheck's real detection logic against
