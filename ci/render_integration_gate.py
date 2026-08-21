@@ -126,7 +126,32 @@ def evaluate(
                 + ", ".join(f"{r['target']}={r['verdict']}" for r in breaking_or_missing)
             )
 
-        row_status = "passed" if status == "passed" and not breaking_or_missing else "failed"
+        # The schema requires build.success and permits any coverage
+        # shape, but constrains neither against `status` -- a schema-valid
+        # receipt claiming status="passed" while build.success is false or
+        # coverage.gate_status is "FAIL" would otherwise pass this loop
+        # purely on the producer's own say-so, with the actual evidence it
+        # carries contradicting that claim. ci/emit_profile_receipt.py's
+        # own build_receipt() always derives status FROM these facts, so
+        # this can't happen from that emitter today -- but this consumer
+        # reads an arbitrary JSON file, not a guaranteed call into that
+        # function, so trusting the aggregate status alone over the
+        # underlying facts it's supposed to summarize is the same
+        # single-field-of-trust gap already closed elsewhere in this PR
+        # (Codex review, PR #20).
+        build_evidence = receipt.get("build")
+        build_success = isinstance(build_evidence, dict) and build_evidence.get("success") is True
+        if status == "passed" and not build_success:
+            failures.append(f"{profile_id}: receipt status=passed but build.success is not true: {build_evidence!r}")
+        coverage_evidence = receipt.get("coverage")
+        coverage_failed = isinstance(coverage_evidence, dict) and coverage_evidence.get("gate_status") not in (None, "PASS")
+        if status == "passed" and coverage_failed:
+            failures.append(
+                f"{profile_id}: receipt status=passed but coverage.gate_status="
+                f"{coverage_evidence.get('gate_status')!r}"
+            )
+
+        row_status = "passed" if status == "passed" and not breaking_or_missing and build_success and not coverage_failed else "failed"
         rows.append({
             **row,
             "status": row_status,

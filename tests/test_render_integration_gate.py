@@ -90,3 +90,20 @@ def test_gate_fails_on_non_utf8_receipt(tmp_path):
     result = evaluate(["p1"], tmp_path)
     assert result["gate_status"] == "FAIL"
     assert any(row["status"] == "INVALID" for row in result["rows"])
+
+
+def test_gate_fails_on_status_passed_but_build_not_success(tmp_path):
+    # A schema-valid receipt claiming status=passed while its own build
+    # evidence says success=false must not be trusted on the status field
+    # alone -- the two are contradictory and the underlying facts win.
+    _write_receipt(tmp_path, "p1", extra={"build": {"success": False}})
+    result = evaluate(["p1"], tmp_path)
+    assert result["gate_status"] == "FAIL"
+    assert any("build.success is not true" in f for f in result["failures"])
+
+
+def test_gate_fails_on_status_passed_but_coverage_failed(tmp_path):
+    _write_receipt(tmp_path, "p1", extra={"coverage": {"gate_status": "FAIL", "failures": ["nope"]}})
+    result = evaluate(["p1"], tmp_path)
+    assert result["gate_status"] == "FAIL"
+    assert any("coverage.gate_status='FAIL'" in f for f in result["failures"])
