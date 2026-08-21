@@ -788,3 +788,68 @@ The lab can be considered a thin, representative integration only when all of th
 13. Historical consumer analysis uses the deployed consumer, not a PR-head rebuild.
 14. The normal user workflow reduces to: build, run configured checks, aggregate, publish.
 15. The lab no longer owns duplicate implementations of product semantics.
+
+---
+
+# 2026-08-21 follow-up: no first-class build-system/generator identity in `build-output.json`
+
+**Context:** PR1 of a new, separate multi-build-system integration effort
+(`ci/profiles.yaml`, `ci/backends/{bazel,cmake,make}.py`,
+`buildsystems/{cmake,make}/`, `ci/emit_build_output.py`) adds a second and
+third build system -- CMake+Ninja and a handwritten Makefile -- alongside
+the existing, still-sole-required Bazel build, each staging a canonical
+`abicheck-build-<profile-id>/build-output.json` per profile (see
+`ci/schemas/build-output.schema.json` and README.md's "ABICheck
+Integration Lab: multi-build-system profiles" section). Neither new build
+system is wired to an ABICheck scan yet (that is later-phase scope, not
+this PR's) -- this entry documents a gap the *staging* work already
+surfaced, independent of when scanning lands.
+
+**Gap:** nothing in abicheck's own report/dump/build-evidence schema has a
+first-class field for "which build system, and which generator, produced
+this build evidence" (P0.7's own profile-fingerprint list above --
+compiler family/version, standard, target triple, etc. -- has no
+`build_system`/`generator` entry either, and P0.2's `build_system: bazel`
+request shape is scoped to Bazel-target-resolution specifically, not a
+general build-system-identity field every evidence-producing profile
+would populate). A `BuildEvidence`/`BuildSourcePack`-shaped object
+produced from a CMake+Ninja or Make build today has no standard place to
+record "this evidence came from CMake, generator Ninja" versus "this
+evidence came from a handwritten Makefile" versus Bazel's own
+`bazel cquery`/`bazel aquery` shape -- a consumer has to infer it
+out-of-band (a profile-id naming convention, a sidecar file) rather than
+reading it off the evidence object itself.
+
+**Lab-side workaround, current state:** this PR encodes the missing
+identity two ways, neither of which is a report-schema field abicheck
+itself understands:
+
+1. **`profile.id`** (`ci/profiles.yaml`, e.g.
+   `linux-x86_64-gcc14-cxx17-cmake-ninja`) -- a naming convention, not a
+   structured field; a consumer has to parse the id string to recover
+   `backend=cmake`/`generator=Ninja`.
+2. **`provenance/build-system.json`** (written per staged profile by
+   `ci/emit_build_output.py`, from each `BuildBackend.describe()`) -- a
+   real structured object (`{"backend": "cmake", "generator": "Ninja",
+   "compiler": {...}, "cmake_version": "...", "cxx_version": "..."}` for
+   the CMake profile; the equivalent shape for `bazel`/`make`), but it
+   lives as a sidecar file next to `build-output.json`, not as a field
+   `build-output.json`'s own `schema_version: 1` shape declares --
+   `ci/schemas/build-output.schema.json`'s own top-level docstring already
+   flags this as provisional for exactly this reason.
+
+**What upstream should provide instead (aligned with P0.7 above, not a new
+ask):** extend the profile-fingerprint model P0.7 already specifies with
+an explicit `build_system: {name, generator}` field (`name` one of at
+least `bazel`/`cmake`/`make`/`msbuild`/..., `generator` populated only
+where the build system has one -- e.g. CMake's `Ninja`/`Unix Makefiles`,
+null for Bazel/Make, which don't have a separate generator concept), so
+`BuildEvidence`/`BuildSourcePack`/a report's own build-context object
+carries build-system identity as a first-class, machine-readable field
+across every producer, the same way P0.7 already asks for compiler
+family/version/standard identity. Once that lands, this lab's own
+`profile.id`-encodes-it-in-the-string-plus-sidecar-file workaround
+(`provenance/build-system.json`) becomes redundant and should be replaced
+by reading the field directly out of whatever evidence object a future
+PR's ABICheck-scanning phase actually feeds into `abicheck scan`/`compare`
+for the CMake/Make profiles.
