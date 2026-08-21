@@ -4,6 +4,7 @@ section 23.3)."""
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,8 @@ from resolve_scanner_candidate import (
     resolve_ref_to_sha,
     resolve_named_ref,
     validate_dispatch_payload,
+    validate_repository,
+    write_github_output,
 )
 
 VALID_SHA = "a" * 40
@@ -94,6 +97,122 @@ def test_validate_dispatch_payload_rejects_non_string_optional_fields():
 def test_validate_dispatch_payload_rejects_non_dict():
     with pytest.raises(ResolutionError):
         validate_dispatch_payload(["not", "a", "dict"])
+
+
+# CodeRabbit review, PR #24 (Critical): scanner_repository shape validation
+# and $GITHUB_OUTPUT injection guard.
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "abicheck/abicheck",
+        "some-org/abicheck-fork",
+        "a/b",
+        "org.name/repo_name.git",
+    ],
+)
+def test_validate_repository_accepts_owner_repo_shapes(repository):
+    assert validate_repository(repository, "field") == repository
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        None,
+        123,
+        "",
+        "no-slash-at-all",
+        "abicheck/abicheck/extra",
+        "abicheck/abicheck\n",
+        "abicheck/abi check",
+        "abicheck/abi;check",
+        "abicheck/$(whoami)",
+        "abicheck/abi`check`",
+        "/abicheck",
+        "abicheck/",
+    ],
+)
+def test_validate_repository_rejects_malformed_or_injection_shaped_values(repository):
+    with pytest.raises(ResolutionError):
+        validate_repository(repository, "field")
+
+
+def test_validate_dispatch_payload_rejects_malformed_repository_shape():
+    with pytest.raises(ResolutionError):
+        validate_dispatch_payload({"scanner_repository": "abicheck/abicheck\ninjected=x", "scanner_sha": VALID_SHA})
+
+
+def test_validate_dispatch_payload_rejects_scanner_version_with_embedded_newline():
+    with pytest.raises(ResolutionError):
+        validate_dispatch_payload(
+            {
+                "scanner_repository": "abicheck/abicheck",
+                "scanner_sha": VALID_SHA,
+                "scanner_version": "0.6.0\ninjected=malicious",
+            }
+        )
+
+
+def test_validate_dispatch_payload_rejects_baseline_generation_with_carriage_return():
+    with pytest.raises(ResolutionError):
+        validate_dispatch_payload(
+            {
+                "scanner_repository": "abicheck/abicheck",
+                "scanner_sha": VALID_SHA,
+                "baseline_generation": "2026-08\rinjected=malicious",
+            }
+        )
+
+
+def test_resolve_named_ref_rejects_malformed_repository():
+    with pytest.raises(ResolutionError):
+        resolve_named_ref("not a repo\ninjected", "main", "schedule", runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not shell out")))
+
+
+def test_write_github_output_writes_expected_lines(tmp_path):
+    result = {
+        "scanner_repository": "abicheck/abicheck",
+        "scanner_sha": VALID_SHA,
+        "scanner_version": "0.6.0",
+        "baseline_generation": "2026-08",
+        "pip_spec": f"abicheck @ git+https://github.com/abicheck/abicheck.git@{VALID_SHA}",
+    }
+    out = tmp_path / "github_output"
+    out.write_text("existing=line\n", encoding="utf-8")
+    write_github_output(result, out)
+    content = out.read_text(encoding="utf-8")
+    assert content == (
+        "existing=line\n"
+        "scanner_repository=abicheck/abicheck\n"
+        f"scanner_sha={VALID_SHA}\n"
+        "scanner_version=0.6.0\n"
+        f"pip_spec=abicheck @ git+https://github.com/abicheck/abicheck.git@{VALID_SHA}\n"
+    )
+
+
+def test_write_github_output_writes_empty_string_for_none_scanner_version(tmp_path):
+    result = {
+        "scanner_repository": "abicheck/abicheck",
+        "scanner_sha": VALID_SHA,
+        "scanner_version": None,
+        "pip_spec": f"abicheck @ git+https://github.com/abicheck/abicheck.git@{VALID_SHA}",
+    }
+    out = tmp_path / "github_output"
+    write_github_output(result, out)
+    assert "scanner_version=\n" in out.read_text(encoding="utf-8")
+
+
+def test_write_github_output_rejects_embedded_newline():
+    result = {"scanner_repository": "abicheck/abicheck", "scanner_sha": VALID_SHA, "scanner_version": "x\ninjected=y", "pip_spec": "spec"}
+    with pytest.raises(ResolutionError):
+        write_github_output(result, Path("/dev/null"))
+
+
+def test_write_github_output_rejects_embedded_carriage_return():
+    result = {"scanner_repository": "abicheck/abicheck", "scanner_sha": VALID_SHA, "scanner_version": "x\rinjected=y", "pip_spec": "spec"}
+    with pytest.raises(ResolutionError):
+        write_github_output(result, Path("/dev/null"))
 
 
 def test_resolve_ref_to_sha_returns_sha_unchanged_without_network(monkeypatch):

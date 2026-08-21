@@ -196,9 +196,22 @@ jobs:
       # on this fresh runner" -- there is no separate warm-up phase to
       # skip (unlike the Bazel job above, which deliberately runs the
       # build twice to isolate the disk cache's own contribution).
+      # Codex review, PR #24: a plain `if: <custom expression>` (no
+      # status-check function) does NOT run once a prior REQUIRED step in
+      # this job has already failed -- GitHub Actions skips every
+      # subsequent step by default after a failure unless its own `if:`
+      # calls always()/success()/failure()/cancelled() explicitly. Without
+      # `continue-on-error: true` here, a cmake build/dump failure would
+      # silently skip the make measurement below too (its own
+      # `steps.install_abicheck.outcome == 'success'` check is true, but
+      # never gets evaluated at all), collapsing "make wasn't measured
+      # because cmake broke" into a null result with no visible cause.
+      # Each profile's own measurement is independent and must be allowed
+      # to fail without taking the other one down with it.
       - name: Measure cmake profile (build + dump)
         id: measure_cmake
         if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
         shell: bash
         env:
           PROFILE_ID: linux-x86_64-gcc14-cxx17-cmake-ninja

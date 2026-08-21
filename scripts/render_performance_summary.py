@@ -77,7 +77,14 @@ def render(timings_path: Path) -> str:
     # list) from `benchmark`'s JSON, so this section is skipped there
     # rather than rendering an empty table with nothing to show.
     profiles = data.get("profiles")
-    if isinstance(profiles, list) and profiles:
+    # CodeRabbit review, PR #24: a non-empty `profiles` list containing
+    # only non-dict entries used to still pass the `profiles` truthiness
+    # check above and render an empty table (a heading with no rows) --
+    # filter to actual dict entries FIRST, so the section is only ever
+    # rendered (and only ever looped over) when there is something real
+    # to show.
+    valid_profiles = [entry for entry in profiles if isinstance(entry, dict)] if isinstance(profiles, list) else []
+    if valid_profiles:
         lines += [
             "",
             "### Per-profile build + dump (single cold run, PR5)",
@@ -85,9 +92,7 @@ def render(timings_path: Path) -> str:
             "| Profile | Build | `abicheck dump` |",
             "|---|---:|---:|",
         ]
-        for entry in profiles:
-            if not isinstance(entry, dict):
-                continue
+        for entry in valid_profiles:
             profile_id = entry.get("profile_id", "?")
             lines.append(f"| `{profile_id}` | {_fmt_ms(entry.get('build_ms'))} | {_fmt_ms(entry.get('dump_ms'))} |")
         lines += [

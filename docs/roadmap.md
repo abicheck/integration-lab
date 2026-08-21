@@ -1,9 +1,12 @@
 # Roadmap
 
-This describes planned phases for the integration lab. **No dates, and no
-claim of completion** — this is a statement of direction, not a committed
-schedule. See [integration-profiles.md](integration-profiles.md) for what
-is implemented today.
+This describes planned phases for the integration lab, in the order they
+were conceived — some are already done (marked **done** inline, with what
+shipped and what's still open), most are not. **No dates, and no claim
+that the phases *not* marked done are anywhere close** — this is a
+statement of direction, not a committed schedule. See
+[integration-profiles.md](integration-profiles.md) for the authoritative
+account of what is implemented today.
 
 1. **Run the real ABICheck scanner for the CMake and Make profiles.**
    Replace `ci/check_profile.py`'s ELF/header signal with a real `abicheck

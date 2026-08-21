@@ -93,6 +93,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # CodeRabbit review, PR #24 (Critical): this used to extract each
+      # output field with its own `python3 -c "import json; print(...)"`
+      # call piped into `echo "key=$(...)" >> "$GITHUB_OUTPUT"` -- an
+      # attacker-controlled `repository_dispatch` field containing a
+      # newline could forge extra `$GITHUB_OUTPUT` lines that way.
+      # `--github-output` is one writer
+      # (`resolve_scanner_candidate.write_github_output()`) that
+      # re-validates every value for embedded CR/LF/NUL immediately
+      # before writing it, so an injection attempt fails this step
+      # closed instead of forging output. See that script's own module
+      # docstring and `_REPOSITORY_RE`'s comment for the full rationale.
       - name: Resolve scanner candidate
         id: resolve
         shell: bash
@@ -107,24 +118,21 @@ jobs:
               echo "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/client-payload.json"
               python3 scripts/resolve_scanner_candidate.py \
                 --event repository_dispatch \
-                --payload-file "$RUNNER_TEMP/client-payload.json" > "$RUNNER_TEMP/candidate.json"
+                --payload-file "$RUNNER_TEMP/client-payload.json" \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
               ;;
             workflow_dispatch)
               python3 scripts/resolve_scanner_candidate.py \
                 --event workflow_dispatch \
-                --scanner-ref "${SCANNER_REF_INPUT:-main}" > "$RUNNER_TEMP/candidate.json"
+                --scanner-ref "${SCANNER_REF_INPUT:-main}" \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
               ;;
             *)
-              python3 scripts/resolve_scanner_candidate.py --event schedule > "$RUNNER_TEMP/candidate.json"
+              python3 scripts/resolve_scanner_candidate.py --event schedule \
+                --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/candidate.json"
               ;;
           esac
           cat "$RUNNER_TEMP/candidate.json"
-          {
-            echo "scanner_repository=$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/candidate.json'))['scanner_repository'])")"
-            echo "scanner_sha=$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/candidate.json'))['scanner_sha'])")"
-            echo "scanner_version=$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/candidate.json'))['scanner_version'] or '')")"
-            echo "pip_spec=$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/candidate.json'))['pip_spec'])")"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Upload resolved candidate
         if: always()
@@ -134,6 +142,38 @@ jobs:
           path: ${{ runner.temp }}/candidate.json
           if-no-files-found: warn
           retention-days: 30
+
+      # CodeRabbit + Codex review, PR #24: `classify` used to read only
+      # `needs.<job>.result` -- one signal per job, which cannot tell
+      # "the job's own setup step failed" apart from "the job's real
+      # assertion step failed", so a setup failure anywhere inside
+      # `semantic_canary`/`action_contract_canary`/`build_integration_canary`
+      # was reported as that job's own drift category instead of
+      # INFRASTRUCTURE_FAILED -- exactly what section 24 forbids. Every
+      # canary job now emits its own fine-grained signal(s) (this step's
+      # own pattern, repeated per job/matrix-leg below) as a small
+      # artifact `classify` downloads and merges, instead of relying on
+      # the job-level result alone. `if: always()` -- must still emit
+      # (recording a real "skipped"/"failure" outcome) even when the
+      # step(s) it reads from never ran.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [{"name": "resolve_candidate", "category": "infrastructure", "outcome": "${{ steps.resolve.outcome }}"}]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-resolve-candidate
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # Layer 1 (DETECTOR_DRIFT signal): same scenarios/manifest.yaml oracle
   # scenarios-canary.yml already trusts for its Bazel-only weekly run, now
@@ -189,6 +229,35 @@ jobs:
           path: scenario-results-canary-${{ matrix.build_system }}/
           if-no-files-found: warn
           retention-days: 30
+
+      # Two signals per leg, not one: `install_abicheck` is the last step
+      # in this leg's own setup chain (apt/curl/pip -- every earlier step
+      # cascades into it: a failure upstream leaves it "skipped", not
+      # merely absent), so its own outcome is an accurate "did setup
+      # complete" signal independent of whether `run_scenarios` itself
+      # ran or what it found. See resolve_candidate's own "Emit signal"
+      # step above for why this exists at all.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "semantic_canary setup (${{ matrix.build_system }})", "category": "infrastructure", "outcome": "${{ steps.install_abicheck.outcome }}"},
+            {"name": "semantic_canary (${{ matrix.build_system }})", "category": "semantic", "outcome": "${{ steps.run_scenarios.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-semantic-${{ matrix.build_system }}
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # Layer 2 (ACTION_CONTRACT_DRIFT signal): the real `abicheck/abicheck`
   # composite Action, checked out at the resolved candidate SHA and
@@ -285,6 +354,38 @@ jobs:
           path: canary-action-contract.json
           if-no-files-found: ignore
           retention-days: 30
+
+      # `dump_baseline` is the last step of this job's own setup chain
+      # (checkout-candidate -> build_bazel -> install_abicheck ->
+      # dump_baseline, each cascading into the next on failure) -- its
+      # outcome is an accurate "did setup complete" signal.
+      # `action_contract`'s own outcome (not `assert_clean`'s -- that
+      # step only re-raises the same fact as a real job failure, since
+      # `action_contract` itself runs `continue-on-error: true`) is the
+      # actual assertion signal: "skipped" when setup never completed,
+      # "failure" when the candidate Action itself flagged a break,
+      # "success" when it ran clean.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "action_contract_canary setup", "category": "infrastructure", "outcome": "${{ steps.dump_baseline.outcome }}"},
+            {"name": "action_contract_canary", "category": "action_contract", "outcome": "${{ steps.action_contract.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-action-contract
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # Layer 3 (BUILD_INTEGRATION_DRIFT signal): does the candidate scanner's
   # OWN CLI (independent of the composite Action wrapper -- that's layer
@@ -421,6 +522,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # `install_abicheck` is the last step of this leg's own setup chain
+      # (checkout -> apt installs -> run_profile -> install_abicheck,
+      # each cascading into the next) -- its outcome is an accurate "did
+      # setup complete" signal. `assert_clean`'s own outcome (not
+      # `profile_compare`'s -- that step always exits 0 via its own
+      # `|| true`, deliberately, so `assert_clean` can assess the report
+      # instead) is the actual assertion signal.
+      - name: Emit signal
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/canary-signal"
+          cat > "$RUNNER_TEMP/canary-signal/signal.json" <<JSON
+          [
+            {"name": "build_integration_canary setup (${{ matrix.profile }})", "category": "infrastructure", "outcome": "${{ steps.install_abicheck.outcome }}"},
+            {"name": "build_integration_canary (${{ matrix.profile }})", "category": "build_integration", "outcome": "${{ steps.assert_clean.outcome }}"}
+          ]
+          JSON
+
+      - name: Upload signal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-signal-build-integration-${{ matrix.profile }}
+          path: ${{ runner.temp }}/canary-signal/signal.json
+          if-no-files-found: warn
+          retention-days: 14
+
   # Fan-in: five-way classification (design doc section 24) from every
   # layer's own job `result` -- never from a step outcome buried inside
   # one job, since a matrixed job's own `result` already folds every leg
@@ -438,25 +568,49 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build signals + classify
+      # Every upstream job/leg's own "Emit signal" step uploads a small
+      # `canary-signal-*` artifact (`merge-multiple: false` keeps each
+      # under its own `<artifact-name>/signal.json` subdirectory, so a
+      # matrixed job's several legs -- e.g. `canary-signal-semantic-bazel`
+      # and `canary-signal-semantic-cmake` -- never collide on one path).
+      # `continue-on-error: true`: if `resolve_candidate` itself failed,
+      # every job downstream of it was skipped entirely (default `needs:`
+      # gating, no `if: always()` on those jobs) and never got to upload
+      # anything -- an empty/partial download here is expected in that
+      # case, not a reason to fail this job before it can even classify
+      # that exact situation.
+      - name: Download every layer's own signal
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: canary-signal-*
+          path: ${{ runner.temp }}/canary-signals
+          merge-multiple: false
+
+      - name: Merge signals + classify
         id: classify
         shell: bash
         env:
-          RESOLVE_RESULT: ${{ needs.resolve_candidate.result }}
-          SEMANTIC_RESULT: ${{ needs.semantic_canary.result }}
-          ACTION_CONTRACT_RESULT: ${{ needs.action_contract_canary.result }}
-          BUILD_INTEGRATION_RESULT: ${{ needs.build_integration_canary.result }}
           SCANNER_SHA: ${{ needs.resolve_candidate.outputs.scanner_sha }}
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/signals.json" <<JSON
-          [
-            {"name": "resolve_candidate", "category": "infrastructure", "outcome": "$RESOLVE_RESULT"},
-            {"name": "semantic_canary", "category": "semantic", "outcome": "$SEMANTIC_RESULT"},
-            {"name": "action_contract_canary", "category": "action_contract", "outcome": "$ACTION_CONTRACT_RESULT"},
-            {"name": "build_integration_canary", "category": "build_integration", "outcome": "$BUILD_INTEGRATION_RESULT"}
-          ]
-          JSON
+          signal_files=()
+          while IFS= read -r -d '' f; do
+            signal_files+=("$f")
+          done < <(find "$RUNNER_TEMP/canary-signals" -name 'signal.json' -print0 2>/dev/null)
+
+          if [ "${#signal_files[@]}" -eq 0 ]; then
+            # Nothing to classify from -- every upstream job must have
+            # died before its own "Emit signal" step could run (e.g. the
+            # runner itself was lost). Fail closed as INFRASTRUCTURE_FAILED
+            # rather than let scripts/classify_canary_outcome.py's own
+            # "no signals given" error surface as an opaque script crash.
+            echo "::warning::no canary-signal-* artifacts found at all -- treating as INFRASTRUCTURE_FAILED" >&2
+            echo '[{"name": "classify", "category": "infrastructure", "outcome": "failure"}]' > "$RUNNER_TEMP/signals.json"
+          else
+            jq -s 'add' "${signal_files[@]}" > "$RUNNER_TEMP/signals.json"
+          fi
+          cat "$RUNNER_TEMP/signals.json"
           python3 scripts/classify_canary_outcome.py "$RUNNER_TEMP/signals.json" | tee "$RUNNER_TEMP/classification.json"
           classification="$(python3 -c "import json; print(json.load(open('$RUNNER_TEMP/classification.json'))['classification'])")"
           echo "classification=$classification" >> "$GITHUB_OUTPUT"
@@ -477,6 +631,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: canary-classification
-          path: ${{ runner.temp }}/classification.json
+          path: |
+            ${{ runner.temp }}/classification.json
+            ${{ runner.temp }}/signals.json
           if-no-files-found: warn
           retention-days: 90

@@ -72,3 +72,11 @@ def test_render_ignores_non_dict_profile_entries(tmp_path):
     path = _write(tmp_path, {"sha": "abc123", "profiles": ["not-a-dict", {"profile_id": "x", "build_ms": 1, "dump_ms": 2}]})
     text = render(path)
     assert "| `x` |" in text
+
+
+def test_render_all_invalid_profiles_omits_section_entirely(tmp_path):
+    # CodeRabbit review, PR #24: a non-empty list containing only
+    # non-dict entries must not render an empty "Per-profile" table.
+    path = _write(tmp_path, {"sha": "abc123", "profiles": ["not-a-dict", 42, None]})
+    text = render(path)
+    assert "Per-profile build" not in text
