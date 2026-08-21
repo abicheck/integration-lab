@@ -162,7 +162,54 @@ PATH_REWRITE_PATHS = frozenset({
     ("build_source", "manifest", "inputs", "build_info"),
     ("build_source", "manifest", "inputs", "sources"),
     ("build_source", "manifest", "extractors", ANY_INDEX, "inputs", ANY_INDEX),
+    # Same checkout-root noise, one level deeper in the real scanner's own
+    # source-level evidence (verified against the same real cmake-ninja/math
+    # snapshot as the manifest.inputs entries above): every
+    # reachable_source_surface entry's source_location.path is an absolute
+    # path (e.g. "/home/runner/work/.../include/abicheck_lab/math.h"), and
+    # source_graph's own node ids/labels and edge endpoints embed the
+    # identical absolute path behind a "scheme://" prefix
+    # (cu:///abs/path#cfg:..., source:///abs/path, header:///abs/path) --
+    # _normalize_path_string()'s own scheme-preserving rewrite (see its
+    # docstring) is what makes rewriting these safe without corrupting the
+    # graph identifiers abicheck's own edges reference by (Codex review,
+    # PR #25, round 4: "Normalize all checkout-root paths in embedded
+    # dumps"). All five reachable_source_surface categories share the
+    # identical {api_relevant, ..., source_location: {path, ...}} shape --
+    # verified against abicheck's own model.py-derived output, not just the
+    # two (declarations/types) this repo's own tiny fixture happens to
+    # populate.
+    ("build_source", "source_abi", "reachable_source_surface", "declarations", ANY_INDEX, "source_location", "path"),
+    ("build_source", "source_abi", "reachable_source_surface", "inline_bodies", ANY_INDEX, "source_location", "path"),
+    ("build_source", "source_abi", "reachable_source_surface", "macros", ANY_INDEX, "source_location", "path"),
+    ("build_source", "source_abi", "reachable_source_surface", "templates", ANY_INDEX, "source_location", "path"),
+    ("build_source", "source_abi", "reachable_source_surface", "types", ANY_INDEX, "source_location", "path"),
+    # source_graph node kinds that never embed a filesystem path at all
+    # (build_option://, binary_symbol://, decl://, type://, debug_type://
+    # -- mangled names, qualified names, sha256 hashes) simply never match
+    # the marker search below and pass through unchanged; only
+    # compile_unit/source/header nodes (cu://, source://, header://) and
+    # the edges connecting them actually need this.
+    ("build_source", "source_graph", "nodes", ANY_INDEX, "id"),
+    ("build_source", "source_graph", "nodes", ANY_INDEX, "label"),
+    ("build_source", "source_graph", "edges", ANY_INDEX, "src"),
+    ("build_source", "source_graph", "edges", ANY_INDEX, "dst"),
 })
+
+# NOT yet handled -- a real, still-open gap from the same review round:
+# source_abi.mappings.public_header_to_target's KEYS (not values) are
+# absolute paths too (e.g.
+# {"/abs/path/include/abicheck_lab/math.h": "<target>"}). Every path
+# above is rewritten by walking to a fixed VALUE position; a dict key is
+# structurally different (normalize_paths() below only ever recurses into
+# values, never rewrites the key itself) and would need real, separate
+# handling -- rebuilding the dict with renamed keys, deciding what happens
+# if two differently-cased-or-rooted absolute paths collide onto the same
+# relative suffix, etc. Doing that safely is more than this pass's other,
+# mechanical additions; deferred rather than rushed. Comparability is
+# unaffected in practice today (CI/release runs land at the same
+# conventional checkout path), so this is a real but currently low-impact
+# gap, not silently dropped.
 
 # Exact paths whose "detail" free-text field is provenance prose that
 # embeds a per-run timing number -- verified against the real committed
@@ -242,9 +289,6 @@ def normalize_paths(node, repo_root_marker, path=()):
 
 
 def _normalize_path_string(value, repo_root_marker):
-    if not value.startswith("/"):
-        return value
-
     # manifest.inputs.sources is always the repo root itself (--sources
     # REPO_ROOT, see ci/real_scan.py) -- checked BEFORE the marker/rfind
     # search below, not after: a GitHub Actions checkout doubles the repo
@@ -256,17 +300,41 @@ def _normalize_path_string(value, repo_root_marker):
     # were relative content and return the bogus "integration-lab" instead
     # of recognizing the whole value as the root itself. "." is the same
     # "this is the source root, nothing to strip further" placeholder
-    # abicheck's own CLI already accepts for --sources.
-    if value.endswith(f"/{repo_root_marker}"):
+    # abicheck's own CLI already accepts for --sources. (Only meaningful
+    # for a value that IS an absolute path outright -- never for one only
+    # embedding a path behind a scheme prefix, e.g. source_graph's own node
+    # ids below; those never equal a bare repo root.)
+    if value.startswith("/") and value.endswith(f"/{repo_root_marker}"):
         return "."
 
     # GitHub Actions checkouts land at .../work/<repo>/<repo>/..., so the
     # marker can legitimately appear twice; take the last occurrence to
     # strip the full checkout prefix rather than stopping at the first.
+    #
+    # Not every PATH_REWRITE_PATHS value IS an absolute path outright --
+    # abicheck's own source_graph node ids/labels and edge endpoints
+    # (`cu:///abs/path#cfg:...`, `source:///abs/path`, `header:///abs/path`)
+    # and reachable_source_surface's per-declaration source_location.path
+    # embed the SAME checkout-root noise, just with real graph structure
+    # (a "scheme://" prefix, a "#cfg:..." fragment) around it that must
+    # survive -- dropping it would break the identifiers abicheck's own
+    # edges reference by (Codex review, PR #25, round 4: "Normalize all
+    # checkout-root paths in embedded dumps ... including
+    # reachable_source_surface[...].source_location.path and multiple
+    # source_graph node/edge identifiers"). rfind (not a startswith check)
+    # finds the marker wherever it sits in the string, and whatever comes
+    # before it -- a "scheme://" prefix, or nothing at all for a bare
+    # absolute path -- is preserved untouched; only the checkout-root
+    # portion itself is stripped. A value with no scheme prefix and no
+    # marker match at all (most strings in this tree: mangled names, type
+    # names, hashes -- see the PATH_REWRITE_PATHS entries' own comment for
+    # why plain rfind is safe even for those) falls through unchanged.
     marker = f"/{repo_root_marker}/"
     idx = value.rfind(marker)
     if idx != -1:
-        return value[idx + len(marker):]
+        scheme_end = value.rfind("://", 0, idx)
+        prefix = value[: scheme_end + 3] if scheme_end != -1 else ""
+        return prefix + value[idx + len(marker):]
 
     for anchor in ("bazel-out/", "external/"):
         idx = value.find(anchor)
