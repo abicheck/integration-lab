@@ -46,6 +46,8 @@ jobs:
       - name: Resolve profiles for this event
         id: select
         shell: bash
+        env:
+          DISPATCH_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
           case "${{ github.event_name }}" in
@@ -56,8 +58,8 @@ jobs:
           esac
 
           extra_args=()
-          if [ -n "${{ inputs.profile }}" ]; then
-            extra_args+=(--profile "${{ inputs.profile }}")
+          if [ -n "$DISPATCH_PROFILE" ]; then
+            extra_args+=(--profile "$DISPATCH_PROFILE")
           fi
 
           python3 ci/select_profiles.py --event "$event" "${extra_args[@]}" > selection.json

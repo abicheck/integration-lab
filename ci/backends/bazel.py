@@ -62,7 +62,12 @@ class BazelBackend(BuildBackend):
         targets: Dict[str, TargetResult] = {}
         for name, label in labels.items():
             kind = "executable" if name in _EXECUTABLE_TARGETS else "shared_library"
-            path = self._resolve_output_path(label) if success else None
+            path = None
+            if success:
+                try:
+                    path = self._resolve_output_path(label)
+                except BackendError as exc:
+                    diagnostics.append(f"could not resolve output path for {name!r} ({label}): {exc}")
             result = TargetResult.from_path(name, kind, path)
             if not result.built:
                 success = False

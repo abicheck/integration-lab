@@ -136,7 +136,10 @@ def test_stage_profile_reflects_missing_target(tmp_path, profile):
     assert doc["success"] is False
     assert doc["targets"]["math"]["built"] is False
     assert doc["targets"]["math"]["path"] is None
-    assert doc["diagnostics"] == ["target 'math' produced no output"]
+    assert doc["diagnostics"] == [
+        "target 'math' produced no output",
+        f"header_roots entry 'include' does not exist under {repo_root}",
+    ]
 
 
 def test_staged_build_output_validates_against_schema(tmp_path, profile):

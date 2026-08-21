@@ -70,16 +70,25 @@ def _git_sha(repo_root: Path) -> str:
         return "unknown"
 
 
-def _copy_header_root(repo_root: Path, header_root: str, dest_root: Path) -> None:
+def _copy_header_root(repo_root: Path, header_root: str, dest_root: Path) -> Optional[str]:
+    """Copy one profile.header_roots entry into dest_root. Returns a
+    diagnostic string if the declared root doesn't exist under repo_root
+    (a profiles.yaml typo or a renamed/removed header directory) so the
+    caller can surface it in build-output.json's diagnostics instead of
+    silently staging fewer headers than declared -- see select_profiles.py's
+    fail-closed-on-unknown-reference precedent for why a declared-but-
+    missing root must not pass silently here either.
+    """
     src = repo_root / header_root
     if not src.exists():
-        return
+        return f"header_roots entry {header_root!r} does not exist under {repo_root}"
     dest = dest_root / header_root
     dest.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
         shutil.copytree(src, dest, dirs_exist_ok=True)
     else:
         shutil.copy2(src, dest)
+    return None
 
 
 def _copy_evidence(backend_evidence: Dict[str, Any], dest_dir: Path) -> Dict[str, Any]:
@@ -128,8 +137,11 @@ def stage_profile(
 
     stage_manifest = backend.stage(build_result, artifacts_dir)
 
+    header_diagnostics = []
     for header_root in profile.get("header_roots", []):
-        _copy_header_root(repo_root, header_root, headers_dir)
+        missing = _copy_header_root(repo_root, header_root, headers_dir)
+        if missing:
+            header_diagnostics.append(missing)
     header_roots_staged = [
         f"headers/{root}" for root in profile.get("header_roots", []) if (repo_root / root).exists()
     ]
@@ -176,7 +188,7 @@ def stage_profile(
         "header_roots": header_roots_staged,
         "evidence": {"dir": "evidence", "backend_evidence": evidence_summary},
         "provenance": {"dir": "provenance"},
-        "diagnostics": list(build_result.diagnostics),
+        "diagnostics": list(build_result.diagnostics) + header_diagnostics,
         "success": bool(build_result.success),
     }
 

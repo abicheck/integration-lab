@@ -91,16 +91,21 @@ class CMakeBackend(BuildBackend):
             candidate = self._build_dir / cmake_target
             return candidate
         # Shared libraries are versioned (lib<target>.so.1.0.0 with a
-        # lib<target>.so symlink) -- resolve the real (non-symlink) file so
-        # sha256/size reflect actual bytes, not a dangling relative symlink
-        # once staged elsewhere.
+        # lib<target>.so symlink). Return the symlink path itself, not its
+        # resolved target: TargetResult.from_path()/stage() read file bytes
+        # (sha256/copy2) by following it, which yields the real content, but
+        # keep the *name* the canonical, unversioned "lib<target>.so" --
+        # matching the Bazel/Make backends' staged filename (see BuildBackend
+        # design note: canonical candidate paths must be identical across
+        # build systems, e.g. artifacts/lib/libmath.so). Resolving the
+        # symlink here previously staged the versioned real filename
+        # (libmath.so.1.0.0) instead, diverging from bazel.py/make.py.
         symlink = self._build_dir / f"lib{cmake_target}.so"
-        if symlink.exists():
-            return symlink.resolve()
         return symlink
 
     def collect_evidence(self, build_result: BuildResult) -> Dict[str, Any]:
-        evidence: Dict[str, Any] = {"kind": "compile_commands", "generator": "Ninja"}
+        generator = self.profile.get("generator", "Ninja") or "Ninja"
+        evidence: Dict[str, Any] = {"kind": "compile_commands", "generator": generator}
         compile_commands = self._build_dir / "compile_commands.json"
         if compile_commands.is_file():
             evidence["compile_commands_path"] = str(compile_commands)
