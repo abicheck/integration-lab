@@ -77,6 +77,16 @@ jobs:
       - name: Check for contract-defining flags shadowed via extra-args
         run: python3 scripts/check_recipe_parity.py
 
+      # Complementary to the check above: field-by-field comparison of
+      # baseline.yml's canonical dump step against abi-scan.yml's
+      # canonical scan step -- the two halves of one logical `scan
+      # --against` a `dump`-produced baseline. Catches a recipe drift
+      # that isn't shaped like an extra-args shadow (e.g. a differing
+      # depth/policy/public-header-dir value authored directly as a typed
+      # input on only one side).
+      - name: Check baseline.yml/abi-scan.yml recipe parity
+        run: python3 scripts/check_baseline_scan_recipe_parity.py
+
       # Phase 5 (capability receipts): unit tests for the receipt schema
       # (scripts/capability_receipts.py), the emitters, and the validator
       # -- pure-Python logic, so these run here rather than needing
