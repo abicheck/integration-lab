@@ -247,8 +247,16 @@ _PIP_VCS_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.g
 # alongside the real VCS match for the same line -- rejecting a
 # following ` @`/`/`/`.git` excludes exactly those three shapes, leaving
 # only a genuine bare requirement specifier.
+#
+# `(?:\[[^\]]*\])?` before the version operator captures pip's optional
+# "extras" segment (`abicheck[foo]==1.2.3`) -- a real, PEP 508-legal
+# requirement-specifier form (Codex review, fresh evidence: without it,
+# the match stopped at the bare `abicheck` and dropped everything after
+# it, including the version, so `abicheck[foo]==1.2.3` and
+# `abicheck[foo]==9.9.9` both normalized to the identical truncated text
+# and a real producer-version drift went undetected).
 _PIP_REQ_INSTALL_RE = re.compile(
-    r"pip install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
+    r"pip install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -375,15 +383,28 @@ def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | No
 
 
 def _bazel_build_math_env(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
-    """The build step's own `env:` mapping, or `{}` if the step exists but
-    sets none -- `None` only when the step itself is missing, so a caller
-    can still distinguish "no step" from "step with no env" the same way
-    `_bazel_build_math_command` does."""
+    """The build step's EFFECTIVE `env:` -- the workflow-level, job-level,
+    and step-level `env:` mappings merged in GitHub Actions' own override
+    order (step wins over job wins over workflow), not just the step's own
+    mapping (Codex review, fresh evidence: a `run` step also inherits
+    workflow- and job-level env vars; a toolchain-selecting CC/CXX set at
+    `jobs.scan.env` alone would leave both the step-only mapping and this
+    check silently blind to it). Returns `{}` if the step exists but no
+    level sets any env -- `None` only when the step itself is missing, so
+    a caller can still distinguish "no step" from "step with no env" the
+    same way `_bazel_build_math_command` does."""
     step = _bazel_build_math_step(workflow, job_id)
     if step is None:
         return None
-    env = step.get("env")
-    return env if isinstance(env, dict) else {}
+    workflow_env = workflow.get("env") if isinstance(workflow, dict) else None
+    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    job = jobs.get(job_id) if isinstance(jobs, dict) else None
+    job_env = job.get("env") if isinstance(job, dict) else None
+    merged: dict[str, Any] = {}
+    for level_env in (workflow_env, job_env, step.get("env")):
+        if isinstance(level_env, dict):
+            merged.update(level_env)
+    return merged
 
 
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:

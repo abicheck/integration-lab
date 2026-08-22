@@ -470,6 +470,29 @@ class TestCheck:
                     break
         assert check(dump_wf, scan_wf) == []
 
+    def test_job_level_env_drift_is_caught(self):
+        # Fresh evidence (Codex review): a `run` step also inherits
+        # workflow- and job-level env vars, not just its own -- a
+        # toolchain-selecting CC/CXX set at jobs.scan.env alone (never on
+        # the step itself) must still be caught.
+        scan_wf = _scan_wf()
+        scan_wf["jobs"]["scan"]["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+        errors = check(_dump_wf(), scan_wf)
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_ENV_MISMATCH" in e for e in errors)
+
+    def test_workflow_level_env_drift_is_caught(self):
+        scan_wf = _scan_wf()
+        scan_wf["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+        errors = check(_dump_wf(), scan_wf)
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_ENV_MISMATCH" in e for e in errors)
+
+    def test_matching_job_level_env_is_clean(self):
+        dump_wf = _dump_wf()
+        scan_wf = _scan_wf()
+        dump_wf["jobs"]["collect"]["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+        scan_wf["jobs"]["scan"]["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+        assert check(dump_wf, scan_wf) == []
+
     def test_missing_artifact_build_step_is_reported(self):
         dump_wf = _dump_wf()
         dump_wf["jobs"]["collect"]["steps"] = [
@@ -575,6 +598,24 @@ class TestCheck:
         # genuine, unchanged VCS install line -- confirms it doesn't fire
         # on the "abicheck" tokens already present in a PEP 508 VCS URL.
         assert check(_dump_wf(), _scan_wf()) == []
+
+    def test_evidence_pack_pip_pin_drift_via_extras_reinstall_is_caught(self):
+        # Fresh evidence (Codex review): pip's requirement-specifier form
+        # also accepts an "extras" segment (`abicheck[foo]==1.2.3`) -- a
+        # real PEP 508 shape. Without capturing it, the match truncated at
+        # the bare `abicheck`, so two installs differing only in extras
+        # and version normalized to the identical text and a real
+        # producer-version drift went undetected.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        extras_reinstall = "pip install --force-reinstall abicheck[foo]==1.2.3"
+        drifted = f"{shared_first_install}\n{extras_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_matching_extras_reinstalls_is_clean(self):
+        extras_install = "pip install --force-reinstall abicheck[foo]==1.2.3"
+        assert check(_dump_wf(abicheck_pip_run=extras_install), _scan_wf(abicheck_pip_run=extras_install)) == []
 
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
