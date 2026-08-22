@@ -161,6 +161,88 @@ jobs:
           output-file: ${{ runner.temp }}/math.raw.abicheck.json
           fail-on-breaking: true
 
+      # Baseline round-trip certification (P0, README/AGENTS.md-tracked):
+      # scan the SAME artifact this dump just produced, against that same
+      # fresh dump, using the identical contract-defining inputs
+      # (public-header-dir/sources/build-info/depth) `abi-scan.yml`'s own
+      # canonical `scan` step uses. This is the check that would have
+      # caught both root causes fixed on this branch before either ever
+      # reached a PR: an `extra-args`-shadowed typed input and a redundant
+      # explicit header both produce a recipe baseline.yml's own dump and
+      # abi-scan.yml's own scan disagree on -- and a `dump`/`scan` pair
+      # extracting the *same build, same commit, same binary* through two
+      # different effective recipes must always resolve `comparable` +
+      # `NO_CHANGE`; anything else means the baseline this workflow is
+      # about to commit would not have compared cleanly against `scan
+      # --against` on the very PR that lands right after it, which is
+      # exactly the failure mode this repo's own incident history is
+      # built from (see abi-scan.yml's `scan` step comments). No
+      # `continue-on-error` here, deliberately: a `NOT_COMPARABLE` (or any
+      # non-zero) verdict fails this Action step outright (verified
+      # against the pinned commit: `scan --against` returning
+      # `NOT_COMPARABLE` exits non-zero regardless of `fail-on-breaking`),
+      # which fails this job before the coverage check, normalization, or
+      # commit steps below ever run -- no half-certified baseline is ever
+      # written to `abi/`. `--against` deliberately points at the *raw*,
+      # pre-normalization dump (`normalize_baseline.py` only strips
+      # volatile provenance/timing metadata, never anything
+      # comparability-relevant, so certifying against the raw file is
+      # equivalent to certifying against the normalized one that's about
+      # to be committed, without a second write/read round trip).
+      - name: Round-trip certification (scan the artifact against its own fresh dump)
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          public-header-dir: include
+          sources: .
+          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          against: ${{ runner.temp }}/math.raw.abicheck.json
+          depth: source
+          format: json
+          output-file: ${{ runner.temp }}/round-trip-certification.json
+          fail-on-breaking: true
+          fail-on-api-break: true
+
+      - name: Upload round-trip certification report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: round-trip-certification
+          path: ${{ runner.temp }}/round-trip-certification.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # `fail-on-breaking`/`fail-on-api-break` only fail the step above on
+      # a BREAKING/API_BREAK verdict -- a same-artifact, same-build
+      # round trip that resolves ADDITIVE-only (verdict COMPATIBLE, not
+      # NO_CHANGE) would still exit 0 and let the step above pass, even
+      # though that's not the invariant this certification exists to
+      # prove: two extractions of the identical binary/source/commit
+      # should never show ANY diff, additive included -- an additive-only
+      # result here means the two recipes still disagree on *something*
+      # (Codex review, fresh evidence). Parsed and asserted explicitly
+      # rather than trusting the step's own exit code.
+      - name: Assert round-trip certification verdict is exactly NO_CHANGE
+        run: |
+          set -euo pipefail
+          python3 -c '
+          import json, sys
+          with open("${{ runner.temp }}/round-trip-certification.json") as f:
+              report = json.load(f)
+          verdict = report.get("verdict")
+          if verdict != "NO_CHANGE":
+              print(
+                  f"round-trip certification verdict={verdict!r}, expected NO_CHANGE -- "
+                  "the same artifact scanned against its own fresh dump must show zero "
+                  "difference, additive findings included; see the uploaded "
+                  "round-trip-certification report artifact for what differed.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print("round-trip certification: verdict=NO_CHANGE, confirmed")
+          '
+
       # Successful cquery/aquery/pack-build (validated above) only proves
       # the *input* evidence abicheck was handed was good -- the dump
       # itself can still degrade downstream (source extraction failing,
