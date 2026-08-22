@@ -814,6 +814,58 @@ class TestCheck:
         run = 'set -euo pipefail\nbazel build //:math --disk_cache="$HOME/.cache/bazel-disk"'
         assert check(_dump_wf(bazel_build_run=run), _scan_wf(bazel_build_run=run)) == []
 
+    def test_artifact_build_drift_via_options_before_target_is_caught(self):
+        # Fresh evidence (Codex review, fourth round on this same helper):
+        # Bazel's documented command form is `bazel build <options>
+        # <targets>` -- a real invocation like `bazel build --config=asan
+        # //:math` puts the target after its options, not immediately
+        # after `build`. Requiring the fixed literal `bazel build //:math`
+        # made such an invocation invisible entirely, so this drift kept
+        # comparing an earlier, stale build that happened to spell the
+        # target first.
+        drifted = 'bazel build --config=asan //:math --disk_cache="$HOME/.cache/bazel-disk"'
+        errors = check(_dump_wf(), _scan_wf(bazel_build_run=drifted))
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_MISMATCH" in e for e in errors)
+
+    def test_artifact_build_matching_options_before_target_is_clean(self):
+        run = 'bazel build --config=opt //:math --disk_cache="$HOME/.cache/bazel-disk"'
+        assert check(_dump_wf(bazel_build_run=run), _scan_wf(bazel_build_run=run)) == []
+
+    def test_artifact_build_does_not_mistake_a_similarly_named_target(self):
+        # A different target that merely starts with "math" (//:mathutils)
+        # must not be mistaken for //:math -- the step is reported missing
+        # rather than silently matched.
+        dump_wf = _dump_wf()
+        dump_wf["jobs"]["collect"]["steps"] = [
+            {"run": "bazel build //:mathutils"} if str(s.get("run", "")).startswith("bazel build //:math") else s
+            for s in dump_wf["jobs"]["collect"]["steps"]
+        ]
+        errors = check(dump_wf, _scan_wf())
+        assert any("could not find a 'bazel build //:math' step in job 'collect'" in e for e in errors)
+
+    def test_evidence_pack_query_env_drift_is_caught(self):
+        # Fresh evidence (Codex review, fresh evidence beyond the
+        # artifact-build env fix): a toolchain-selecting env var set on
+        # the bazel_queries step alone leaves the cquery/aquery command
+        # text identical, but can change what those actions see.
+        scan_wf = _scan_wf()
+        for step in scan_wf["jobs"]["scan"]["steps"]:
+            if step.get("id") == "bazel_queries":
+                step["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+                break
+        errors = check(_dump_wf(), scan_wf)
+        assert any("BUILD_EVIDENCE_QUERY_ENV_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_matching_query_env_is_clean(self):
+        dump_wf = _dump_wf()
+        scan_wf = _scan_wf()
+        for wf, job_id in ((dump_wf, "collect"), (scan_wf, "scan")):
+            for step in wf["jobs"][job_id]["steps"]:
+                if step.get("id") == "bazel_queries":
+                    step["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+                    break
+        assert check(dump_wf, scan_wf) == []
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1

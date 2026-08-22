@@ -498,7 +498,45 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
 # for why a bare, unanchored substring search isn't used instead: it
 # would also match `bazel build //:math` appearing inside a comment or an
 # echoed diagnostic string, not just a real invocation.
-_BAZEL_BUILD_MATH_RE = re.compile(r"(?:\A|[;&|]|^)[ \t]*bazel build //:math\b", re.MULTILINE)
+# Anchors an actual `bazel build` command position -- NOT the fixed
+# literal `bazel build //:math`, and deliberately without a target of its
+# own baked in (Codex review, fresh evidence, fourth round on this same
+# helper): Bazel's own documented command form is `bazel build <options>
+# <targets>` -- a real invocation like `bazel build --config=asan
+# //:math` puts the target AFTER its options, not immediately after
+# `build`. Requiring the literal target right after `bazel build ` made
+# such an invocation invisible to this helper entirely, so it kept
+# comparing an earlier, stale build that DID happen to spell the target
+# first. Mirrors `_PIP_INSTALL_ANCHOR_RE`'s command-position anchoring
+# (start of text/line, or after a separator) for the same reason: a bare
+# substring search for `bazel build` would also match inside a comment or
+# an echoed diagnostic string.
+_BAZEL_BUILD_ANCHOR_RE = re.compile(r"(?:\A|[;&|]|^)[ \t]*bazel build\b", re.MULTILINE)
+
+# The `//:math` target token, matched anywhere within one already-
+# anchored `bazel build` command's own bounded span (see
+# `_run_has_bazel_build_math_command`) -- not merely as a substring, so a
+# different target that happens to start with "math" (`//:mathutils`)
+# isn't mistaken for this one. Requires whitespace (or the start of the
+# bounded span) immediately before the token for the same reason in the
+# other direction.
+_BAZEL_MATH_TARGET_RE = re.compile(r"(?:^|\s)//:math\b")
+
+
+def _run_has_bazel_build_math_command(run: str) -> bool:
+    """True if `run` contains a real `bazel build ... //:math ...`
+    invocation anywhere -- the target may appear immediately after
+    `bazel build` or after any number of intervening options, as long as
+    it's within that SAME command's own bounded span (`_command_span_end`
+    -- never crossing into a different command or trailing comment/echo
+    text, the identical boundary discipline `_abicheck_pip_pin` already
+    uses)."""
+    for anchor_m in _BAZEL_BUILD_ANCHOR_RE.finditer(run):
+        start = anchor_m.start()
+        end = _command_span_end(run, start)
+        if _BAZEL_MATH_TARGET_RE.search(run[start:end]):
+            return True
+    return False
 
 
 def _bazel_build_math_step(workflow: dict[str, Any], job_id: str, *, before_step: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -547,7 +585,7 @@ def _bazel_build_math_step(workflow: dict[str, Any], job_id: str, *, before_step
         if before_step is not None and step is before_step:
             break
         run = step.get("run")
-        if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.search(run):
+        if isinstance(run, str) and _run_has_bazel_build_math_command(run):
             latest = step
     return latest
 
@@ -572,6 +610,21 @@ def _bazel_build_math_env(workflow: dict[str, Any], job_id: str, *, before_step:
     step = _bazel_build_math_step(workflow, job_id, before_step=before_step)
     if step is None:
         return None
+    return _effective_step_env(workflow, job_id, step)
+
+
+def _effective_step_env(workflow: dict[str, Any], job_id: str, step: dict[str, Any]) -> dict[str, Any]:
+    """The EFFECTIVE `env:` a given step sees -- workflow-level, job-level,
+    and step-level `env:` mappings merged in GitHub Actions' own override
+    order (step wins over job wins over workflow). Shared by
+    `_bazel_build_math_env` and `_bazel_queries_env` (Codex review, fresh
+    evidence: the query-comparison check compared only the `bazel_queries`
+    step's command text, so a toolchain-selecting env var set solely at
+    the workflow/job level, or even directly on the step itself, could
+    silently change which compiler the cquery/aquery actions run
+    under -- exactly the same class of gap `BUILD_EVIDENCE_ARTIFACT_
+    BUILD_ENV_MISMATCH` already closed for the artifact build, one check
+    over -- rather than a copy of the same three-level merge logic)."""
     workflow_env = workflow.get("env") if isinstance(workflow, dict) else None
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
     job = jobs.get(job_id) if isinstance(jobs, dict) else None
@@ -581,6 +634,18 @@ def _bazel_build_math_env(workflow: dict[str, Any], job_id: str, *, before_step:
         if isinstance(level_env, dict):
             merged.update(level_env)
     return merged
+
+
+def _bazel_queries_env(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
+    """The job's own `bazel_queries` step's EFFECTIVE `env:` -- see
+    `_effective_step_env`'s own docstring for why this exists alongside
+    the artifact-build env check. `None` only when the step itself is
+    missing (already reported by the query-command check above), so a
+    caller can distinguish "no step" from "step with no env"."""
+    step = _find_step(workflow, job_id, step_id="bazel_queries")
+    if step is None:
+        return None
+    return _effective_step_env(workflow, job_id, step)
 
 
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
@@ -861,6 +926,24 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
                 "workflows must collect L3 evidence with the identical query, or the resulting "
                 "evidence packs can silently cover different compile units."
             )
+
+    # The bazel_queries step's own EFFECTIVE env: (Codex review, fresh
+    # evidence): a toolchain-selecting env var (CC/CXX/etc.) set at the
+    # workflow, job, or step level for the *query* step alone leaves the
+    # cquery/aquery command text checked above identical, but can still
+    # change what the underlying `bazel cquery`/`bazel aquery` actions
+    # see -- abi-scan.yml's own real L4-replay rebuild already
+    # demonstrates this exact env shape elsewhere in the same job.
+    dump_queries_env = _bazel_queries_env(baseline_wf, "collect")
+    scan_queries_env = _bazel_queries_env(abi_scan_wf, "scan")
+    if dump_queries_env is not None and scan_queries_env is not None and dump_queries_env != scan_queries_env:
+        errors.append(
+            "BUILD_EVIDENCE_QUERY_ENV_MISMATCH: baseline.yml's and abi-scan.yml's "
+            f"bazel_queries steps set different env -- baseline.yml: {dump_queries_env!r}, "
+            f"abi-scan.yml: {scan_queries_env!r}. A toolchain-selecting variable (CC/CXX/etc.) "
+            "can change the evidence the cquery/aquery actions collect even when the query "
+            "command text is identical."
+        )
 
     dump_pip_pin = _abicheck_pip_pin(baseline_wf, "collect")
     scan_pip_pin = _abicheck_pip_pin(abi_scan_wf, "scan")
