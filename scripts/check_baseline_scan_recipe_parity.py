@@ -288,7 +288,68 @@ _PIP_REQ_INSTALL_RE = re.compile(
 # anchor and the next (never letting a match reach past a following
 # command's own anchor), so two different commands can never produce
 # matches with a tied start position in the first place.
-_PIP_INSTALL_ANCHOR_RE = re.compile(r"pip(?:3(?:\.\d+)?)?\s+install\b", re.IGNORECASE)
+#
+# Anchored to an actual shell *command position* -- start of the script,
+# start of a line, or immediately after a command separator (`;`, `&&`,
+# `||`, a pipe `|`), with only whitespace in between -- not a bare
+# substring match anywhere in the text (Codex review, fresh evidence,
+# fourth round on this same area): an unanchored version treats
+# `pip install abicheck` appearing inside a trailing, never-executed
+# `echo "..."` string or a `#` comment as one more real invocation. Two
+# workflows with genuinely differing real VCS reinstalls but an identical
+# trailing echo/comment both then get that identical, non-executed text
+# selected as "the" last install (the loop below always keeps the LAST
+# segment that yields a candidate, and the echoed text is textually the
+# last "pip install" occurrence), silently masking the real drift. A `#`
+# comment is excluded structurally, not by detecting `#` explicitly: `#`
+# is not one of the recognized separator characters, so `# pip install
+# x` never satisfies `\s*` between the anchor and a preceding line
+# start/separator. A quoted `echo "pip install x"` is excluded the same
+# way -- `echo "` sits between the anchor and the nearest real command
+# boundary, so nothing matches there either. This is not full shell
+# parsing (a quoted string that itself starts a line right after a real
+# separator, e.g. `; "pip install x"`, is unusual enough not to occur in
+# any real install step here and is accepted as a residual, documented
+# imprecision), but it closes the concrete, realistic case reported.
+_PIP_INSTALL_ANCHOR_RE = re.compile(r"(?:\A|[;&|]|^)[ \t]*pip(?:3(?:\.\d+)?)?\s+install\b", re.IGNORECASE | re.MULTILINE)
+
+# Marks the end of one logical shell command: an unescaped newline (a
+# backslash-continued newline is NOT a terminator, so a multi-line
+# continued command stays one span), a command separator (`;`, `&&`,
+# `||`, a bare `|`), or a `#` comment marker.
+#
+# Bounding each `pip install` command's own match to this span too (not
+# just to the next real anchor) closes a real false-positive/false-
+# negative pair the anchor fix above introduced on its own first
+# revision -- caught before shipping by testing the anchor fix against a
+# same-ref-but-differing-trailing-comment case, not by a review round.
+# Without this, a real command's own segment still runs all the way to
+# the NEXT anchor (or end of string), which can include trailing,
+# never-executed text on the same "logical command" the anchor fix just
+# stopped from being its own separate anchor (a `# comment` or `echo
+# "..."` mentioning "abicheck"). `_PIP_REQ_INSTALL_RE`'s own non-greedy
+# `.*?` can then walk forward past the real command and land its match on
+# that later, irrelevant "abicheck" text instead of stopping at the real
+# command's own end -- which is a *false positive* when two workflows
+# share the identical real install but differ only in benign trailing
+# commentary (the swallowed comment text now differs, and the parity
+# check reports a mismatch on the pin), not merely the false negative the
+# anchor fix alone was written to close. Confirmed empirically both
+# directions before landing this: without this bound, an identical real
+# ref behind differing trailing comments incorrectly compared unequal;
+# with it, that case compares equal (real fix) and every scenario the
+# anchor fix itself was written for (differing real refs behind an
+# identical trailing echo) still compares unequal (no regression).
+_COMMAND_TERMINATOR_RE = re.compile(r"(?<!\\)\n|;|&&|\|\||\||#")
+
+
+def _command_span_end(run: str, start: int) -> int:
+    """The exclusive end offset of the one logical shell command
+    beginning at `start` in `run` -- see `_COMMAND_TERMINATOR_RE`'s own
+    docstring for what counts as a terminator. `len(run)` if none is
+    found (the command runs to the end of the step's `run:` text)."""
+    m = _COMMAND_TERMINATOR_RE.search(run, start)
+    return m.start() if m else len(run)
 
 
 def _normalize_shell(text: str) -> str:
@@ -346,7 +407,10 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     commands and silently selecting the wrong one. Bounding each pattern's
     search to one command's own segment makes that cross-command
     attribution impossible: a match can never extend past the next
-    command's anchor."""
+    command's anchor -- and, per `_command_span_end`'s own docstring,
+    never past its OWN command's end either, so trailing, never-executed
+    text (a comment, an unrelated echo) on that same line can't be
+    absorbed into the comparison."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
@@ -356,7 +420,8 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
         return None
     last_match_text: str | None = None
     for i, start in enumerate(anchors):
-        end = anchors[i + 1] if i + 1 < len(anchors) else len(run)
+        next_anchor = anchors[i + 1] if i + 1 < len(anchors) else len(run)
+        end = min(next_anchor, _command_span_end(run, start))
         segment = run[start:end]
         candidates = [
             m

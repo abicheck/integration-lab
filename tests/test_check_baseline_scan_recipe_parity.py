@@ -722,6 +722,49 @@ class TestCheck:
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_behind_an_identical_trailing_echo_is_caught(self):
+        # Fresh evidence (Codex review, fourth round on this same area):
+        # a trailing, never-executed `echo "pip install abicheck"` line
+        # after two workflows' genuinely differing real VCS reinstalls.
+        # An unanchored `pip install` scan treats that echoed text as one
+        # more real invocation, and since it's textually identical on both
+        # sides, it gets selected as "the" last install on both --
+        # silently masking the real drift in the actual, executed command
+        # that precedes it.
+        trailing_echo = 'echo "pip install abicheck"'
+        good = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000\n"
+            f"{trailing_echo}"
+        )
+        drifted = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@beefdead0000000000000000000000000000000\n"
+            f"{trailing_echo}"
+        )
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_identical_behind_differing_trailing_comment_is_clean(self):
+        # The false-positive risk the fix above introduced on its own
+        # first revision, caught before shipping: two workflows sharing
+        # the IDENTICAL real install but differing only in benign
+        # trailing commentary (a `#` comment or `echo` mentioning
+        # "abicheck") must NOT be reported as a pin mismatch just because
+        # the swallowed trailing text differs.
+        good = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000\n"
+            '# note A about abicheck build'
+        )
+        same_ref_different_comment = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000\n"
+            'echo "note B about abicheck build"'
+        )
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=same_ref_different_comment))
+        assert not any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1
