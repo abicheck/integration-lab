@@ -266,6 +266,14 @@ def dump_real_snapshot(
         snapshot = json.loads(out_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise RealScanError(f"abicheck dump wrote non-JSON output to {out_path}: {exc}") from exc
+    if not isinstance(snapshot, dict):
+        # Valid JSON with a non-object top level (e.g. a truncated/corrupted
+        # write leaving `[]` or `null`) is truthy and not None -- the
+        # snapshot.get() call below would raise AttributeError instead of
+        # this function's own RealScanError, bypassing every caller's
+        # fail-closed NOT_COMPARABLE handling for that error type
+        # (CodeRabbit review, PR #25).
+        raise RealScanError(f"abicheck dump wrote a non-object JSON snapshot to {out_path}")
 
     # Read the structured dump_provenance.effective_depth field abicheck
     # itself writes into the snapshot, not the human-readable "Resolved

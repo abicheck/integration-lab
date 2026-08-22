@@ -8,10 +8,12 @@ PR history for the end-to-end verification against a real build.
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
-from real_scan import RealScanError, filter_compile_db_for_target, map_verdict, target_source_suffix
+import real_scan
+from real_scan import RealScanError, dump_real_snapshot, filter_compile_db_for_target, map_verdict, target_source_suffix
 
 
 def _write_db(tmp_path, entries):
@@ -92,3 +94,35 @@ def test_map_verdict_missing_value_fails_closed():
     mapped = map_verdict(None)
     assert mapped["verdict"] == "NOT_COMPARABLE"
     assert mapped["unmapped_abicheck_verdict"] is None
+
+
+def test_dump_real_snapshot_fails_closed_on_non_object_json(tmp_path, monkeypatch):
+    # A valid-JSON-but-non-object snapshot (e.g. a truncated/corrupted
+    # write leaving `[]` or `null`) is truthy and not None -- snapshot.get()
+    # on it would raise AttributeError instead of this function's own
+    # RealScanError, bypassing every caller's fail-closed NOT_COMPARABLE
+    # handling for that error type (CodeRabbit review, PR #25).
+    library_path = tmp_path / "libmath.so"
+    library_path.write_bytes(b"")
+    header_dir = tmp_path / "headers"
+    header_dir.mkdir()
+    out_path = tmp_path / "dump.json"
+
+    def _fake_run(cmd):
+        # abicheck's own -o path is the last "-o"-following arg -- write
+        # the non-object JSON there, exactly as a real (corrupted) dump
+        # invocation would have.
+        out_path.write_text("[]", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+    monkeypatch.setattr(real_scan, "_run", _fake_run)
+
+    with pytest.raises(RealScanError, match="non-object JSON snapshot"):
+        dump_real_snapshot(
+            library_path=library_path,
+            header_dir=header_dir,
+            compile_db=tmp_path / "compile_commands.json",
+            sources_root=tmp_path,
+            version="v1",
+            out_path=out_path,
+        )
