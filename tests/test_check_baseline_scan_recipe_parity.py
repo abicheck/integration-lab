@@ -493,6 +493,25 @@ class TestCheck:
         scan_wf["jobs"]["scan"]["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
         assert check(dump_wf, scan_wf) == []
 
+    def test_runs_on_drift_is_caught(self):
+        # Fresh evidence (Codex review): the runner image selects the
+        # default system compiler/toolchain -- a job silently repointed
+        # at a different runner can change the built artifact even when
+        # every build command and env mapping stays identical.
+        scan_wf = _scan_wf()
+        scan_wf["jobs"]["scan"]["runs-on"] = "ubuntu-22.04"
+        errors = check(_dump_wf(), scan_wf)
+        assert any("JOB_EXECUTION_CONTEXT_MISMATCH" in e and "runs-on" in e for e in errors)
+
+    def test_container_drift_is_caught(self):
+        scan_wf = _scan_wf()
+        scan_wf["jobs"]["scan"]["container"] = "ghcr.io/example/builder:latest"
+        errors = check(_dump_wf(), scan_wf)
+        assert any("JOB_EXECUTION_CONTEXT_MISMATCH" in e and "container" in e for e in errors)
+
+    def test_matching_runs_on_and_no_container_is_clean(self):
+        assert check(_dump_wf(), _scan_wf()) == []
+
     def test_missing_artifact_build_step_is_reported(self):
         dump_wf = _dump_wf()
         dump_wf["jobs"]["collect"]["steps"] = [
@@ -667,6 +686,20 @@ class TestCheck:
     def test_matching_pip3_installs_is_clean(self):
         pip3_install = "pip3 install --quiet \"abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3\""
         assert check(_dump_wf(abicheck_pip_run=pip3_install), _scan_wf(abicheck_pip_run=pip3_install)) == []
+
+    def test_evidence_pack_pip_pin_drift_via_versioned_pip_entry_point_is_caught(self):
+        # Fresh evidence (Codex review, a second round on pip entry-point
+        # recognition): `pip3.14 install ...` -- a fully-versioned entry
+        # point -- is an equally real, documented way to invoke pip.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        versioned_reinstall = (
+            "pip3.14 install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"
+        )
+        drifted = f"{shared_first_install}\n{versioned_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())

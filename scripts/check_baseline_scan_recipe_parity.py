@@ -233,12 +233,13 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # `run:` text (never spans across steps), so the blast radius of the
 # imprecision is small.
 #
-# `pip3?\s+install` rather than a literal `pip install` (Codex review,
-# fresh evidence): `pip3 install ...` is an equally real, documented
-# entry point, and a reinstall spelled that way went unrecognized while
-# an earlier shared `pip install` line kept being compared as if it were
-# still current.
-_PIP_VCS_INSTALL_RE = re.compile(r"pip3?\s+install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
+# `pip(?:3(?:\.\d+)?)?\s+install` rather than a literal `pip install`
+# (Codex review, two rounds): `pip3 install ...` and a fully-versioned
+# entry point like `pip3.14 install ...` are equally real, documented
+# ways to invoke pip, and a reinstall spelled either way went
+# unrecognized while an earlier shared `pip install` line kept being
+# compared as if it were still current.
+_PIP_VCS_INSTALL_RE = re.compile(r"pip(?:3(?:\.\d+)?)?\s+install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
 
 # A second, independent form pip accepts identically: a plain requirement
 # specifier naming the package on an index (`pip install abicheck`,
@@ -262,7 +263,7 @@ _PIP_VCS_INSTALL_RE = re.compile(r"pip3?\s+install\b.*?git\+\S*?/abicheck(?!/)(?
 # `abicheck[foo]==9.9.9` both normalized to the identical truncated text
 # and a real producer-version drift went undetected).
 _PIP_REQ_INSTALL_RE = re.compile(
-    r"pip3?\s+install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
+    r"pip(?:3(?:\.\d+)?)?\s+install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -761,6 +762,34 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"'bazel build //:math' steps set different env -- baseline.yml: {dump_build_env!r}, "
             f"abi-scan.yml: {scan_build_env!r}. A toolchain-selecting variable (CC/CXX/etc.) "
             "changes the build even when the command text is identical."
+        )
+
+    # Job-level execution context (Codex review, fresh evidence): the
+    # runner image (`runs-on`) and any `container` a job runs in select
+    # the default system compiler/toolchain and libraries -- a job
+    # silently repointed at a different runner (e.g. ubuntu-24.04 ->
+    # ubuntu-22.04) or given a `container:` can change both
+    # bazel-bin/libmath.so and its Bazel evidence while every command
+    # and env mapping checked above stays textually identical.
+    dump_job = baseline_wf.get("jobs", {}).get("collect") if isinstance(baseline_wf, dict) else None
+    scan_job = abi_scan_wf.get("jobs", {}).get("scan") if isinstance(abi_scan_wf, dict) else None
+    dump_runs_on = dump_job.get("runs-on") if isinstance(dump_job, dict) else None
+    scan_runs_on = scan_job.get("runs-on") if isinstance(scan_job, dict) else None
+    if dump_runs_on != scan_runs_on:
+        errors.append(
+            "JOB_EXECUTION_CONTEXT_MISMATCH: baseline.yml's 'collect' job and abi-scan.yml's "
+            f"'scan' job run on different runners -- runs-on={dump_runs_on!r} vs "
+            f"{scan_runs_on!r}. The runner image selects the default system compiler/"
+            "toolchain, which can change the built artifact even when every build command "
+            "is identical."
+        )
+    dump_container = dump_job.get("container") if isinstance(dump_job, dict) else None
+    scan_container = scan_job.get("container") if isinstance(scan_job, dict) else None
+    if dump_container != scan_container:
+        errors.append(
+            "JOB_EXECUTION_CONTEXT_MISMATCH: baseline.yml's 'collect' job and abi-scan.yml's "
+            f"'scan' job specify different containers -- container={dump_container!r} vs "
+            f"{scan_container!r}."
         )
 
     dump_pack_script = _bazel_pack_script(baseline_wf, "collect")
