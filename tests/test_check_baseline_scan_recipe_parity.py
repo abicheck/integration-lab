@@ -701,6 +701,27 @@ class TestCheck:
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_behind_a_shared_plain_index_install_is_caught(self):
+        # The exact mixed-form ordering case Codex flagged against the
+        # previous whole-text `finditer`-and-sort-by-start selection: a
+        # plain, no-ref-of-its-own install (`pip install abicheck==1.2.3`)
+        # followed by a *later*, real VCS reinstall onto a differing ref.
+        # `_PIP_VCS_INSTALL_RE`'s own DOTALL `.*?` could start matching at
+        # the FIRST command's "pip install" text and cross forward into the
+        # SECOND command's VCS URL, tying `m.start()` with
+        # `_PIP_REQ_INSTALL_RE`'s own match on that same first command --
+        # and the tie-break by insertion order picked the stale, first-
+        # command-only REQ match instead of the real last command's ref.
+        shared_index_install = "pip install --quiet abicheck==1.2.3"
+        good = f"{shared_index_install}\n{shared_index_install}"
+        vcs_reinstall = (
+            "pip install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"
+        )
+        drifted = f"{shared_index_install}\n{vcs_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1

@@ -267,6 +267,29 @@ _PIP_REQ_INSTALL_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Anchors the start of each individual `pip install` invocation, used to
+# bound `_PIP_VCS_INSTALL_RE`/`_PIP_REQ_INSTALL_RE` matching to one
+# command at a time (Codex review, fresh evidence, third round on this
+# same area): both of those patterns are DOTALL and non-greedy, so a
+# *plain* install with no abicheck ref of its own (`pip install
+# abicheck==1.2.3`) followed by a *later*, different `pip install
+# --force-reinstall git+.../abicheck.git@<ref>` reproduces a real
+# mis-selection -- `_PIP_VCS_INSTALL_RE`'s own `.*?` can start matching at
+# the FIRST command's own "pip install" text and cross forward (via
+# DOTALL) into the second command's VCS URL, landing a match whose
+# `m.start()` is identical to `_PIP_REQ_INSTALL_RE`'s own match on that
+# same first command (which stops within line 1, since it has no `git+`
+# to reach for). Sorting the merged match list purely by `m.start()`
+# leaves that tie broken by insertion order (VCS listed first, so it
+# sorts before the tied REQ match), so `matches[-1]` selects the REQ
+# match -- the stale, first-line-only text -- even though the real last
+# *command* in the script is the second line's VCS reinstall. Fixed by
+# bounding each pattern's search to the text between one `pip install`
+# anchor and the next (never letting a match reach past a following
+# command's own anchor), so two different commands can never produce
+# matches with a tied start position in the first place.
+_PIP_INSTALL_ANCHOR_RE = re.compile(r"pip(?:3(?:\.\d+)?)?\s+install\b", re.IGNORECASE)
+
 
 def _normalize_shell(text: str) -> str:
     return " ".join(text.split())
@@ -307,24 +330,48 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     independent of the scanner Action's own `uses: abicheck/abicheck@<sha>`
     pin checked above.
 
-    Uses `finditer` and takes the LAST match (by start position), not the
-    first (Codex review, fresh evidence): a step containing two abicheck
-    installs on separate lines has its *later* one win (pip install
-    reinstalls/overwrites), so a `.search()`-based first match would keep
-    comparing a stale earlier pin while the ref that actually runs the
-    evidence-pack helper script -- the later one -- went unchecked.
-    Matches from both `_PIP_VCS_INSTALL_RE` and `_PIP_REQ_INSTALL_RE` are
-    merged before picking the last one, since either install form can be
-    the effective, final one."""
+    Splits the step's `run:` text into one segment per `pip install`
+    invocation (bounded by `_PIP_INSTALL_ANCHOR_RE`) and evaluates
+    `_PIP_VCS_INSTALL_RE`/`_PIP_REQ_INSTALL_RE` against each segment
+    independently, taking whichever match comes from the LAST command in
+    the script (Codex review, fresh evidence, third round): a step
+    containing two abicheck installs has its *later* one win (pip install
+    reinstalls/overwrites), so a stale earlier pin must never be what's
+    compared. An earlier revision instead ran both patterns over the
+    *whole* run text via `finditer` and merged by `m.start()` -- see
+    `_PIP_INSTALL_ANCHOR_RE`'s own docstring for the concrete case that
+    broke: a DOTALL match can start at one command's own anchor and cross
+    forward into a *different*, later command's text, producing a tied
+    `m.start()` between two matches that actually belong to different
+    commands and silently selecting the wrong one. Bounding each pattern's
+    search to one command's own segment makes that cross-command
+    attribution impossible: a match can never extend past the next
+    command's anchor."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
         return None
-    matches = sorted(
-        (*_PIP_VCS_INSTALL_RE.finditer(run), *_PIP_REQ_INSTALL_RE.finditer(run)),
-        key=lambda m: m.start(),
-    )
-    return _normalize_shell(matches[-1].group(0)) if matches else None
+    anchors = [m.start() for m in _PIP_INSTALL_ANCHOR_RE.finditer(run)]
+    if not anchors:
+        return None
+    last_match_text: str | None = None
+    for i, start in enumerate(anchors):
+        end = anchors[i + 1] if i + 1 < len(anchors) else len(run)
+        segment = run[start:end]
+        candidates = [
+            m
+            for m in (_PIP_VCS_INSTALL_RE.search(segment), _PIP_REQ_INSTALL_RE.search(segment))
+            if m is not None
+        ]
+        if not candidates:
+            continue
+        # Within one command's own segment both patterns can still both
+        # match (a VCS install's URL also happens to satisfy the bare
+        # REQ pattern's own weaker constraints on rare inputs) -- prefer
+        # whichever captured more of the actual invocation.
+        best = max(candidates, key=lambda m: m.end())
+        last_match_text = _normalize_shell(best.group(0))
+    return last_match_text
 
 
 def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str, str]:
