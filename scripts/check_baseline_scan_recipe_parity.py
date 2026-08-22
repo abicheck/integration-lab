@@ -306,6 +306,36 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
     return paths
 
 
+_BAZEL_BUILD_MATH_RE = re.compile(r"^\s*bazel build //:math\b")
+
+
+def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | None:
+    """The job's own `bazel build //:math ...` step that produces
+    `bazel-bin/libmath.so` -- the literal build recipe behind
+    `new-library`. Neither canonical job gives this step an `id`, so it's
+    found by scanning the job's steps directly for the first `run:` whose
+    text starts with `bazel build //:math` (Codex review, fresh evidence:
+    the parity check compared how the evidence pack was collected and how
+    the two Action steps were invoked, but never the Bazel command that
+    actually produces the artifact both of those steps consume -- a
+    candidate build silently gaining an ABI-affecting flag, e.g.
+    `--config=asan` or an extra `--cxxopt`, would still produce
+    `bazel-bin/libmath.so` and pass every other check here, even though
+    the scan and baseline artifacts were no longer built the same way).
+    Returns `None` if the job has no such step."""
+    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    job = jobs.get(job_id) if isinstance(jobs, dict) else None
+    if not isinstance(job, dict):
+        return None
+    for step in job.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        run = step.get("run")
+        if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.match(run):
+            return _normalize_shell(run)
+    return None
+
+
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
     """The job's own `bazel_pack` step script, normalized, with the
     `--root-target` VALUE masked out -- that value is already compared
@@ -599,6 +629,29 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             "build_bazel_evidence_pack.py (separate from the abicheck/abicheck@<sha> scanner "
             "Action pin already checked above) -- a drift here can change the evidence pack's "
             "own shape without either canonical step's `uses:` pin ever changing."
+        )
+
+    # The artifact-producing Bazel build itself (Codex review, fresh
+    # evidence): everything above compares how the evidence pack was
+    # collected and how the two Action steps were invoked, but never the
+    # `bazel build //:math` command that actually produces
+    # `bazel-bin/libmath.so` -- the literal artifact `new-library` points
+    # at. A candidate build silently gaining an ABI-affecting flag (e.g.
+    # `--config=asan`, an extra `--cxxopt`) still produces the identical
+    # output path and would pass every check above unnoticed.
+    dump_build_cmd = _bazel_build_math_command(baseline_wf, "collect")
+    scan_build_cmd = _bazel_build_math_command(abi_scan_wf, "scan")
+    if dump_build_cmd is None:
+        errors.append(f"{BASELINE_PATH}: could not find a 'bazel build //:math' step in job 'collect'")
+    if scan_build_cmd is None:
+        errors.append(f"{ABI_SCAN_PATH}: could not find a 'bazel build //:math' step in job 'scan'")
+    if dump_build_cmd is not None and scan_build_cmd is not None and dump_build_cmd != scan_build_cmd:
+        errors.append(
+            "BUILD_EVIDENCE_ARTIFACT_BUILD_MISMATCH: baseline.yml's and abi-scan.yml's "
+            f"'bazel build //:math' commands differ -- baseline.yml: {dump_build_cmd!r}, "
+            f"abi-scan.yml: {scan_build_cmd!r}. The baseline and the canonical scan must build "
+            "bazel-bin/libmath.so with the identical Bazel invocation, or the two artifacts "
+            "are not the same recipe even when every other field agrees."
         )
 
     dump_pack_script = _bazel_pack_script(baseline_wf, "collect")

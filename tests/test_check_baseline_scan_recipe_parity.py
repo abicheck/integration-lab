@@ -43,10 +43,23 @@ _SHA = "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 _CQUERY_CMD = "bazel cquery --output=jsonproto 'deps(//:math)'"
 _AQUERY_CMD = "bazel aquery --output=jsonproto --include_param_files \"mnemonic('CppCompile', deps(//:math))\""
 _PIP_LINE = f'pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@{_SHA}"'
+_BUILD_MATH_RUN = 'bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"'
 
 
 def _bazel_queries_run(*, cquery: str = _CQUERY_CMD, aquery: str = _AQUERY_CMD, extra: str = "") -> str:
     return f'{cquery} > "$RUNNER_TEMP/bazel-cquery.json"\n{aquery} > "$RUNNER_TEMP/bazel-aquery.json"\n{extra}'
+
+
+def _set_step_run(wf: dict, job_id: str, step_id: str, run: str) -> None:
+    """Mutates `wf` in place, setting the `run:` text of the job's step
+    with the given `id`. Looking steps up by id (rather than a positional
+    index into the steps list) keeps every test resilient to the list's
+    own ordering, since `_wf` is free to insert/reorder steps over time."""
+    for step in wf["jobs"][job_id]["steps"]:
+        if step.get("id") == step_id:
+            step["run"] = run
+            return
+    raise AssertionError(f"no step with id={step_id!r} in job {job_id!r}")
 
 
 def _wf(
@@ -54,6 +67,7 @@ def _wf(
     step: dict,
     *,
     root_target: str = "//:math",
+    bazel_build_run: str | None = None,
     bazel_queries_run: str | None = None,
     abicheck_pip_run: str | None = None,
 ) -> dict:
@@ -61,6 +75,10 @@ def _wf(
         "jobs": {
             job_id: {
                 "steps": [
+                    # No `id:` -- mirrors the real workflows' own
+                    # unnamed "Build [candidate/shared library] with
+                    # Bazel" steps, found by `run:` text alone.
+                    {"name": "Build shared library with Bazel", "run": bazel_build_run if bazel_build_run is not None else _BUILD_MATH_RUN},
                     {"id": "bazel_queries", "run": bazel_queries_run if bazel_queries_run is not None else _bazel_queries_run()},
                     {"id": "abicheck_pip", "run": abicheck_pip_run if abicheck_pip_run is not None else _PIP_LINE},
                     {
@@ -82,6 +100,7 @@ def _dump_wf(
     *,
     uses_sha: str = _SHA,
     root_target: str = "//:math",
+    bazel_build_run: str | None = None,
     bazel_queries_run: str | None = None,
     abicheck_pip_run: str | None = None,
 ) -> dict:
@@ -90,7 +109,14 @@ def _dump_wf(
         "uses": f"abicheck/abicheck@{uses_sha}",
         "with": with_block if with_block is not None else dict(_GOOD_DUMP_WITH),
     }
-    return _wf("collect", step, root_target=root_target, bazel_queries_run=bazel_queries_run, abicheck_pip_run=abicheck_pip_run)
+    return _wf(
+        "collect",
+        step,
+        root_target=root_target,
+        bazel_build_run=bazel_build_run,
+        bazel_queries_run=bazel_queries_run,
+        abicheck_pip_run=abicheck_pip_run,
+    )
 
 
 def _scan_wf(
@@ -98,6 +124,7 @@ def _scan_wf(
     *,
     uses_sha: str = _SHA,
     root_target: str = "//:math",
+    bazel_build_run: str | None = None,
     bazel_queries_run: str | None = None,
     abicheck_pip_run: str | None = None,
 ) -> dict:
@@ -113,7 +140,14 @@ def _scan_wf(
     # simplified one that would never catch the check ignoring it correctly.
     if bazel_queries_run is None:
         bazel_queries_run = _bazel_queries_run(extra="bazel query 'buildfiles(deps(//:math))' > \"$RUNNER_TEMP/bazel-buildfiles.txt\"")
-    return _wf("scan", step, root_target=root_target, bazel_queries_run=bazel_queries_run, abicheck_pip_run=abicheck_pip_run)
+    return _wf(
+        "scan",
+        step,
+        root_target=root_target,
+        bazel_build_run=bazel_build_run,
+        bazel_queries_run=bazel_queries_run,
+        abicheck_pip_run=abicheck_pip_run,
+    )
 
 
 class TestCheck:
@@ -393,9 +427,31 @@ class TestCheck:
             "with": dict(_GOOD_SCAN_WITH),
         }
         wf = _wf("scan", step)
-        wf["jobs"]["scan"]["steps"][2]["run"] = 'python3 x.py --root-target "//:math" --extra-flag'
+        _set_step_run(wf, "scan", "bazel_pack", 'python3 x.py --root-target "//:math" --extra-flag')
         errors = check(_dump_wf(), wf)
         assert any("BUILD_EVIDENCE_PACK_SCRIPT_MISMATCH" in e for e in errors)
+
+    def test_artifact_build_command_drift_is_caught(self):
+        # The parity check compared how the evidence pack was collected
+        # and how the two Action steps were invoked, but never the Bazel
+        # command that actually produces bazel-bin/libmath.so -- a
+        # candidate build silently gaining an ABI-affecting flag (e.g.
+        # --config=asan) still produces the same output path and would
+        # pass every other check here (Codex review, fresh evidence).
+        drifted = 'bazel build //:math --config=asan --disk_cache="$HOME/.cache/bazel-disk"'
+        errors = check(_dump_wf(), _scan_wf(bazel_build_run=drifted))
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_MISMATCH" in e for e in errors)
+
+    def test_matching_artifact_build_commands_is_clean(self):
+        assert check(_dump_wf(), _scan_wf()) == []
+
+    def test_missing_artifact_build_step_is_reported(self):
+        dump_wf = _dump_wf()
+        dump_wf["jobs"]["collect"]["steps"] = [
+            s for s in dump_wf["jobs"]["collect"]["steps"] if not str(s.get("run", "")).startswith("bazel build //:math")
+        ]
+        errors = check(dump_wf, _scan_wf())
+        assert any("could not find a 'bazel build //:math' step in job 'collect'" in e for e in errors)
 
     def test_evidence_pack_queries_agreeing_is_clean(self):
         assert check(_dump_wf(), _scan_wf()) == []
@@ -412,8 +468,8 @@ class TestCheck:
             'python3 x.py --cquery "$RUNNER_TEMP/bazel-cquery.json" '
             '--aquery "$RUNNER_TEMP/bazel-aquery.json" --root-target "//:math"'
         )
-        dump_wf["jobs"]["collect"]["steps"][2]["run"] = f'{base_flags} --root-target "//:extra"'
-        scan_wf["jobs"]["scan"]["steps"][2]["run"] = f'{base_flags} --root-target "//:different"'
+        _set_step_run(dump_wf, "collect", "bazel_pack", f'{base_flags} --root-target "//:extra"')
+        _set_step_run(scan_wf, "scan", "bazel_pack", f'{base_flags} --root-target "//:different"')
         errors = check(dump_wf, scan_wf)
         assert any("BUILD_EVIDENCE_ROOT_TARGET_MISMATCH" in e for e in errors)
 
@@ -425,8 +481,8 @@ class TestCheck:
             '--aquery "$RUNNER_TEMP/bazel-aquery.json" '
             '--root-target "//:math" --root-target "//:extra"'
         )
-        dump_wf["jobs"]["collect"]["steps"][2]["run"] = run
-        scan_wf["jobs"]["scan"]["steps"][2]["run"] = run
+        _set_step_run(dump_wf, "collect", "bazel_pack", run)
+        _set_step_run(scan_wf, "scan", "bazel_pack", run)
         assert check(dump_wf, scan_wf) == []
 
     def test_evidence_pack_pip_pin_drift_via_named_ref_reinstall_is_caught(self):
