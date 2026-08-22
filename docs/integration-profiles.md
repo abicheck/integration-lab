@@ -212,17 +212,28 @@ this repo's own three profiles, this check found that Bazel's `//:math`
 set no SONAME at all, CMake's build set `libmath.so.1` (via `SOVERSION`),
 and Make's build set `libmath.so` (via `-Wl,-soname`) — three different
 answers for the identical source. Exactly the class of divergence this
-check exists to surface. Fixed by aligning CMake (`NO_SONAME TRUE`) and
-Make (dropped `-Wl,-soname` entirely) to Bazel's existing no-SONAME
-shape, rather than the reverse: Bazel's `//:math` is deliberately the one
-target this repo never changes casually (see `BUILD.bazel`'s own
-comment — every existing job's cache key, evidence pack, and committed
-baseline are keyed to it, and it's the required `abi-scan.yml` gate's own
-target), so alignment went the direction that doesn't touch it.
-`ci/backends/{cmake,make}.py`'s own SONAME-companion staging logic
-(needed when a backend's SONAME differs from its on-disk filename) is
-now dormant for these two targets but left in place, documented, for a
-future build-definition change that reintroduces a SONAME.
+check exists to surface. First fixed by aligning CMake/Make to Bazel's
+existing no-SONAME shape (dropping their own SONAME entirely, rather than
+adding one to Bazel's target); revisited and fixed the other way instead
+— a real shared library should carry a SONAME for correct dynamic-linker
+identity, so lacking one everywhere was the wrong direction to converge
+on. All three build systems now set the identical explicit SONAME (equal
+to each library's own filename: `libmath.so`/`libstrings.so`, no version
+suffix, so no extra symlink is needed) — Bazel's `//:math`/
+`strings_lib:strings` via `linkopts = ["-Wl,-soname,lib<target>.so"]`
+(the one target this repo otherwise never changes casually, per
+`BUILD.bazel`'s own comment — every existing job's cache key, evidence
+pack, and committed baseline are keyed to it, and it's the required
+`abi-scan.yml` gate's own target; this one linkopts addition doesn't
+change the target's output filename or staged layout, so the committed
+baseline's own comparable fields are unaffected by it beyond the SONAME
+field itself), CMake via its own default SONAME-equals-OUTPUT_NAME
+behavior (no `SOVERSION`/`VERSION` set), Make via the identical explicit
+`-Wl,-soname`. `ci/backends/{cmake,make}.py`'s own SONAME-companion
+staging logic (needed when a backend's SONAME differs from its on-disk
+filename) stays dormant for these two targets — a same-as-filename SONAME
+needs no companion file — but is left in place, documented, for a future
+build-definition change that versions the SONAME instead.
 
 A separate, still-open finding from the same check: the opportunistic
 real `abicheck compare` between Bazel's and CMake/Make's own built

@@ -95,11 +95,13 @@ class CMakeBackend(BuildBackend):
         # filename (see BuildBackend design note: canonical candidate
         # paths must be identical across build systems, e.g.
         # artifacts/lib/libmath.so). What that path actually IS on disk
-        # depends on whether math/strings set a SOVERSION/VERSION: with
-        # NO_SONAME TRUE and neither set (their current CMakeLists.txt
-        # shape -- see that file's own comment), it's a plain regular
-        # file. If SOVERSION/VERSION were reintroduced, CMake would instead
-        # make this path a symlink to a versioned real file
+        # depends on whether math/strings set a SOVERSION/VERSION: neither
+        # is set (their current CMakeLists.txt shape -- see that file's own
+        # comment), so CMake's own default SONAME behavior applies (SONAME
+        # == OUTPUT_NAME, verified against a real build with `readelf -d`)
+        # and this path is a plain regular file, not a dev symlink. If
+        # SOVERSION/VERSION were introduced instead, CMake would make this
+        # path a symlink to a versioned real file
         # (lib<target>.so.<SOVERSION>.<...>) -- TargetResult.from_path()/
         # stage() read file bytes (sha256/copy2) by following a symlink
         # either way, so this path stays correct in both shapes; only
@@ -134,21 +136,21 @@ class CMakeBackend(BuildBackend):
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
             if target.kind == "shared_library":
-                # CMakeLists.txt now sets NO_SONAME TRUE for math/strings
-                # (aligning with Bazel's own no-SONAME `math` shape -- see
-                # that file's own comment for why), so target.path is a
-                # plain regular file, not a dev symlink, and this block is
-                # a no-op (readlink() raises OSError -> soname=None ->
-                # nothing extra staged). Kept, rather than removed
-                # outright, for the general case: a future CMakeLists.txt
-                # change reintroducing SOVERSION/VERSION would make
-                # target.path a "lib<name>.so" symlink again, and
-                # consumer_app would then need the SONAME-named
-                # ("lib<name>.so.<SOVERSION>") companion file staged
-                # alongside it too, exactly as this block already handles
-                # (Codex review, PR #19, historical: this omission is what
-                # originally made a staged-only consumer_app unable to
-                # resolve its dependency at runtime).
+                # CMakeLists.txt sets no SOVERSION/VERSION for math/strings
+                # (see that file's own comment: CMake's default SONAME ==
+                # OUTPUT_NAME is used instead, matching Bazel's/Make's own
+                # identical -Wl,-soname), so target.path is a plain regular
+                # file, not a dev symlink, and this block is a no-op
+                # (readlink() raises OSError -> soname=None -> nothing extra
+                # staged). Kept, rather than removed outright, for the
+                # general case: a future CMakeLists.txt change introducing
+                # SOVERSION/VERSION would make target.path a "lib<name>.so"
+                # symlink again, and consumer_app would then need the
+                # SONAME-named ("lib<name>.so.<SOVERSION>") companion file
+                # staged alongside it too, exactly as this block already
+                # handles (Codex review, PR #19, historical: this omission
+                # is what originally made a staged-only consumer_app unable
+                # to resolve its dependency at runtime).
                 try:
                     soname = target.path.readlink().name
                 except OSError:

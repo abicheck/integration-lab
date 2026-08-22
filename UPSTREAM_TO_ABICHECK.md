@@ -958,21 +958,35 @@ not the profile/receipt/gate architecture built around it.
 # 2026-08-21 follow-up: no cross-build-system public-contract equivalence primitive upstream
 
 **2026-08-21 update: the SONAME finding this entry describes is fixed on
-the lab side.** CMake (`buildsystems/cmake/CMakeLists.txt`, `NO_SONAME
-TRUE`) and Make (`buildsystems/make/Makefile`, dropped `-Wl,-soname`
-entirely) are now aligned to Bazel's existing no-SONAME shape for
-`math`/`strings` -- not the reverse, since `BUILD.bazel`'s own comment
-keeps `//:math` deliberately unchanged (every existing job's cache key,
-evidence pack, and committed baseline are keyed to it, and it's the
-required `abi-scan.yml` gate's own target). Verified end-to-end: a fresh
-three-way build now reports the CMake<->Make pair fully `EQUIVALENT` (no
-findings at all), and the SONAME `public_contract_mismatch` no longer
-appears in either Bazel pair. This does not change the ask below (this
-lab's own `ci/compare_build_outputs.py` is still bespoke tooling, not a
-first-class abicheck primitive) -- it only means one of this section's
-own real findings no longer reproduces. A separate, still-open finding
-from the same tooling remains: a real `abicheck compare` between Bazel's
-and CMake/Make's own built `libmath.so` reports `COMPATIBLE_WITH_RISK`, a
+the lab side -- twice, in two different directions.** First fixed by
+aligning CMake/Make to Bazel's existing no-SONAME shape (dropping their
+own SONAME entirely). Revisited and fixed the other way instead: a real
+shared library should carry a SONAME for correct dynamic-linker identity,
+so lacking one everywhere was the wrong convergence point. All three now
+set an identical, explicit SONAME equal to each library's own on-disk
+filename (`libmath.so`/`libstrings.so`, no version suffix): Bazel's
+`//:math`/`strings_lib:strings` via `linkopts = ["-Wl,-soname,lib<target>
+.so"]` (the one target this repo otherwise never changes casually, per
+`BUILD.bazel`'s own comment -- every existing job's cache key, evidence
+pack, and committed baseline are keyed to it, and it's the required
+`abi-scan.yml` gate's own target; this linkopts addition changes neither
+the target's output filename nor its staged layout, only the SONAME field
+itself), CMake (`buildsystems/cmake/CMakeLists.txt`) via its own default
+SONAME-equals-OUTPUT_NAME behavior (no `SOVERSION`/`VERSION` set), Make
+(`buildsystems/make/Makefile`) via the identical explicit `-Wl,-soname`.
+Verified end-to-end against real builds of all three (`readelf -d
+lib<target>.so | grep SONAME` on each, plus a live `consumer_app` run for
+each backend, confirming the loader still resolves `NEEDED libmath.so`
+correctly with no companion symlink needed since the SONAME matches the
+on-disk filename): a fresh three-way build reports the CMake<->Make pair
+fully `EQUIVALENT` (no findings at all), and the SONAME
+`public_contract_mismatch` no longer appears in either Bazel pair either.
+This does not change the ask below (this lab's own
+`ci/compare_build_outputs.py` is still bespoke tooling, not a first-class
+abicheck primitive) -- it only means one of this section's own real
+findings no longer reproduces. A separate, still-open finding from the
+same tooling remains: a real `abicheck compare` between Bazel's and
+CMake/Make's own built `libmath.so` reports `COMPATIBLE_WITH_RISK`, a
 DWARF/source-level difference the SONAME/symbol-table diff can't see on
 its own -- a different investigation, not addressed by this fix.
 
