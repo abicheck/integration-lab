@@ -239,7 +239,19 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # ways to invoke pip, and a reinstall spelled either way went
 # unrecognized while an earlier shared `pip install` line kept being
 # compared as if it were still current.
-_PIP_VCS_INSTALL_RE = re.compile(r"pip(?:3(?:\.\d+)?)?\s+install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
+#
+# `_PIP_ENTRYPOINT` (Codex review, fresh evidence, fifth round): a
+# `python[VERSION] -m pip install ...` invocation is pip's own documented
+# equivalent entry point (the exact form its `--help` output for `python3
+# -m pip install` lists as a supported usage) -- a reinstall spelled that
+# way instead of a bare `pip`/`pip3`/`pip3.14` executable went
+# unrecognized, and `_abicheck_pip_pin` kept comparing an earlier, stale
+# shared install. Shared by the anchor and both content patterns below so
+# all three recognize the same set of entry points identically -- a
+# divergence between what counts as an anchor and what the content
+# patterns match would silently reopen a variant of the same class of gap.
+_PIP_ENTRYPOINT = r"(?:pip(?:3(?:\.\d+)?)?|python3?(?:\.\d+)?\s+-m\s+pip)\s+install\b"
+_PIP_VCS_INSTALL_RE = re.compile(rf"{_PIP_ENTRYPOINT}.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
 
 # A second, independent form pip accepts identically: a plain requirement
 # specifier naming the package on an index (`pip install abicheck`,
@@ -263,7 +275,7 @@ _PIP_VCS_INSTALL_RE = re.compile(r"pip(?:3(?:\.\d+)?)?\s+install\b.*?git\+\S*?/a
 # `abicheck[foo]==9.9.9` both normalized to the identical truncated text
 # and a real producer-version drift went undetected).
 _PIP_REQ_INSTALL_RE = re.compile(
-    r"pip(?:3(?:\.\d+)?)?\s+install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
+    rf"{_PIP_ENTRYPOINT}.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -311,7 +323,11 @@ _PIP_REQ_INSTALL_RE = re.compile(
 # separator, e.g. `; "pip install x"`, is unusual enough not to occur in
 # any real install step here and is accepted as a residual, documented
 # imprecision), but it closes the concrete, realistic case reported.
-_PIP_INSTALL_ANCHOR_RE = re.compile(r"(?:\A|[;&|]|^)[ \t]*pip(?:3(?:\.\d+)?)?\s+install\b", re.IGNORECASE | re.MULTILINE)
+#
+# Uses the same `_PIP_ENTRYPOINT` as the two content patterns above, so a
+# `python3 -m pip install ...` reinstall is recognized as its own real
+# command anchor too, not just a bare `pip`/`pip3`/`pip3.14` invocation.
+_PIP_INSTALL_ANCHOR_RE = re.compile(rf"(?:\A|[;&|]|^)[ \t]*{_PIP_ENTRYPOINT}", re.IGNORECASE | re.MULTILINE)
 
 # Marks the end of one logical shell command: an unescaped newline (a
 # backslash-continued newline is NOT a terminator, so a multi-line
@@ -392,14 +408,16 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     pin checked above.
 
     Splits the step's `run:` text into one segment per `pip install`
-    invocation (bounded by `_PIP_INSTALL_ANCHOR_RE`) and evaluates
-    `_PIP_VCS_INSTALL_RE`/`_PIP_REQ_INSTALL_RE` against each segment
-    independently, taking whichever match comes from the LAST command in
-    the script (Codex review, fresh evidence, third round): a step
-    containing two abicheck installs has its *later* one win (pip install
-    reinstalls/overwrites), so a stale earlier pin must never be what's
-    compared. An earlier revision instead ran both patterns over the
-    *whole* run text via `finditer` and merged by `m.start()` -- see
+    invocation (bounded by `_PIP_INSTALL_ANCHOR_RE` and, within that,
+    `_command_span_end`) and evaluates `_PIP_VCS_INSTALL_RE`/
+    `_PIP_REQ_INSTALL_RE` against each segment independently, taking
+    whichever SEGMENT (not just the partial regex match within it) comes
+    from the LAST command in the script that either pattern recognizes as
+    an abicheck install (Codex review, fresh evidence, third round): a
+    step containing two abicheck installs has its *later* one win (pip
+    install reinstalls/overwrites), so a stale earlier pin must never be
+    what's compared. An earlier revision instead ran both patterns over
+    the *whole* run text via `finditer` and merged by `m.start()` -- see
     `_PIP_INSTALL_ANCHOR_RE`'s own docstring for the concrete case that
     broke: a DOTALL match can start at one command's own anchor and cross
     forward into a *different*, later command's text, producing a tied
@@ -410,7 +428,22 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     command's anchor -- and, per `_command_span_end`'s own docstring,
     never past its OWN command's end either, so trailing, never-executed
     text (a comment, an unrelated echo) on that same line can't be
-    absorbed into the comparison."""
+    absorbed into the comparison.
+
+    The comparison value is the FULL, whitespace-normalized command
+    segment, not just `_PIP_REQ_INSTALL_RE`/`_PIP_VCS_INSTALL_RE`'s own
+    captured span within it (Codex review, fresh evidence, fifth round):
+    those two patterns exist only to *recognize* a command as a real
+    abicheck install, each stopping right after the piece of syntax
+    (a VCS ref, a version specifier) they were written to extract -- so a
+    trailing pip option after that point, e.g. `--index-url
+    https://index-a/...` vs. `...index-b/...` on an otherwise-identical
+    bare `pip install abicheck` requirement, could silently change which
+    producer version actually installs while both sides' captured *match*
+    text still normalized identically. Comparing the whole bounded
+    command instead closes this for any trailing option generically,
+    rather than adding another Codex-review round's worth of option
+    spellings to the extraction patterns one at a time."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
@@ -418,25 +451,16 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     anchors = [m.start() for m in _PIP_INSTALL_ANCHOR_RE.finditer(run)]
     if not anchors:
         return None
-    last_match_text: str | None = None
+    last_segment_text: str | None = None
     for i, start in enumerate(anchors):
         next_anchor = anchors[i + 1] if i + 1 < len(anchors) else len(run)
         end = min(next_anchor, _command_span_end(run, start))
         segment = run[start:end]
-        candidates = [
-            m
-            for m in (_PIP_VCS_INSTALL_RE.search(segment), _PIP_REQ_INSTALL_RE.search(segment))
-            if m is not None
-        ]
-        if not candidates:
+        is_abicheck_install = _PIP_VCS_INSTALL_RE.search(segment) is not None or _PIP_REQ_INSTALL_RE.search(segment) is not None
+        if not is_abicheck_install:
             continue
-        # Within one command's own segment both patterns can still both
-        # match (a VCS install's URL also happens to satisfy the bare
-        # REQ pattern's own weaker constraints on rare inputs) -- prefer
-        # whichever captured more of the actual invocation.
-        best = max(candidates, key=lambda m: m.end())
-        last_match_text = _normalize_shell(best.group(0))
-    return last_match_text
+        last_segment_text = _normalize_shell(segment)
+    return last_segment_text
 
 
 def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str, str]:
@@ -457,7 +481,24 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
     return paths
 
 
-_BAZEL_BUILD_MATH_RE = re.compile(r"^\s*bazel build //:math\b")
+# Anchored to an actual shell command position -- start of the step's
+# `run:` text, start of a line, or immediately after a command separator
+# (`;`, `&&`, `||`, a pipe `|`) -- not merely "the step's `run:` text
+# starts with this", which `re.match` against the whole string would
+# require (Codex review, fresh evidence, third round on this same
+# helper): a real pre-build step commonly begins with an unrelated shell
+# setup line (`set -euo pipefail`) before the actual `bazel build
+# //:math` command. `_bazel_build_math_step` previously used `.match()`,
+# which anchors only at literal offset 0 of the whole string -- a setup
+# line ahead of the real build made the match fail outright, so the step
+# was invisible to this helper and it kept comparing an earlier, now-
+# stale build instead of the one that actually produces the artifact.
+# Mirrors `_PIP_INSTALL_ANCHOR_RE`'s identical command-position anchoring
+# (same class of gap, same fix shape) -- see that pattern's own docstring
+# for why a bare, unanchored substring search isn't used instead: it
+# would also match `bazel build //:math` appearing inside a comment or an
+# echoed diagnostic string, not just a real invocation.
+_BAZEL_BUILD_MATH_RE = re.compile(r"(?:\A|[;&|]|^)[ \t]*bazel build //:math\b", re.MULTILINE)
 
 
 def _bazel_build_math_step(workflow: dict[str, Any], job_id: str, *, before_step: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -506,7 +547,7 @@ def _bazel_build_math_step(workflow: dict[str, Any], job_id: str, *, before_step
         if before_step is not None and step is before_step:
             break
         run = step.get("run")
-        if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.match(run):
+        if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.search(run):
             latest = step
     return latest
 

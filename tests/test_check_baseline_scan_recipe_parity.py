@@ -765,6 +765,55 @@ class TestCheck:
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=same_ref_different_comment))
         assert not any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_via_index_url_option_is_caught(self):
+        # Fresh evidence (Codex review, fifth round on this same area): an
+        # otherwise-identical bare `pip install abicheck` requirement
+        # followed by a differing `--index-url` can install a different
+        # producer version from a different package source, but the
+        # extraction patterns stop right after the bare package name (no
+        # version specifier here), so only comparing their own captured
+        # match text missed this. Comparing the whole bounded command
+        # instead of the partial match closes it.
+        good = "pip install abicheck --index-url https://index-a.example/simple"
+        drifted = "pip install abicheck --index-url https://index-b.example/simple"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_matching_index_url_option_is_clean(self):
+        same = "pip install abicheck --index-url https://index-a.example/simple"
+        assert check(_dump_wf(abicheck_pip_run=same), _scan_wf(abicheck_pip_run=same)) == []
+
+    def test_evidence_pack_pip_pin_drift_via_python_dash_m_pip_is_caught(self):
+        # Fresh evidence (Codex review, fifth round): `python[VERSION] -m
+        # pip install ...` is pip's own documented equivalent entry point.
+        # A step retaining the shared earlier `pip install` but later
+        # reinstalling through `python3 -m pip install` went unrecognized
+        # by both the anchor and the content patterns, so the stale
+        # shared install kept being compared.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        python_dash_m_reinstall = "python3 -m pip install --force-reinstall abicheck==9.9.9"
+        drifted = f"{shared_first_install}\n{python_dash_m_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_artifact_build_drift_behind_a_shell_setup_command_is_caught(self):
+        # Fresh evidence (Codex review, third round on this same helper):
+        # `_bazel_build_math_step` previously required the step's `run:`
+        # text to literally START with `bazel build //:math` (a bare
+        # `re.match` against the whole string), so a real pre-build step
+        # beginning with an unrelated shell setup line (`set -euo
+        # pipefail`) before the actual build command made the step
+        # invisible to this helper, and it kept comparing an earlier,
+        # stale build.
+        drifted = 'set -euo pipefail\nbazel build //:math --config=asan --disk_cache="$HOME/.cache/bazel-disk"'
+        errors = check(_dump_wf(), _scan_wf(bazel_build_run=drifted))
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_MISMATCH" in e for e in errors)
+
+    def test_artifact_build_matching_behind_a_shell_setup_command_is_clean(self):
+        run = 'set -euo pipefail\nbazel build //:math --disk_cache="$HOME/.cache/bazel-disk"'
+        assert check(_dump_wf(bazel_build_run=run), _scan_wf(bazel_build_run=run)) == []
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1
