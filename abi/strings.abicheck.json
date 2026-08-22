@@ -167,7 +167,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "type://abicheck_lab::Joiner",
+          "dst": "type://abicheck_lab::Joiner::Joiner",
           "edge": "SOURCE_DECLARES",
           "facts": [
             {
@@ -185,7 +185,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "type://abicheck_lab::Joiner::Joiner",
+          "dst": "type://abicheck_lab::Joiner",
           "edge": "SOURCE_DECLARES",
           "facts": [
             {
@@ -475,9 +475,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Joiner",
+          "id": "type://abicheck_lab::Joiner::Joiner",
           "kind": "record_type",
-          "label": "abicheck_lab::Joiner",
+          "label": "abicheck_lab::Joiner::Joiner",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -498,9 +498,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Joiner::Joiner",
+          "id": "type://abicheck_lab::Joiner",
           "kind": "record_type",
-          "label": "abicheck_lab::Joiner::Joiner",
+          "label": "abicheck_lab::Joiner",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
