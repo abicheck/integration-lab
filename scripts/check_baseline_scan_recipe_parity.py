@@ -232,7 +232,13 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # comparison target) is unaffected either way. Bounded to one step's
 # `run:` text (never spans across steps), so the blast radius of the
 # imprecision is small.
-_PIP_VCS_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
+#
+# `pip3?\s+install` rather than a literal `pip install` (Codex review,
+# fresh evidence): `pip3 install ...` is an equally real, documented
+# entry point, and a reinstall spelled that way went unrecognized while
+# an earlier shared `pip install` line kept being compared as if it were
+# still current.
+_PIP_VCS_INSTALL_RE = re.compile(r"pip3?\s+install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
 
 # A second, independent form pip accepts identically: a plain requirement
 # specifier naming the package on an index (`pip install abicheck`,
@@ -256,7 +262,7 @@ _PIP_VCS_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.g
 # `abicheck[foo]==9.9.9` both normalized to the identical truncated text
 # and a real producer-version drift went undetected).
 _PIP_REQ_INSTALL_RE = re.compile(
-    r"pip install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
+    r"pip3?\s+install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\[[^\]]*\])?(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -341,48 +347,64 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
 _BAZEL_BUILD_MATH_RE = re.compile(r"^\s*bazel build //:math\b")
 
 
-def _bazel_build_math_step(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
-    """The job's own `bazel build //:math ...` step that produces
-    `bazel-bin/libmath.so` -- the literal build recipe behind
+def _bazel_build_math_step(workflow: dict[str, Any], job_id: str, *, before_step: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The job's own `bazel build //:math ...` step that produces the
+    artifact the canonical Action step actually consumes --
+    `bazel-bin/libmath.so`, the literal build recipe behind
     `new-library`. Neither canonical job gives this step an `id`, so it's
-    found by scanning the job's steps directly for the first `run:` whose
-    text starts with `bazel build //:math` (Codex review, fresh evidence:
-    the parity check compared how the evidence pack was collected and how
-    the two Action steps were invoked, but never the Bazel command that
-    actually produces the artifact both of those steps consume -- a
-    candidate build silently gaining an ABI-affecting flag, e.g.
-    `--config=asan` or an extra `--cxxopt`, would still produce
-    `bazel-bin/libmath.so` and pass every other check here, even though
-    the scan and baseline artifacts were no longer built the same way).
+    found by scanning the job's steps directly for `run:` text starting
+    with `bazel build //:math` (Codex review, fresh evidence: the parity
+    check compared how the evidence pack was collected and how the two
+    Action steps were invoked, but never the Bazel command that actually
+    produces the artifact both of those steps consume -- a candidate
+    build silently gaining an ABI-affecting flag, e.g. `--config=asan` or
+    an extra `--cxxopt`, would still produce `bazel-bin/libmath.so` and
+    pass every other check here, even though the scan and baseline
+    artifacts were no longer built the same way).
+
+    Selects the LAST such step that appears BEFORE `before_step` (the
+    canonical dump/scan Action step, matched by identity) -- not simply
+    the first match in the job (Codex review, fresh evidence, a second
+    round on this same helper): a second `bazel build //:math` inserted
+    between the existing build and the canonical Action step would
+    silently determine the real candidate artifact while the first-match
+    version kept comparing the unchanged, now-stale first build. Also
+    correctly ignores a real, unrelated later rebuild that exists in the
+    same job: `abi-scan.yml`'s own L4-replay diagnostic rebuild ("Rebuild
+    candidate shared library... (clang-18, for L4 replay)") runs AFTER
+    the canonical `id: scan` step, not before it, and must never be
+    mistaken for the artifact-defining build.
+
     Returns the whole step dict (`run:` and `env:` both live here) --
     a second, real-world drift this same finding's review round named:
-    the job's own L4-replay diagnostic rebuild
-    (`abi-scan.yml`'s "Rebuild candidate shared library... (clang-18,
-    for L4 replay)") sets `env: {CC: clang-18, CXX: clang++-18}` on the
-    identical `bazel build //:math` command text -- comparing only the
-    normalized `run:` string would miss an equivalent env-only drift
-    silently added to the *canonical* build step. Returns `None` if the
-    job has no such step."""
+    the L4-replay rebuild above sets `env: {CC: clang-18, CXX:
+    clang++-18}` on the identical `bazel build //:math` command text --
+    comparing only the normalized `run:` string would miss an equivalent
+    env-only drift silently added to the *canonical* build step. Returns
+    `None` if the job has no such step before `before_step`."""
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
     job = jobs.get(job_id) if isinstance(jobs, dict) else None
     if not isinstance(job, dict):
         return None
+    latest: dict[str, Any] | None = None
     for step in job.get("steps") or []:
         if not isinstance(step, dict):
             continue
+        if before_step is not None and step is before_step:
+            break
         run = step.get("run")
         if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.match(run):
-            return step
-    return None
+            latest = step
+    return latest
 
 
-def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | None:
-    step = _bazel_build_math_step(workflow, job_id)
+def _bazel_build_math_command(workflow: dict[str, Any], job_id: str, *, before_step: dict[str, Any] | None = None) -> str | None:
+    step = _bazel_build_math_step(workflow, job_id, before_step=before_step)
     run = step.get("run") if step is not None else None
     return _normalize_shell(run) if isinstance(run, str) else None
 
 
-def _bazel_build_math_env(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
+def _bazel_build_math_env(workflow: dict[str, Any], job_id: str, *, before_step: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The build step's EFFECTIVE `env:` -- the workflow-level, job-level,
     and step-level `env:` mappings merged in GitHub Actions' own override
     order (step wins over job wins over workflow), not just the step's own
@@ -393,7 +415,7 @@ def _bazel_build_math_env(workflow: dict[str, Any], job_id: str) -> dict[str, An
     level sets any env -- `None` only when the step itself is missing, so
     a caller can still distinguish "no step" from "step with no env" the
     same way `_bazel_build_math_command` does."""
-    step = _bazel_build_math_step(workflow, job_id)
+    step = _bazel_build_math_step(workflow, job_id, before_step=before_step)
     if step is None:
         return None
     workflow_env = workflow.get("env") if isinstance(workflow, dict) else None
@@ -710,8 +732,8 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # at. A candidate build silently gaining an ABI-affecting flag (e.g.
     # `--config=asan`, an extra `--cxxopt`) still produces the identical
     # output path and would pass every check above unnoticed.
-    dump_build_cmd = _bazel_build_math_command(baseline_wf, "collect")
-    scan_build_cmd = _bazel_build_math_command(abi_scan_wf, "scan")
+    dump_build_cmd = _bazel_build_math_command(baseline_wf, "collect", before_step=dump_step)
+    scan_build_cmd = _bazel_build_math_command(abi_scan_wf, "scan", before_step=scan_step)
     if dump_build_cmd is None:
         errors.append(f"{BASELINE_PATH}: could not find a 'bazel build //:math' step in job 'collect'")
     if scan_build_cmd is None:
@@ -731,8 +753,8 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
     # comparing the command string would miss this. Real, adjacent shape
     # already in abi-scan.yml: its own L4-replay diagnostic rebuild sets
     # `env: {CC: clang-18, CXX: clang++-18}` on this identical command.
-    dump_build_env = _bazel_build_math_env(baseline_wf, "collect")
-    scan_build_env = _bazel_build_math_env(abi_scan_wf, "scan")
+    dump_build_env = _bazel_build_math_env(baseline_wf, "collect", before_step=dump_step)
+    scan_build_env = _bazel_build_math_env(abi_scan_wf, "scan", before_step=scan_step)
     if dump_build_env is not None and scan_build_env is not None and dump_build_env != scan_build_env:
         errors.append(
             "BUILD_EVIDENCE_ARTIFACT_BUILD_ENV_MISMATCH: baseline.yml's and abi-scan.yml's "

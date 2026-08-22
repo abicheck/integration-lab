@@ -501,6 +501,38 @@ class TestCheck:
         errors = check(dump_wf, _scan_wf())
         assert any("could not find a 'bazel build //:math' step in job 'collect'" in e for e in errors)
 
+    def test_a_second_build_inserted_before_the_canonical_step_is_caught(self):
+        # Fresh evidence (Codex review): a second `bazel build //:math`
+        # inserted between the existing build and the canonical Action
+        # step is the one that actually determines the candidate artifact
+        # -- selecting the FIRST match in the job would keep comparing
+        # the unchanged, now-stale first build and miss the drift.
+        scan_wf = _scan_wf()
+        steps = scan_wf["jobs"]["scan"]["steps"]
+        canonical_index = next(i for i, s in enumerate(steps) if s.get("id") == "scan")
+        steps.insert(
+            canonical_index,
+            {"name": "Rebuild with a drift", "run": 'bazel build //:math --config=asan --disk_cache="$HOME/.cache/bazel-disk"'},
+        )
+        errors = check(_dump_wf(), scan_wf)
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_MISMATCH" in e for e in errors)
+
+    def test_a_later_diagnostic_rebuild_after_the_canonical_step_is_ignored(self):
+        # The converse: abi-scan.yml's own real L4-replay diagnostic
+        # rebuild runs AFTER the canonical `id: scan` step, not before
+        # it, and must never be mistaken for the artifact-defining build
+        # -- even when it carries a real, differing recipe.
+        scan_wf = _scan_wf()
+        steps = scan_wf["jobs"]["scan"]["steps"]
+        steps.append(
+            {
+                "name": "Rebuild candidate shared library with Bazel (clang-18, for L4 replay)",
+                "env": {"CC": "clang-18", "CXX": "clang++-18"},
+                "run": 'bazel build //:math --disk_cache="$HOME/.cache/bazel-disk"',
+            }
+        )
+        assert check(_dump_wf(), scan_wf) == []
+
     def test_evidence_pack_queries_agreeing_is_clean(self):
         assert check(_dump_wf(), _scan_wf()) == []
 
@@ -616,6 +648,25 @@ class TestCheck:
     def test_matching_extras_reinstalls_is_clean(self):
         extras_install = "pip install --force-reinstall abicheck[foo]==1.2.3"
         assert check(_dump_wf(abicheck_pip_run=extras_install), _scan_wf(abicheck_pip_run=extras_install)) == []
+
+    def test_evidence_pack_pip_pin_drift_via_pip3_reinstall_is_caught(self):
+        # Fresh evidence (Codex review): `pip3 install ...` is an equally
+        # real, documented entry point -- a reinstall spelled that way
+        # went completely unrecognized, so the shared earlier `pip
+        # install` line kept being compared as if it were still current.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        pip3_reinstall = (
+            "pip3 install --force-reinstall "
+            "git+https://github.com/abicheck/abicheck.git@deadbeef0000000000000000000000000000000"
+        )
+        drifted = f"{shared_first_install}\n{pip3_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_matching_pip3_installs_is_clean(self):
+        pip3_install = "pip3 install --quiet \"abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3\""
+        assert check(_dump_wf(abicheck_pip_run=pip3_install), _scan_wf(abicheck_pip_run=pip3_install)) == []
 
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
