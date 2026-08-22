@@ -3673,14 +3673,14 @@
       "endianness": "",
       "frontend_context_kind": "",
       "header_sequence": "[\"<single-header>\"]",
-      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\", \"1:ext:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", \"2:hdrs:[[\\\"math.h\\\", \\\"include/abicheck_lab/math.h\\\"]]\", \"3:hdrs:[[\\\"math.h\\\", \\\"math.h\\\"]]\"]",
+      "include_sequence": "[\"0:hdrs:[[\\\"math.h\\\", \\\"abicheck_lab/math.h\\\"]]\", \"1:ext:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\", \"2:hdrs:[[\\\"math.h\\\", \\\"include/abicheck_lab/math.h\\\"]]\"]",
       "language_standard": "c++:c++17",
       "macro_ops": "[[\"D\", \"__DATE__=\\\"redacted\\\"\"], [\"D\", \"__TIMESTAMP__=\\\"redacted\\\"\"], [\"D\", \"__TIME__=\\\"redacted\\\"\"], [\"U\", \"_FORTIFY_SOURCE\"]]",
       "pass_through_flags": "[]",
       "pointer_width": "",
       "target_triple": ""
     },
-    "profile_fingerprint": "sha256:676186eb42162436146c95d22e410f24597db763c5f7e92ea17806715f2985ba",
+    "profile_fingerprint": "sha256:9797ce30de164f970f8419afbf3f79c475bba8ab6aef7289fd2f86f4d3d503b8",
     "scope_fields": {
       "headers": "[\"<single-header>\"]",
       "public_header_dirs": "[\"<single-header-dir>\"]",
