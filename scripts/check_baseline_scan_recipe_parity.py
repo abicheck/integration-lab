@@ -232,7 +232,25 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # comparison target) is unaffected either way. Bounded to one step's
 # `run:` text (never spans across steps), so the blast radius of the
 # imprecision is small.
-_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
+_PIP_VCS_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
+
+# A second, independent form pip accepts identically: a plain requirement
+# specifier naming the package on an index (`pip install abicheck`,
+# `pip install --force-reinstall abicheck==1.2.3`) -- no VCS URL at all
+# (Codex review, fresh evidence: `_PIP_VCS_INSTALL_RE` requires `git+`, so
+# a later reinstall from PyPI/an index went completely unmatched, and
+# `_abicheck_pip_pin` kept comparing the stale shared VCS install).
+# `(?!\s*@|/|\.git)` right after the bare word is load-bearing: without
+# it, this pattern would also match the "abicheck" package-name token
+# *inside* a PEP 508 VCS line (`abicheck @ git+...`) or the org/repo-name
+# segments of the URL itself, producing a spurious, truncated match
+# alongside the real VCS match for the same line -- rejecting a
+# following ` @`/`/`/`.git` excludes exactly those three shapes, leaving
+# only a genuine bare requirement specifier.
+_PIP_REQ_INSTALL_RE = re.compile(
+    r"pip install\b.*?\babicheck\b(?!\s*@|/|\.git)(?:\s*(?:==|>=|<=|~=|!=|>|<)\s*[^\s\"']+)?",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _normalize_shell(text: str) -> str:
@@ -274,17 +292,23 @@ def _abicheck_pip_pin(workflow: dict[str, Any], job_id: str) -> str | None:
     independent of the scanner Action's own `uses: abicheck/abicheck@<sha>`
     pin checked above.
 
-    Uses `finditer` and takes the LAST match, not the first (Codex review,
-    fresh evidence): a step containing two abicheck installs on separate
-    lines has its *later* one win (pip install reinstalls/overwrites), so
-    a `.search()`-based first match would keep comparing a stale earlier
-    pin while the ref that actually runs the evidence-pack helper script
-    -- the later one -- went unchecked."""
+    Uses `finditer` and takes the LAST match (by start position), not the
+    first (Codex review, fresh evidence): a step containing two abicheck
+    installs on separate lines has its *later* one win (pip install
+    reinstalls/overwrites), so a `.search()`-based first match would keep
+    comparing a stale earlier pin while the ref that actually runs the
+    evidence-pack helper script -- the later one -- went unchecked.
+    Matches from both `_PIP_VCS_INSTALL_RE` and `_PIP_REQ_INSTALL_RE` are
+    merged before picking the last one, since either install form can be
+    the effective, final one."""
     step = _find_step(workflow, job_id, step_id="abicheck_pip")
     run = step.get("run") if isinstance(step, dict) else None
     if not isinstance(run, str):
         return None
-    matches = list(_PIP_INSTALL_RE.finditer(run))
+    matches = sorted(
+        (*_PIP_VCS_INSTALL_RE.finditer(run), *_PIP_REQ_INSTALL_RE.finditer(run)),
+        key=lambda m: m.start(),
+    )
     return _normalize_shell(matches[-1].group(0)) if matches else None
 
 
@@ -309,7 +333,7 @@ def _bazel_pack_query_inputs(workflow: dict[str, Any], job_id: str) -> dict[str,
 _BAZEL_BUILD_MATH_RE = re.compile(r"^\s*bazel build //:math\b")
 
 
-def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | None:
+def _bazel_build_math_step(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
     """The job's own `bazel build //:math ...` step that produces
     `bazel-bin/libmath.so` -- the literal build recipe behind
     `new-library`. Neither canonical job gives this step an `id`, so it's
@@ -322,7 +346,15 @@ def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | No
     `--config=asan` or an extra `--cxxopt`, would still produce
     `bazel-bin/libmath.so` and pass every other check here, even though
     the scan and baseline artifacts were no longer built the same way).
-    Returns `None` if the job has no such step."""
+    Returns the whole step dict (`run:` and `env:` both live here) --
+    a second, real-world drift this same finding's review round named:
+    the job's own L4-replay diagnostic rebuild
+    (`abi-scan.yml`'s "Rebuild candidate shared library... (clang-18,
+    for L4 replay)") sets `env: {CC: clang-18, CXX: clang++-18}` on the
+    identical `bazel build //:math` command text -- comparing only the
+    normalized `run:` string would miss an equivalent env-only drift
+    silently added to the *canonical* build step. Returns `None` if the
+    job has no such step."""
     jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
     job = jobs.get(job_id) if isinstance(jobs, dict) else None
     if not isinstance(job, dict):
@@ -332,8 +364,26 @@ def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | No
             continue
         run = step.get("run")
         if isinstance(run, str) and _BAZEL_BUILD_MATH_RE.match(run):
-            return _normalize_shell(run)
+            return step
     return None
+
+
+def _bazel_build_math_command(workflow: dict[str, Any], job_id: str) -> str | None:
+    step = _bazel_build_math_step(workflow, job_id)
+    run = step.get("run") if step is not None else None
+    return _normalize_shell(run) if isinstance(run, str) else None
+
+
+def _bazel_build_math_env(workflow: dict[str, Any], job_id: str) -> dict[str, Any] | None:
+    """The build step's own `env:` mapping, or `{}` if the step exists but
+    sets none -- `None` only when the step itself is missing, so a caller
+    can still distinguish "no step" from "step with no env" the same way
+    `_bazel_build_math_command` does."""
+    step = _bazel_build_math_step(workflow, job_id)
+    if step is None:
+        return None
+    env = step.get("env")
+    return env if isinstance(env, dict) else {}
 
 
 def _bazel_pack_script(workflow: dict[str, Any], job_id: str) -> str | None:
@@ -652,6 +702,22 @@ def check(baseline_wf: dict[str, Any], abi_scan_wf: dict[str, Any]) -> list[str]
             f"abi-scan.yml: {scan_build_cmd!r}. The baseline and the canonical scan must build "
             "bazel-bin/libmath.so with the identical Bazel invocation, or the two artifacts "
             "are not the same recipe even when every other field agrees."
+        )
+
+    # The build step's own `env:` mapping (Codex review, fresh evidence):
+    # a candidate build silently gaining CC/CXX (or any other toolchain-
+    # selecting env var) still leaves the `run:` text identical -- only
+    # comparing the command string would miss this. Real, adjacent shape
+    # already in abi-scan.yml: its own L4-replay diagnostic rebuild sets
+    # `env: {CC: clang-18, CXX: clang++-18}` on this identical command.
+    dump_build_env = _bazel_build_math_env(baseline_wf, "collect")
+    scan_build_env = _bazel_build_math_env(abi_scan_wf, "scan")
+    if dump_build_env is not None and scan_build_env is not None and dump_build_env != scan_build_env:
+        errors.append(
+            "BUILD_EVIDENCE_ARTIFACT_BUILD_ENV_MISMATCH: baseline.yml's and abi-scan.yml's "
+            f"'bazel build //:math' steps set different env -- baseline.yml: {dump_build_env!r}, "
+            f"abi-scan.yml: {scan_build_env!r}. A toolchain-selecting variable (CC/CXX/etc.) "
+            "changes the build even when the command text is identical."
         )
 
     dump_pack_script = _bazel_pack_script(baseline_wf, "collect")

@@ -445,6 +445,31 @@ class TestCheck:
     def test_matching_artifact_build_commands_is_clean(self):
         assert check(_dump_wf(), _scan_wf()) == []
 
+    def test_artifact_build_env_drift_is_caught(self):
+        # Fresh evidence (Codex review): a build step silently gaining a
+        # toolchain-selecting env var (CC/CXX) leaves the `run:` text
+        # identical, so only comparing the command string would miss it.
+        # abi-scan.yml's own L4-replay diagnostic rebuild already sets
+        # exactly this shape (env: {CC: clang-18, CXX: clang++-18}) on
+        # the identical command, elsewhere in the same job.
+        scan_wf = _scan_wf()
+        for step in scan_wf["jobs"]["scan"]["steps"]:
+            if str(step.get("run", "")).startswith("bazel build //:math"):
+                step["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+                break
+        errors = check(_dump_wf(), scan_wf)
+        assert any("BUILD_EVIDENCE_ARTIFACT_BUILD_ENV_MISMATCH" in e for e in errors)
+
+    def test_matching_artifact_build_env_is_clean(self):
+        dump_wf = _dump_wf()
+        scan_wf = _scan_wf()
+        for wf, job_id in ((dump_wf, "collect"), (scan_wf, "scan")):
+            for step in wf["jobs"][job_id]["steps"]:
+                if str(step.get("run", "")).startswith("bazel build //:math"):
+                    step["env"] = {"CC": "clang-18", "CXX": "clang++-18"}
+                    break
+        assert check(dump_wf, scan_wf) == []
+
     def test_missing_artifact_build_step_is_reported(self):
         dump_wf = _dump_wf()
         dump_wf["jobs"]["collect"]["steps"] = [
@@ -522,6 +547,34 @@ class TestCheck:
         drifted = f"{shared_first_install}\n{continued_reinstall}"
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_drift_via_index_reinstall_is_caught(self):
+        # Fresh evidence (Codex review): pip accepts a plain requirement
+        # specifier naming the package on an index just as validly as a
+        # VCS URL -- `_PIP_VCS_INSTALL_RE` requires `git+`, so a later
+        # reinstall from PyPI/an index went completely unmatched and
+        # `_abicheck_pip_pin` kept comparing the stale shared VCS install.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        index_reinstall = "pip install --force-reinstall abicheck==1.2.3"
+        drifted = f"{shared_first_install}\n{index_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_evidence_pack_pip_pin_drift_via_bare_index_reinstall_is_caught(self):
+        # No version specifier at all -- still a real, valid install.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        index_reinstall = "pip install --force-reinstall abicheck"
+        drifted = f"{shared_first_install}\n{index_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
+    def test_a_shared_vcs_install_with_no_index_reinstall_is_clean(self):
+        # The bare-requirement pattern must not spuriously match inside a
+        # genuine, unchanged VCS install line -- confirms it doesn't fire
+        # on the "abicheck" tokens already present in a PEP 508 VCS URL.
+        assert check(_dump_wf(), _scan_wf()) == []
 
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
