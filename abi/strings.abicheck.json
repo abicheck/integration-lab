@@ -125,7 +125,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header://strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -143,7 +143,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header://strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -161,25 +161,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
-        },
-        {
-          "attrs": {},
-          "confidence": "high",
-          "conflicts": [],
-          "dst": "type://abicheck_lab::Joiner::Joiner",
-          "edge": "SOURCE_DECLARES",
-          "facts": [
-            {
-              "attrs": {},
-              "confidence": "high",
-              "producer": "header_ast_l2"
-            }
-          ],
-          "occurrences": [],
-          "provenance": "header_ast_l2",
-          "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header://strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {},
@@ -197,7 +179,25 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h"
+          "src": "header://strings_lib/include/abicheck_lab/strings.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "type://abicheck_lab::Joiner::Joiner",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header://strings_lib/include/abicheck_lab/strings.h"
         },
         {
           "attrs": {
@@ -406,9 +406,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "header:///home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+          "id": "header://strings_lib/include/abicheck_lab/strings.h",
           "kind": "header",
-          "label": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
+          "label": "strings_lib/include/abicheck_lab/strings.h",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -475,9 +475,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Joiner::Joiner",
+          "id": "type://abicheck_lab::Joiner",
           "kind": "record_type",
-          "label": "abicheck_lab::Joiner::Joiner",
+          "label": "abicheck_lab::Joiner",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -498,9 +498,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Joiner",
+          "id": "type://abicheck_lab::Joiner::Joiner",
           "kind": "record_type",
-          "label": "abicheck_lab::Joiner",
+          "label": "abicheck_lab::Joiner::Joiner",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -806,7 +806,7 @@
     "relro": "full",
     "rpath": "",
     "runpath": "",
-    "soname": "",
+    "soname": "libstrings.so",
     "symbols": [
       {
         "binding": "global",
@@ -928,8 +928,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:29",
+      "source_header": "strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "strings_lib/include/abicheck_lab/strings.h:29",
       "visibility": "public",
       "vtable_index": null
     },
@@ -981,8 +981,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:30",
+      "source_header": "strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "strings_lib/include/abicheck_lab/strings.h:30",
       "visibility": "public",
       "vtable_index": null
     },
@@ -1015,8 +1015,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:33",
+      "source_header": "strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "strings_lib/include/abicheck_lab/strings.h:33",
       "visibility": "public",
       "vtable_index": null
     }
@@ -1064,8 +1064,8 @@
       "origin": "public_header",
       "qualified_name": "abicheck_lab::Joiner",
       "size_bits": null,
-      "source_header": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/strings_lib/include/abicheck_lab/strings.h:27",
+      "source_header": "strings_lib/include/abicheck_lab/strings.h",
+      "source_location": "strings_lib/include/abicheck_lab/strings.h:27",
       "virtual_bases": [],
       "vptr_offset_bits": null,
       "vtable": []
