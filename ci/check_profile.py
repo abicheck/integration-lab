@@ -1,30 +1,48 @@
 #!/usr/bin/env python3
-"""PR2: run a real ABI comparison against one profile's staged build output
+"""PR2 (extended by a later PR -- roadmap.md item 1): run a real ABI
+comparison against one profile's staged build output
 (`abicheck-build-<profile-id>/`, produced by `ci/run_profile.py`/
 `ci/emit_build_output.py`) and against a committed baseline
 (`abi/profiles/<profile-id>/<target>.abicheck.json`).
 
-## What this actually is, and what it is not
+## Two mechanisms, by backend
 
-The real `abicheck` scanner (`pip install abicheck @ git+https://github.com/
-abicheck/abicheck.git@...`, the same package `.github/workflows/abi-scan.yml`
-installs) is not available in this sandbox -- there is no network access here
-(verified: `pip download` against that same git+https URL times out with no
-response), and nothing under `tools/abicheck/` is a vendored copy of the
-scanner itself. `tools/abicheck/facts.bzl`/`BUILD.bazel` are Bazel-only
-*glue* that feeds a source-fact pack to the real, externally-installed
-`abicheck` CLI (see that CLI's `--build-info` flag) -- they do not implement
-comparison logic on their own, and they only apply to Bazel-built targets in
-the first place.
+**cmake and make backends: the real `abicheck` scanner.** `ci/real_scan.py`
+runs an actual `abicheck dump --depth source` (using the profile's own
+`compile_commands.json` as `--build-info`, filtered to the target's own
+translation unit -- see that module's own docstring for why the filtering
+is necessary) and `abicheck compare` between two such snapshots. This is
+the real, source-level scanner -- the same package `.github/workflows/
+abi-scan.yml` installs for the Bazel profile -- not a reimplementation.
+`build_baseline()` embeds the raw dump snapshot as `abicheck_snapshot`;
+`compare_profile()` (via `_apply_real_scan_verdict`) runs a fresh dump of
+the candidate and a real `abicheck compare` against the baseline's
+embedded snapshot, then overrides this report's `verdict`/`detail` with
+the real scanner's own verdict (mapped through `ci/real_scan.py`'s
+`_VERDICT_MAP`). A baseline that predates this integration (no embedded
+`abicheck_snapshot`) or a real-scanner invocation failure both fail closed
+to `NOT_COMPARABLE` -- never silently falls back to the mechanism
+described below as if it were equivalent evidence.
 
-So this script is deliberately NOT a reimplementation of, wrapper around, or
+**bazel backend: the nm/readelf mechanism below, unchanged.** The Bazel
+profile already has its own real, required ABI gate elsewhere
+(`abi-scan.yml`'s `scan` job, using Bazel's own `cquery`/`aquery` evidence
+pack), so this shadow/advisory workflow's own Bazel leg keeps the
+lightweight mechanism this file originally shipped with -- it was never
+meant to be Bazel's authoritative gate, only a same-shape advisory signal
+alongside the other two profiles.
+
+## What the nm/readelf mechanism (still used for `bazel`) actually is, and
+is not
+
+This mechanism is deliberately NOT a reimplementation of, wrapper around, or
 stand-in claiming to be `abicheck`. It is a small, honest, source-of-truth
 ABI *compatibility signal* built directly from the ELF binary and toolchain
 utilities every one of this lab's runners already has (`nm`, `readelf` --
-part of `binutils`, present on every Ubuntu runner and this sandbox, no
-install step needed): a diff of each staged shared library's **dynamic
-symbol table** (the same table the real `abicheck` also ultimately anchors
-its binary-level evidence to) between a committed baseline and this profile's
+part of `binutils`, present on every Ubuntu runner, no install step
+needed): a diff of each staged shared library's **dynamic symbol table**
+(the same table the real `abicheck` also ultimately anchors its
+binary-level evidence to) between a committed baseline and this profile's
 freshly-built candidate, plus a content-hash diff of the target's staged
 public headers.
 
@@ -83,8 +101,15 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+CI_DIR = Path(__file__).resolve().parent
+if str(CI_DIR) not in sys.path:
+    sys.path.insert(0, str(CI_DIR))
+
+import real_scan  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -93,10 +118,42 @@ BASELINE_KIND = "abicheck.lab-symbol-baseline/v1"
 REPORT_KIND = "abicheck.lab-symbol-report/v1"
 
 MECHANISM_NOTE = (
-    "nm/readelf dynamic-symbol-table + public-header-digest diff (lab-only "
-    "simplification -- NOT the full abicheck source-level ABI scanner, which "
-    "is unavailable in this sandbox; see this script's own module docstring "
-    "and UPSTREAM_TO_ABICHECK.md's PR2 entry)"
+    "nm/readelf dynamic-symbol-table + public-header-digest diff -- the "
+    "bazel backend's own mechanism (real abicheck now runs for cmake/make; "
+    "see this module's own docstring). A lab-only simplification, not the "
+    "full abicheck source-level ABI scanner -- see UPSTREAM_TO_ABICHECK.md's "
+    "PR2 entry for what this simplifies versus that scanner."
+)
+
+# The mechanism string _apply_real_scan_verdict() records for cmake/make
+# backends -- module-level so every one of its return paths (the two
+# fail-closed branches included) can record the same accurate mechanism,
+# not just the successful-compare path. A report's own "mechanism" field
+# is read downstream (ci/emit_profile_receipt.py's scanner.mechanism); a
+# cmake/make report that fails closed to NOT_COMPARABLE should still say
+# the real scanner was the mechanism that was SUPPOSED to run, not
+# silently leave the initial nm/readelf MECHANISM_NOTE in place as if
+# that lighter mechanism had produced the result (Codex review, PR #25:
+# "Record the real-scanner mechanism on failed comparisons").
+REAL_SCAN_MECHANISM_NOTE = (
+    "real abicheck dump/compare (--depth source, compile_commands.json "
+    "--build-info, filtered to this target's own translation unit -- see "
+    "ci/real_scan.py)"
+)
+
+# Used only for the documented bear-absent degrade (build_baseline()'s
+# _bear_legitimately_absent()) -- distinct from REAL_SCAN_MECHANISM_NOTE,
+# which claims the real scanner actually ran. Here it deliberately didn't:
+# the nm/readelf-derived verdict facts.update() already wrote earlier in
+# compare_profile() is what's being reported (Codex review, PR #25: "Keep
+# Bear-less baselines comparable").
+BEAR_ABSENT_MECHANISM_NOTE = (
+    "nm/readelf dynamic-symbol-table + public-header-digest diff -- bear is not "
+    "installed on this runner (documented, non-failing degrade for the make "
+    "backend; see ci/profiles.yaml's coverage.require_compile_commands), so no "
+    "real abicheck snapshot was available on at least one side of this "
+    "comparison; falling back to the same nm/readelf mechanism the bazel "
+    "profile always uses"
 )
 
 # ELF/linker-internal dynamic symbols that show up in every shared object's
@@ -238,6 +295,10 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _header_root_prefix(target: str) -> str:
+    return "strings_lib/include" if target == "strings" else "include"
+
+
 def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], target: str) -> Dict[str, str]:
     """{staged-relative header path: sha256} for every header staged under
     this target's own header root(s) -- `include/` for `math`,
@@ -247,8 +308,7 @@ def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], t
     layout (verified against `ci/profiles.yaml` and the real repo tree),
     not a generic inference.
     """
-    root_prefix = "strings_lib/include" if target == "strings" else "include"
-    headers_dir = staged_dir / "headers" / root_prefix
+    headers_dir = staged_dir / "headers" / _header_root_prefix(target)
     result: Dict[str, str] = {}
     if not headers_dir.is_dir():
         # A missing header root used to return {} on both the baseline and
@@ -288,17 +348,114 @@ def build_baseline(profile_id: str, target: str, staged_dir: Path) -> Dict[str, 
         )
 
     library_path = _target_library_path(staged_dir, build_output, target)
-    return {
+    backend = build_output.get("profile", {}).get("backend")
+    baseline: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": BASELINE_KIND,
         "profile_id": profile_id,
         "target": target,
-        "backend": build_output.get("profile", {}).get("backend"),
+        "backend": backend,
         "library_filename": library_path.name,
         "soname": _soname(library_path),
         "dynamic_symbols": dynamic_symbols(library_path),
         "public_headers": _public_headers_for_target(staged_dir, build_output, target),
     }
+
+    if backend in real_scan.REAL_SCAN_BACKENDS:
+        if _bear_legitimately_absent(backend, build_output):
+            # make.py's own verify_environment()/collect_evidence() treat a
+            # missing `bear` as a documented, non-failing degrade (PR1 item
+            # 5; ci/profiles.yaml's `coverage.require_compile_commands:
+            # false` for the make-bear profile makes the same tolerance
+            # explicit for the coverage gate). Before this real-scanner
+            # wiring landed, that runner still got a baseline -- just an
+            # nm/readelf-only one. Unconditionally requiring
+            # compile_commands.json here would instead crash `dump` outright
+            # on exactly the configuration this backend was built to
+            # tolerate (Codex review, PR #25: "a configuration explicitly
+            # supported by the profile can build successfully but can no
+            # longer run its ABI signal"). Degrade the same way: no
+            # abicheck_snapshot, nm/readelf fields above remain the baseline.
+            baseline["abicheck_snapshot"] = None
+            baseline["abicheck_snapshot_skipped_reason"] = (
+                "bear not installed on this runner -- compile_commands.json was not "
+                "generated (optional evidence for the make backend; see "
+                "ci/profiles.yaml's coverage.require_compile_commands). Real-scan "
+                "snapshot omitted; nm/readelf fields above are this baseline's only "
+                "evidence, same as before the real scanner was wired in."
+            )
+        else:
+            # Real scanner path (roadmap.md item 1): embed an actual
+            # `abicheck dump --depth source` snapshot alongside the existing
+            # nm/readelf fields above -- the latter stay for
+            # backward-compatible receipt/coverage fields (candidate_soname,
+            # symbols diff, etc.), the former is what compare_profile() below
+            # actually compares for these two backends. A failure here (that
+            # ISN'T the documented bear-absent case just handled above) fails
+            # `dump` closed (raises, so no baseline is written at all) rather
+            # than silently committing a baseline with no real evidence for a
+            # backend that's supposed to have it (design doc section 3.9, "no
+            # magic fallbacks").
+            baseline["abicheck_snapshot"] = _real_dump_for_target(profile_id, target, staged_dir, build_output)
+
+    return baseline
+
+
+def _bear_legitimately_absent(backend: str, build_output: Dict[str, Any]) -> bool:
+    """True only for the make backend's own documented "bear isn't
+    installed" degrade (make.py's collect_evidence(), verify_environment()) --
+    never for a genuine compile_commands.json generation failure on a runner
+    where bear IS installed (that's still a real signal something's broken,
+    matching ci/check_profile_coverage.py's identical tool_absent
+    distinction for the same evidence)."""
+    if backend != "make":
+        return False
+    evidence = build_output.get("evidence")
+    backend_evidence = evidence.get("backend_evidence") if isinstance(evidence, dict) else None
+    if not isinstance(backend_evidence, dict):
+        return False
+    if backend_evidence.get("compile_commands_present", True):
+        return False
+    note = backend_evidence.get("note") or ""
+    return note.startswith("bear not installed")
+
+
+def _real_dump_for_target(
+    profile_id: str, target: str, staged_dir: Path, build_output: Dict[str, Any]
+) -> Dict[str, Any]:
+    library_path = _target_library_path(staged_dir, build_output, target)
+    header_dir = staged_dir / "headers" / _header_root_prefix(target)
+    compile_db = staged_dir / "evidence" / "compile_commands.json"
+    # A deterministic path under staged_dir, NOT a random tempfile.mkdtemp()
+    # directory: the filtered compile-db's own path is recorded verbatim
+    # inside the dumped snapshot (manifest.inputs.build_info,
+    # manifest.extractors[].inputs[]) -- a random temp-dir name there would
+    # make two dumps of the identical, unchanged source differ from each
+    # other for no reason other than which random directory happened to
+    # hold the filtered database that run, defeating
+    # ci/apply_profile_baselines.py's own byte-for-byte "did the ABI
+    # actually change" comparison (Codex review, PR #25, discovered while
+    # verifying the fix for a related finding -- two same-path rebuilds of
+    # identical source produced non-identical embedded snapshots because
+    # of exactly this). ci/real_scan.py's own normalize() call (via
+    # scripts/normalize_baseline.py) still handles every OTHER volatile
+    # field (timestamps, mtimes); this one is specific to this module's
+    # own plumbing, not something a general-purpose normalizer should have
+    # to know about.
+    tmp_path = staged_dir / "evidence" / f".real-scan-tmp-{target}"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    try:
+        filtered_db = real_scan.filter_compile_db_for_target(compile_db, target, tmp_path / "compile_commands.json")
+        return real_scan.dump_real_snapshot(
+            library_path=library_path,
+            header_dir=header_dir,
+            compile_db=filtered_db,
+            sources_root=REPO_ROOT,
+            version=f"{profile_id}-{target}",
+            out_path=tmp_path / "dump.json",
+        )
+    except real_scan.RealScanError as exc:
+        raise CheckProfileError(f"real abicheck dump failed for {profile_id}/{target}: {exc}") from exc
 
 
 def _index_by_name(symbols: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -357,6 +514,37 @@ def compare_profile(
         facts.update(
             verdict="NOT_COMPARABLE",
             detail=str(exc),
+            symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
+            public_headers_changed=[],
+        )
+        return facts
+
+    # Confirm the candidate's own backend matches the baseline's. Without
+    # this, a profile whose backend was migrated (e.g. cmake -> bazel)
+    # while keeping the same profile_id/target would still pass every
+    # identity check above (they only compare profile_id/target, not
+    # backend) -- but this is exactly the choice that decides which
+    # comparison mechanism runs below: real abicheck for cmake/make,
+    # nm/readelf for bazel. A baseline dumped under the real-scanner
+    # mechanism (with its own embedded abicheck_snapshot) compared against
+    # a candidate now built by bazel would silently fall through to the
+    # nm/readelf-only mechanism instead -- a source-level ABI break
+    # invisible to exported symbols could then pass as NO_CHANGE/COMPATIBLE
+    # even though the baseline's own backend never agreed to that weaker
+    # mechanism (Codex review, PR #25). A missing baseline "backend" field
+    # (baselines predating this field, or a hand-edited baseline) is not
+    # itself an error here -- older baselines simply don't have an opinion
+    # to contradict.
+    baseline_backend = baseline.get("backend")
+    candidate_backend = build_output.get("profile", {}).get("backend")
+    if baseline_backend is not None and baseline_backend != candidate_backend:
+        facts.update(
+            verdict="NOT_COMPARABLE",
+            detail=(
+                f"baseline was dumped for backend {baseline_backend!r}, but this staged build "
+                f"is backend {candidate_backend!r} -- refusing to compare across a backend change "
+                "with whichever mechanism the candidate's own backend would otherwise select"
+            ),
             symbols={"added": [], "removed": [], "changed": [], "unchanged_count": 0},
             public_headers_changed=[],
         )
@@ -535,6 +723,33 @@ def compare_profile(
         and not (library_path.parent / candidate_soname).exists()
     )
 
+    # Captured separately from the BREAKING branch's own detail_parts
+    # below (same three conditions, deliberately duplicated rather than
+    # threaded through): these are loadability facts about which files
+    # are physically staged on disk -- something a real `abicheck
+    # compare` structurally cannot see, since it only ever inspects the
+    # two snapshot files it's handed, not the staged directory around
+    # them (Codex review, PR #25). For cmake/make backends,
+    # _apply_real_scan_verdict() below must never let the real scanner's
+    # own verdict silently override or downgrade a loader-level break
+    # this mechanism already found independently -- it combines the two
+    # instead.
+    loader_detail_parts = []
+    if soname_changed:
+        loader_detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
+    if filename_changed:
+        loader_detail_parts.append(
+            f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
+        )
+    if soname_file_missing:
+        loader_detail_parts.append(
+            f"candidate's own embedded SONAME is {candidate_soname!r}, but no file named that exists "
+            f"alongside {library_path.name!r} in the staged output -- consumers linked against this "
+            "SONAME cannot resolve it at runtime"
+        )
+    loader_breaking = bool(loader_detail_parts)
+    loader_detail = "; ".join(loader_detail_parts)
+
     if removed or changed or soname_changed or filename_changed or soname_file_missing:
         verdict = "BREAKING"
         detail_parts = []
@@ -542,18 +757,11 @@ def compare_profile(
             detail_parts.append(f"{len(removed)} exported symbol(s) removed: {', '.join(removed)}")
         if changed:
             detail_parts.append(f"{len(changed)} exported symbol(s) changed type/size: {', '.join(c['name'] for c in changed)}")
-        if soname_changed:
-            detail_parts.append(f"SONAME changed: {baseline_soname!r} -> {candidate_soname!r}")
-        if filename_changed:
-            detail_parts.append(
-                f"library has no SONAME and its loader filename changed: {baseline_filename!r} -> {library_path.name!r}"
-            )
-        if soname_file_missing:
-            detail_parts.append(
-                f"candidate's own embedded SONAME is {candidate_soname!r}, but no file named that exists "
-                f"alongside {library_path.name!r} in the staged output -- consumers linked against this "
-                "SONAME cannot resolve it at runtime"
-            )
+        # Same three loader facts computed above (loader_detail_parts) --
+        # reused here rather than rebuilt from the same three conditions,
+        # so the two report paths can never drift into different detail
+        # text for the same fact (CodeRabbit review, PR #25).
+        detail_parts.extend(loader_detail_parts)
         detail = "; ".join(detail_parts)
     elif added:
         # Checked before the header-only NOT_COMPARABLE fallback below --
@@ -614,7 +822,140 @@ def compare_profile(
         # not just its path (Codex review, PR #20).
         candidate_library_sha256=_sha256_file(library_path),
     )
+
+    backend = build_output.get("profile", {}).get("backend")
+    if backend in real_scan.REAL_SCAN_BACKENDS:
+        _apply_real_scan_verdict(
+            facts, profile_id, target, staged_dir, build_output, baseline,
+            loader_breaking=loader_breaking, loader_detail=loader_detail,
+        )
+
     return facts
+
+
+def _combine_with_loader_break(verdict: str, detail: str, loader_breaking: bool, loader_detail: str) -> tuple[str, str]:
+    """A loader-level break (SONAME/filename change, or the SONAME-named
+    file missing from staged output) is invisible to a real `abicheck
+    compare` -- it only ever inspects the two snapshot files it's handed,
+    not which files are physically staged alongside them on disk (Codex
+    review, PR #25: a CMake candidate that drops its own `libmath.so.1`
+    companion while leaving `libmath.so` byte-identical would otherwise
+    have this checker's own independently-detected BREAKING verdict
+    silently replaced by whatever NO_CHANGE/COMPATIBLE the real scanner
+    reports for the snapshot content it CAN see). When loader_breaking is
+    set, the combined verdict is always BREAKING regardless of what
+    verdict/detail the real scanner produced -- the two signals are
+    combined in the detail text, never one silently discarding the other.
+    """
+    if not loader_breaking:
+        return verdict, detail
+    combined_detail = (
+        f"{loader_detail} (loader-level break, detected independently of the real "
+        f"scanner, which cannot see staged file layout); additionally: {detail}"
+    )
+    return "BREAKING", combined_detail
+
+
+def _apply_real_scan_verdict(
+    facts: Dict[str, Any],
+    profile_id: str,
+    target: str,
+    staged_dir: Path,
+    build_output: Dict[str, Any],
+    baseline: Dict[str, Any],
+    *,
+    loader_breaking: bool,
+    loader_detail: str,
+) -> None:
+    """Overrides facts["verdict"]/["detail"] with the real `abicheck
+    compare` result for cmake/make backends -- the nm/readelf-derived
+    fields facts.update() already wrote above (symbols/public_headers_changed/
+    etc.) are left in place as informational context, but the winning
+    verdict/detail for these two backends now comes from the real scanner,
+    not the symbol-table diff -- EXCEPT a loader-level break
+    (loader_breaking), which always wins (see _combine_with_loader_break).
+
+    Fails closed to NOT_COMPARABLE (never silently keeps the nm/readelf
+    verdict as if the real scanner had agreed), unless loader_breaking
+    overrides it to BREAKING, when:
+    - the baseline predates this integration (no embedded abicheck_snapshot
+      -- e.g. a committed baseline from before this PR); or
+    - the real dump/compare invocation itself fails (missing castxml, a
+      header-context ambiguity, etc.) -- see real_scan.py's own docstring.
+
+    The ONE exception to that fail-closed rule: EITHER side's missing
+    real-scan evidence being the documented, non-failing bear-absent
+    degrade (_bear_legitimately_absent()) is not the same as a baseline
+    that simply predates this integration or a genuine scanner failure.
+    That configuration is explicitly supported (ci/profiles.yaml's
+    coverage.require_compile_commands: false); forcing NOT_COMPARABLE for
+    it would mean it could never pass a check or receipt at all, on either
+    side of the fail-closed intent above (Codex review, PR #25: "Keep
+    Bear-less baselines comparable" -- and its own round-2 follow-up,
+    "Fall back when the candidate legitimately lacks Bear": the first fix
+    only covered the baseline's own bear-absent snapshot; a baseline
+    dumped WITH bear available compared against a candidate build on a
+    runner that legitimately lacks it hit this function's OTHER fail-closed
+    branch below unchanged). The nm/readelf-derived verdict facts.update()
+    already wrote earlier in compare_profile() -- which already folds in
+    the loader-break conditions itself -- is used as-is instead, whichever
+    side is missing it.
+    """
+    backend = build_output.get("profile", {}).get("backend")
+    candidate_bear_absent = _bear_legitimately_absent(backend, build_output)
+
+    baseline_snapshot = baseline.get("abicheck_snapshot")
+    if not isinstance(baseline_snapshot, dict) or candidate_bear_absent:
+        if "abicheck_snapshot_skipped_reason" in baseline or candidate_bear_absent:
+            facts.update(mechanism=BEAR_ABSENT_MECHANISM_NOTE)
+            return
+        verdict, detail = _combine_with_loader_break(
+            "NOT_COMPARABLE",
+            (
+                "this profile's committed baseline has no embedded abicheck_snapshot "
+                "(real-scanner integration) -- run `ci/check_profile.py dump` to "
+                "produce one; refusing to report a verdict derived only from the "
+                "nm/readelf symbol-table diff for a backend that should have real "
+                "scanner evidence"
+            ),
+            loader_breaking, loader_detail,
+        )
+        facts.update(verdict=verdict, detail=detail, mechanism=REAL_SCAN_MECHANISM_NOTE)
+        return
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="abicheck-real-scan-") as tmp:
+            tmp_path = Path(tmp)
+            baseline_path = tmp_path / "baseline.json"
+            baseline_path.write_text(json.dumps(baseline_snapshot), encoding="utf-8")
+            candidate_snapshot = _real_dump_for_target(profile_id, target, staged_dir, build_output)
+            candidate_path = tmp_path / "candidate.json"
+            candidate_path.write_text(json.dumps(candidate_snapshot), encoding="utf-8")
+            real_report = real_scan.compare_real_snapshots(baseline_path, candidate_path, tmp_path / "compare.json")
+    except (real_scan.RealScanError, CheckProfileError) as exc:
+        verdict, detail = _combine_with_loader_break(
+            "NOT_COMPARABLE",
+            f"real abicheck compare failed for {profile_id}/{target}: {exc}",
+            loader_breaking, loader_detail,
+        )
+        facts.update(verdict=verdict, detail=detail, mechanism=REAL_SCAN_MECHANISM_NOTE)
+        return
+
+    mapped = real_scan.map_verdict(real_report.get("verdict"))
+    detail = f"real abicheck compare verdict: {real_report.get('verdict')!r}"
+    if mapped["unmapped_abicheck_verdict"] is not None:
+        detail += " (not recognized by ci/real_scan.py's _VERDICT_MAP -- failing closed)"
+    elif isinstance(real_report.get("summary"), str) and real_report["summary"]:
+        detail += f" -- {real_report['summary']}"
+
+    verdict, detail = _combine_with_loader_break(mapped["verdict"], detail, loader_breaking, loader_detail)
+
+    facts.update(
+        verdict=verdict,
+        detail=detail,
+        mechanism=REAL_SCAN_MECHANISM_NOTE,
+        abicheck_report=real_report,
+    )
 
 
 def _write_json(doc: Dict[str, Any], out_path: Path) -> None:

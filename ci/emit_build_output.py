@@ -204,7 +204,7 @@ def stage_profile(
 
     doc: Dict[str, Any] = {
         "schema_version": 1,
-        "project": {"name": "abicheck-bazel-lab"},
+        "project": {"name": "abicheck-integration-lab"},
         "git": {"sha": _git_sha(repo_root), "ref": None},
         "profile": {
             "id": profile["id"],

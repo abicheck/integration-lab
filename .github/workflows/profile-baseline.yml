@@ -100,6 +100,40 @@ jobs:
         if: matrix.profile == 'linux-x86_64-gcc14-cxx17-cmake-ninja'
         run: sudo apt-get install -y ninja-build
 
+      # cmake/make legs' "Dump {math,strings} baseline" steps below now
+      # unconditionally invoke the real abicheck scanner for these two
+      # backends (ci/real_scan.py, via ci/check_profile.py's
+      # build_baseline()) -- both the scanner package and a compatible
+      # CastXML build are needed for that dump to succeed at all. Same
+      # pinned SHA and installer integration-shadow.yml/abi-scan.yml/
+      # scenarios.yml already use (Codex review, PR #25: without this
+      # step, both dump steps below fail on every push to main, the
+      # committed cmake/make baselines can never acquire an
+      # abicheck_snapshot, and every subsequent PR comparison for those
+      # two profiles stays NOT_COMPARABLE forever).
+      # Looked up from ci/profiles.yaml's own `backend` field at runtime,
+      # not matched against this matrix leg's exact profile id -- see
+      # integration-shadow.yml's identical step and its own comment
+      # (Codex review, PR #25) for why: a hardcoded profile-id predicate
+      # silently skips this install the moment a third cmake/make profile
+      # is added to ci/profiles.yaml, even though the generic matrix
+      # above would select and build it.
+      - name: Install real abicheck scanner + pinned CastXML (cmake/make backends only)
+        env:
+          PROFILE_ID: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          backend="$(python3 ci/print_profile_backend.py --profile-id "$PROFILE_ID")"
+          if [ "$backend" = "cmake" ] || [ "$backend" = "make" ]; then
+            pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+            curl --proto '=https' --tlsv1.2 -fsSL \
+              --output "$RUNNER_TEMP/install-castxml.sh" \
+              "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+            bash "$RUNNER_TEMP/install-castxml.sh"
+          else
+            echo "profile '$PROFILE_ID' is backend '$backend' -- real scanner not needed"
+          fi
+
       - name: Build and stage this profile
         id: run_profile
         shell: bash

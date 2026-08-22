@@ -28,22 +28,31 @@ get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 # ---- math -------------------------------------------------------------
 # Mirrors BUILD.bazel's `math` cc_binary(linkshared = True): same
 # src/math.cc, same public header include/abicheck_lab/math.h.
+#
+# No SOVERSION/VERSION set, and NO_SONAME is left at its CMake default
+# (FALSE): CMake gives a shared library target an SONAME equal to its own
+# OUTPUT_NAME by default when neither SOVERSION nor NO_SONAME is set --
+# verified directly against a real local build (`readelf -d
+# libmath.so | grep SONAME` -> "libmath.so"), no versioned symlink
+# involved. Deliberately NOT using SOVERSION/VERSION here: that would
+# produce a *different* SONAME (libmath.so.1) than Bazel's and Make's own
+# builds embed (see BUILD.bazel's/Makefile's own linkopts/-Wl,-soname
+# comments) -- all three build systems need the identical SONAME string
+# for cross_build_equivalence (ci/compare_build_outputs.py) to actually
+# agree, not just each independently "have a SONAME".
 add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
-    SOVERSION 1
-    VERSION 1.0.0
 )
 
 # ---- strings ------------------------------------------------------------
 # Mirrors strings_lib/BUILD.bazel's `strings` cc_binary(linkshared = True).
+# CMake's default SONAME (== OUTPUT_NAME) -- same reasoning as `math` above.
 add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
-    SOVERSION 1
-    VERSION 1.0.0
 )
 
 # ---- consumer_app ---------------------------------------------------------

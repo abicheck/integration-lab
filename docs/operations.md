@@ -164,3 +164,77 @@ kept open as reusable acceptance cases rather than merged or closed. Do not
 treat an old, open PR with a "breaking" or "compatible" title as
 abandoned work — check whether it's referenced as a scenario or test case
 before closing it.
+
+## Repository transfer readiness checklist
+
+The repository already lives at `abicheck/integration-lab`; this section
+is the checklist for whoever moves it again (a fork consolidation, an org
+rename, or an actual GitHub "Transfer ownership") without silently
+breaking a hard-coded assumption. None of these items *perform* a
+transfer — see the top-level design doc's explicit non-goal against
+transferring a repository as part of a code-only PR.
+
+- [ ] `ci/emit_build_output.py`'s `project.name` and
+  `scripts/merge_abicheck_facts.py`'s `created_by` string are cosmetic
+  provenance labels, not comparability inputs — update them to match
+  the new repository slug, but they do not need to match any git remote
+  at runtime.
+- [ ] `scripts/normalize_baseline.py --repo-root-marker` defaults to the
+  checkout directory name (`integration-lab`) so absolute paths recorded
+  during `dump` get stripped consistently. If the repository directory
+  name changes (a rename, not just an org move), update the default and
+  regenerate every committed baseline
+  (`abi/*.abicheck.json`, `abi/profiles/*/*.abicheck.json`) — a stale
+  marker doesn't break comparability, it just leaves host-specific
+  absolute-path fragments un-stripped in freshly generated snapshots.
+  `ci/real_scan.py`'s own marker (used for the cmake/make profiles'
+  embedded `abicheck_snapshot`) needs nothing here: it's derived from
+  `REPO_ROOT.name` at runtime, not a second hardcoded copy of this
+  default, so it always matches the actual checkout directory on its own
+  (Codex review, PR #25 — this was a real second place to forget on a
+  rename before that fix).
+- [ ] Grep for the literal old slug — both `<old-org>/<old-repo>` (e.g.
+  `abicheck/bazel-lab`) AND the bare old repo name by itself (e.g.
+  `abicheck-bazel-lab`, which appears with no org prefix in `ci/schemas/
+  *.json`'s own `$id`/`title` fields) — before closing out a transfer:
+  ```shell
+  git grep -ln '<old-org>/<old-repo>' ; git grep -ln '<old-repo-bare-name>'
+  ```
+  `git grep`, not a plain recursive `grep -r . .` -- the latter descends
+  into `.git` itself (`-r`/`--recursive` has no notion of tracked vs.
+  untracked, and `.git/FETCH_HEAD`/`.git/config`/packed refs legitimately
+  retain the old remote's name after a transfer) and reports that stale
+  Git-internal metadata as if it were a real reference needing a fix
+  (verified: `grep --help` confirms `-r` means recurse-into-directories,
+  full stop; excluding `.git` would need `--exclude-dir=.git` on top --
+  `git grep` already scopes to tracked files with none of that ceremony)
+  (Codex review, PR #25). Replace both placeholders with this
+  repository's actual previous identity before running. Either command
+  returning anything outside this file's own historical example above
+  and `UPSTREAM_TO_ABICHECK.md` (which intentionally keeps the lab
+  revision it audited under its original name for traceability) is a
+  real stale reference, not history — fix it.
+- [ ] Branch protection and required status checks (currently the Bazel
+  `abi-scan.yml` gate; see `docs/canonical-bazel-gate.md`) are GitHub
+  repository settings, not files — they do not migrate automatically on
+  a transfer and must be re-verified against the destination repository
+  afterward.
+- [ ] `.github/CODEOWNERS`, unlike branch protection, IS a tracked file
+  that migrates with the repository — a transfer to an organization
+  where the current owners (`@napetrov`, throughout that file) lack
+  write access leaves every protected path (`abi/**`, workflow files,
+  etc. — see that file itself) without an eligible reviewer, silently
+  defeating required code-owner review rather than erroring. Update its
+  owners as part of the transfer, not after, and confirm each still has
+  write access to the destination repository.
+- [ ] `canary.yml`'s `repository_dispatch: {types: [scanner-candidate]}`
+  trigger is the receiver side only — nothing in *this* repository sends
+  that event (confirmed: `release.yml` has no `repository_dispatch` step
+  at all). The sender lives in the upstream `abicheck/abicheck` workflow
+  and targets this repository's current `owner/repo` explicitly; that
+  upstream dispatch target is what needs updating when this repository's
+  slug changes, not anything on this side.
+- [ ] README badges and any status-check links that hard-code the
+  current `owner/repo` in their URL need updating alongside the actual
+  transfer, not before — updating them early just points a badge at a
+  repository that doesn't exist yet.

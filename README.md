@@ -16,10 +16,12 @@ be validated before other projects depend on them.
 > (Bazel + CMake + Make, all three staged and checked) exists, runs on
 > every PR, and can genuinely fail — but it is advisory only and does not
 > block merges yet. Its per-build-system compatibility check
-> (`ci/check_profile.py`) is also a lab-only ELF/header signal, not the real
-> ABICheck scanner, for **all three** profiles including Bazel — the real
-> ABICheck scanner only runs in the separate, canonical `abi-scan.yml` gate.
-> See [Honest current limitations](#honest-current-limitations) before relying
+> (`ci/check_profile.py`) now runs the REAL ABICheck scanner
+> (`abicheck dump`/`compare`, via `ci/real_scan.py`) for the CMake and Make
+> profiles; the Bazel profile's own leg of this same advisory workflow
+> still uses a lab-only ELF/header signal, since Bazel already has its own
+> real, required gate in the separate, canonical `abi-scan.yml`. See
+> [Honest current limitations](#honest-current-limitations) before relying
 > on any of it as proof of anything beyond "the same source builds under
 > three build systems."
 
@@ -111,24 +113,34 @@ and [docs/integration-profiles.md](docs/integration-profiles.md#scanner-candidat
 - **The advisory integration gate is not a branch-protection gate.** It can
   fail for real reasons and still not block a merge, by design, until it
   earns that trust.
-- **The per-profile checker is not the real ABICheck scanner.**
-  `ci/check_profile.py` diffs ELF dynamic symbols, symbol kinds and
-  ABI-relevant data sizes, SONAME/loader filenames, and public-header
-  content digests. It reliably catches an exported symbol being
-  added/removed/resized and a SONAME or header change. It **cannot**
-  classify a struct/class layout change, a default-argument change, an
-  inline/template body change, or any other source-level API change
-  invisible at the binary symbol-table level — that requires the real
-  ABICheck scanner, which this checker is not.
+- **The per-profile checker runs the real ABICheck scanner for CMake and
+  Make, not yet for Bazel's own leg of this advisory workflow.**
+  `ci/check_profile.py` (via `ci/real_scan.py`) runs an actual
+  `abicheck dump --depth source` / `abicheck compare` for the
+  `cmake`/`make` profiles, using each profile's own `compile_commands.json`
+  as `--build-info`, filtered to the target's own translation unit. For
+  the `bazel` profile's leg of *this same advisory workflow*, it still
+  diffs ELF dynamic symbols, symbol kinds and ABI-relevant data sizes,
+  SONAME/loader filenames, and public-header content digests — a real
+  signal, but one that **cannot** classify a struct/class layout change, a
+  default-argument change, an inline/template body change, or any other
+  source-level API change invisible at the binary symbol-table level.
+  Bazel doesn't need the real-scanner leg here because it already has its
+  own real, required gate in the separate `abi-scan.yml`.
 - **Cross-build-system equivalence checking exists but is advisory only.**
   `ci/compare_build_outputs.py` (the `cross_build_equivalence` job)
   compares each pair of profiles' own staged output directly — exported
   symbols, SONAME, dynamic dependencies, public headers — and classifies
   every difference as a real public-contract mismatch or expected
   build-system bookkeeping. It is real (run against this repo's own three
-  profiles, it found a genuine SONAME mismatch — see
-  [integration-profiles.md](docs/integration-profiles.md#cross-build-system-equivalence))
-  but, like every other advisory job, cannot block a merge.
+  profiles, it found and this repo then fixed a genuine SONAME mismatch —
+  see
+  [integration-profiles.md](docs/integration-profiles.md#cross-build-system-equivalence));
+  a separate, still-open `abicheck_cross_check` finding (a real
+  `abicheck compare` between Bazel's and CMake/Make's own built
+  `libmath.so` reports `COMPATIBLE_WITH_RISK`, a DWARF/source-level
+  difference the SONAME/symbol-table diff can't see on its own) remains.
+  Like every other advisory job, none of this can block a merge.
 - **Not every profile has a production release baseline**, and not every
   scenario runs through every build system — the scenario oracle exercises
   Bazel for its full suite; CMake covers only an initial, deliberately
@@ -173,7 +185,9 @@ _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
    │ ── ONE verdict ── │    │        │        │        │        │     │
    └──────────────────┘    │  ci/run_profile.py (per profile)   │     │
                             │  → abicheck-build-<id>/ (staged)   │     │
-                            │  → ci/check_profile.py (ELF signal)│     │
+                            │  → ci/check_profile.py             │     │
+                            │    (real abicheck for cmake/make,  │     │
+                            │     ELF signal for bazel's own leg) │     │
                             │  → ci/check_profile_coverage.py    │     │
                             │  → ci/emit_profile_receipt.py      │     │
                             │        │        │        │        │     │
@@ -232,7 +246,12 @@ python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-bazel
 python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-cmake-ninja
 python3 ci/run_profile.py --profile-id linux-x86_64-gcc14-cxx17-make-bear
 
-# To also run the per-profile ABI signal against a committed baseline:
+# To also run the per-profile ABI signal against a committed baseline
+# (bazel: the lab-only ELF signal, needs only nm/readelf; cmake/make: the
+# REAL abicheck scanner via ci/real_scan.py, needs the same pinned
+# abicheck + CastXML install as above -- see .github/workflows/
+# integration-shadow.yml's "Install real abicheck scanner + pinned
+# CastXML" step for the exact commands):
 python3 ci/check_profile.py check --profile-id linux-x86_64-gcc14-cxx17-bazel \
   --target math --staged-dir abicheck-build-linux-x86_64-gcc14-cxx17-bazel \
   --baseline abi/profiles/linux-x86_64-gcc14-cxx17-bazel/math.abicheck.json \

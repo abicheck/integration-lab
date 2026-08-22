@@ -26,9 +26,12 @@ def _stage(tmp_path, success=True):
     return staged
 
 
-def _report(tmp_path, name, verdict):
+def _report(tmp_path, name, verdict, mechanism=None):
     path = tmp_path / f"{name}.json"
-    path.write_text(json.dumps({"verdict": verdict, "candidate_library_path": "artifacts/lib/libmath.so"}))
+    doc = {"verdict": verdict, "candidate_library_path": "artifacts/lib/libmath.so"}
+    if mechanism is not None:
+        doc["mechanism"] = mechanism
+    path.write_text(json.dumps(doc))
     return path
 
 
@@ -136,3 +139,55 @@ def test_receipt_failed_when_coverage_fails(tmp_path):
         workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
     )
     assert receipt["status"] == "failed"
+
+
+def test_receipt_scanner_mechanism_prefers_recorded_report_mechanism(tmp_path):
+    # ci/check_profile.py stamps each report's own facts["mechanism"] with
+    # whichever mechanism actually produced ITS verdict -- including on a
+    # fail-closed branch, which can legitimately differ from what a
+    # backend-derived guess would assume (Codex review, PR #25, round 3:
+    # "Deriving scanner.mechanism from backend reintroduces misattribution
+    # in the opposite direction"). A recorded mechanism must win over the
+    # backend-derived guess, not just supplement it.
+    staged = _stage(tmp_path)  # backend "cmake" -- would otherwise guess "real abicheck ..."
+    report_paths = {"math": _report(tmp_path, "math", "NO_CHANGE", mechanism="a distinctive recorded mechanism")}
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=None,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["scanner"]["mechanism"] == "a distinctive recorded mechanism"
+    assert receipt["reports"][0]["mechanism"] == "a distinctive recorded mechanism"
+    assert validate_document(receipt, SCHEMA_PATH) == []
+
+
+def test_receipt_scanner_mechanism_joins_distinct_mechanisms_across_targets(tmp_path):
+    # A single profile run's reports can legitimately have been produced by
+    # different mechanisms (e.g. a make-backend profile's bear-absent
+    # degrade for one target, real abicheck for another) -- the receipt
+    # must surface both, not silently collapse to one.
+    staged = _stage(tmp_path)
+    report_paths = {
+        "math": _report(tmp_path, "math", "NO_CHANGE", mechanism="mechanism A"),
+        "strings": _report(tmp_path, "strings", "NO_CHANGE", mechanism="mechanism B"),
+    }
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=None,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["scanner"]["mechanism"] == "mechanism A; mechanism B"
+    assert validate_document(receipt, SCHEMA_PATH) == []
+
+
+def test_receipt_scanner_mechanism_falls_back_to_backend_guess_when_unreadable(tmp_path):
+    # No report is readable at all (e.g. every report file is missing) --
+    # the backend-derived guess is the only signal left, so it's still
+    # used rather than leaving scanner.mechanism empty.
+    staged = _stage(tmp_path)  # backend "cmake" -- in _REAL_SCAN_BACKENDS
+    report_paths = {"math": tmp_path / "does-not-exist.json"}
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged, report_paths=report_paths, coverage_result=None,
+        workflow="wf.yml", job="build", run_id="1", run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["reports"][0]["mechanism"] is None
+    assert "real abicheck dump/compare" in receipt["scanner"]["mechanism"]
+    assert validate_document(receipt, SCHEMA_PATH) == []

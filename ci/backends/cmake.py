@@ -90,18 +90,25 @@ class CMakeBackend(BuildBackend):
         if kind == "executable":
             candidate = self._build_dir / cmake_target
             return candidate
-        # Shared libraries are versioned (lib<target>.so.1.0.0 with a
-        # lib<target>.so symlink). Return the symlink path itself, not its
-        # resolved target: TargetResult.from_path()/stage() read file bytes
-        # (sha256/copy2) by following it, which yields the real content, but
-        # keep the *name* the canonical, unversioned "lib<target>.so" --
-        # matching the Bazel/Make backends' staged filename (see BuildBackend
-        # design note: canonical candidate paths must be identical across
-        # build systems, e.g. artifacts/lib/libmath.so). Resolving the
-        # symlink here previously staged the versioned real filename
-        # (libmath.so.1.0.0) instead, diverging from bazel.py/make.py.
-        symlink = self._build_dir / f"lib{cmake_target}.so"
-        return symlink
+        # This candidate path is always "lib<target>.so" -- the canonical,
+        # unversioned filename matching the Bazel/Make backends' staged
+        # filename (see BuildBackend design note: canonical candidate
+        # paths must be identical across build systems, e.g.
+        # artifacts/lib/libmath.so). What that path actually IS on disk
+        # depends on whether math/strings set a SOVERSION/VERSION: neither
+        # is set (their current CMakeLists.txt shape -- see that file's own
+        # comment), so CMake's own default SONAME behavior applies (SONAME
+        # == OUTPUT_NAME, verified against a real build with `readelf -d`)
+        # and this path is a plain regular file, not a dev symlink. If
+        # SOVERSION/VERSION were introduced instead, CMake would make this
+        # path a symlink to a versioned real file
+        # (lib<target>.so.<SOVERSION>.<...>) -- TargetResult.from_path()/
+        # stage() read file bytes (sha256/copy2) by following a symlink
+        # either way, so this path stays correct in both shapes; only
+        # stage()'s own SONAME-companion-staging block (see its own
+        # comment) would start doing real work again instead of its
+        # current no-op.
+        return self._build_dir / f"lib{cmake_target}.so"
 
     def collect_evidence(self, build_result: BuildResult) -> Dict[str, Any]:
         generator = self.profile.get("generator", "Ninja") or "Ninja"
@@ -129,16 +136,21 @@ class CMakeBackend(BuildBackend):
             dest = out_subdir / target.path.name
             shutil.copy2(target.path, dest)
             if target.kind == "shared_library":
-                # target.path is the bare "lib<name>.so" dev symlink (see
-                # _resolve_output_path); consumer_app is linked against the
-                # *SONAME* ("lib<name>.so.<SOVERSION>", e.g. libmath.so.1 --
-                # SOVERSION 1 in CMakeLists.txt), not the bare name, so the
-                # staged directory needs that file too or a staged-only
-                # consumer_app can't resolve its dependency at runtime
-                # (Codex review, PR #19). CMake's own symlink chain already
-                # names it -- readlink the bare symlink's immediate target
-                # (one hop: "lib<name>.so" -> "lib<name>.so.<SOVERSION>")
-                # rather than re-deriving SOVERSION from CMakeLists.txt.
+                # CMakeLists.txt sets no SOVERSION/VERSION for math/strings
+                # (see that file's own comment: CMake's default SONAME ==
+                # OUTPUT_NAME is used instead, matching Bazel's/Make's own
+                # identical -Wl,-soname), so target.path is a plain regular
+                # file, not a dev symlink, and this block is a no-op
+                # (readlink() raises OSError -> soname=None -> nothing extra
+                # staged). Kept, rather than removed outright, for the
+                # general case: a future CMakeLists.txt change introducing
+                # SOVERSION/VERSION would make target.path a "lib<name>.so"
+                # symlink again, and consumer_app would then need the
+                # SONAME-named ("lib<name>.so.<SOVERSION>") companion file
+                # staged alongside it too, exactly as this block already
+                # handles (Codex review, PR #19, historical: this omission
+                # is what originally made a staged-only consumer_app unable
+                # to resolve its dependency at runtime).
                 try:
                     soname = target.path.readlink().name
                 except OSError:

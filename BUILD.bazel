@@ -16,11 +16,24 @@ cc_library(
 # migration is out of scope for a capability-matrix PR on its own, and every
 # existing job's cache key, evidence pack, and committed baseline
 # (abi/math.abicheck.json) are keyed to `//:math` specifically.
+#
+# linkopts sets an explicit SONAME (equal to this target's own output
+# filename, libmath.so -- no version suffix, so no extra versioned-symlink
+# companion file is needed alongside it): a real shared library should
+# carry a SONAME for correct dynamic-linker identity (this is a demo/lab
+# target, but there's no reason for it to skip a real-world practice on
+# top of that). Without this, `cc_binary(linkshared = True)` embeds no
+# SONAME at all -- the gap cross_build_equivalence
+# (ci/compare_build_outputs.py) originally found between all three build
+# systems (buildsystems/cmake/CMakeLists.txt, buildsystems/make/Makefile
+# -- both now set the identical libmath.so/libstrings.so SONAME the same
+# way).
 cc_binary(
     name = "math",
     srcs = ["src/math.cc"],
     deps = [":math_api"],
     linkshared = True,
+    linkopts = ["-Wl,-soname,libmath.so"],
     visibility = ["//visibility:public"],
 )
 

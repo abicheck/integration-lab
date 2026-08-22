@@ -171,6 +171,7 @@
             "-Wl,-z,relro,-z,now",
             "-pass-exit-codes",
             "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+            "-Wl,-soname,libmath.so",
             "-Wl,--push-state,-as-needed",
             "-lstdc++",
             "-Wl,--pop-state",
@@ -187,6 +188,7 @@
             "-Wl,-z,relro,-z,now",
             "-pass-exit-codes",
             "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+            "-Wl,-soname,libmath.so",
             "-Wl,--push-state,-as-needed",
             "-lstdc++",
             "-Wl,--pop-state",
@@ -195,7 +197,7 @@
             "-Wl,--pop-state"
           ],
           "output": "bazel-out/k8-fastbuild/bin/libmath.so",
-          "soname": "",
+          "soname": "libmath.so",
           "target_id": "target:////:math",
           "version_script": ""
         }
@@ -847,7 +849,7 @@
             "source_location": {
               "line": 8,
               "origin": "PUBLIC_HEADER",
-              "path": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+              "path": "include/abicheck_lab/math.h"
             },
             "type_hash": "",
             "value": "",
@@ -875,7 +877,7 @@
             "source_location": {
               "line": 9,
               "origin": "PUBLIC_HEADER",
-              "path": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+              "path": "include/abicheck_lab/math.h"
             },
             "type_hash": "",
             "value": "",
@@ -903,7 +905,7 @@
             "source_location": {
               "line": 10,
               "origin": "PUBLIC_HEADER",
-              "path": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+              "path": "include/abicheck_lab/math.h"
             },
             "type_hash": "",
             "value": "",
@@ -931,7 +933,7 @@
             "source_location": {
               "line": 13,
               "origin": "PUBLIC_HEADER",
-              "path": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+              "path": "include/abicheck_lab/math.h"
             },
             "type_hash": "",
             "value": "",
@@ -963,7 +965,7 @@
             "source_location": {
               "line": 6,
               "origin": "PUBLIC_HEADER",
-              "path": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+              "path": "include/abicheck_lab/math.h"
             },
             "type_hash": "sha256:8ec4118107a2b9391abdd184af9e114fdd87d50dc3307121460c9de7c2535241",
             "value": "",
@@ -1169,7 +1171,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/bazel_tools/tools/def_parser/no_op.bat",
+          "dst": "external/bazel_tools/tools/def_parser/no_op.bat",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1187,7 +1189,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/bazel_tools/tools/cpp/build_interface_so",
+          "dst": "external/bazel_tools/tools/cpp/build_interface_so",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1205,7 +1207,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/bazel_tools/tools/cpp/link_dynamic_library.sh",
+          "dst": "external/bazel_tools/tools/cpp/link_dynamic_library.sh",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1223,7 +1225,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1241,7 +1243,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1259,7 +1261,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1277,7 +1279,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1295,7 +1297,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1313,7 +1315,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1331,7 +1333,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
+          "dst": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
           "edge": "TARGET_HAS_SOURCE",
           "facts": [
             {
@@ -1421,7 +1423,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "dst": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "edge": "COMPILE_UNIT_EMITS_OBJECT",
           "facts": [
             {
@@ -1439,7 +1441,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "link://bazel-out/k8-fastbuild/bin/libmath.so",
+          "dst": "bazel-out/k8-fastbuild/bin/libmath.so",
           "edge": "TARGET_HAS_LINK_UNIT",
           "facts": [
             {
@@ -1457,7 +1459,7 @@
           "attrs": {},
           "confidence": "high",
           "conflicts": [],
-          "dst": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "dst": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "edge": "LINK_UNIT_HAS_INPUT",
           "facts": [
             {
@@ -1469,7 +1471,7 @@
           "occurrences": [],
           "provenance": "build_evidence",
           "resolved": {},
-          "src": "link://bazel-out/k8-fastbuild/bin/libmath.so"
+          "src": "bazel-out/k8-fastbuild/bin/libmath.so"
         },
         {
           "attrs": {},
@@ -1487,7 +1489,7 @@
           "occurrences": [],
           "provenance": "source_abi",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -1505,7 +1507,7 @@
           "occurrences": [],
           "provenance": "source_abi",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -1541,7 +1543,7 @@
           "occurrences": [],
           "provenance": "source_abi",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -1577,7 +1579,7 @@
           "occurrences": [],
           "provenance": "source_abi",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -1613,7 +1615,7 @@
           "occurrences": [],
           "provenance": "source_abi",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -2216,7 +2218,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/bazel_tools/tools/def_parser/no_op.bat",
+          "id": "external/bazel_tools/tools/def_parser/no_op.bat",
           "kind": "source",
           "label": "external/bazel_tools/tools/def_parser/no_op.bat",
           "provenance": "build_evidence",
@@ -2407,7 +2409,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/bazel_tools/tools/cpp/build_interface_so",
+          "id": "external/bazel_tools/tools/cpp/build_interface_so",
           "kind": "source",
           "label": "external/bazel_tools/tools/cpp/build_interface_so",
           "provenance": "build_evidence",
@@ -2482,7 +2484,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/bazel_tools/tools/cpp/link_dynamic_library.sh",
+          "id": "external/bazel_tools/tools/cpp/link_dynamic_library.sh",
           "kind": "source",
           "label": "external/bazel_tools/tools/cpp/link_dynamic_library.sh",
           "provenance": "build_evidence",
@@ -2615,7 +2617,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/builtin_include_directory_paths",
           "provenance": "build_evidence",
@@ -2632,7 +2634,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper",
           "provenance": "build_evidence",
@@ -2649,7 +2651,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper",
           "provenance": "build_evidence",
@@ -2666,7 +2668,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library",
           "provenance": "build_evidence",
@@ -2770,7 +2772,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/cc_wrapper.sh",
           "provenance": "build_evidence",
@@ -2845,7 +2847,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/deps_scanner_wrapper.sh",
           "provenance": "build_evidence",
@@ -2978,7 +2980,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "source://external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
+          "id": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
           "kind": "source",
           "label": "external/rules_cc~~cc_configure_extension~local_config_cc/validate_static_library.sh",
           "provenance": "build_evidence",
@@ -3180,7 +3182,7 @@
               "producer": "build_evidence"
             }
           ],
-          "id": "object://bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
+          "id": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "kind": "object_file",
           "label": "bazel-out/k8-fastbuild/bin/_objs/math/math.pic.o",
           "provenance": "build_evidence",
@@ -3189,7 +3191,7 @@
         {
           "attrs": {
             "kind": "shared_library",
-            "soname": "",
+            "soname": "libmath.so",
             "target_id": "target:////:math"
           },
           "confidence": "high",
@@ -3198,20 +3200,20 @@
             {
               "attrs": {
                 "kind": "shared_library",
-                "soname": "",
+                "soname": "libmath.so",
                 "target_id": "target:////:math"
               },
               "confidence": "high",
               "producer": "build_evidence"
             }
           ],
-          "id": "link://bazel-out/k8-fastbuild/bin/libmath.so",
+          "id": "bazel-out/k8-fastbuild/bin/libmath.so",
           "kind": "link_unit",
           "label": "bazel-out/k8-fastbuild/bin/libmath.so",
           "provenance": "build_evidence",
           "resolved": {
             "kind": "shared_library",
-            "soname": "",
+            "soname": "libmath.so",
             "target_id": "target:////:math"
           }
         },
@@ -3361,9 +3363,9 @@
               "producer": "source_abi"
             }
           ],
-          "id": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
+          "id": "header://include/abicheck_lab/math.h",
           "kind": "header",
-          "label": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
+          "label": "include/abicheck_lab/math.h",
           "provenance": "source_abi",
           "resolved": {
             "origin": "PUBLIC_HEADER"
@@ -3818,7 +3820,7 @@
     "relro": "full",
     "rpath": "",
     "runpath": "",
-    "soname": "",
+    "soname": "libmath.so",
     "symbols": [
       {
         "binding": "global",
@@ -3929,8 +3931,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:13",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:13",
       "visibility": "public",
       "vtable_index": null
     },
@@ -3963,8 +3965,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:8",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:8",
       "visibility": "public",
       "vtable_index": null
     },
@@ -4016,8 +4018,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:9",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:9",
       "visibility": "public",
       "vtable_index": null
     },
@@ -4069,8 +4071,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:10",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:10",
       "visibility": "public",
       "vtable_index": null
     },
@@ -4113,8 +4115,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "visibility": "hidden",
       "vtable_index": null
     },
@@ -4157,8 +4159,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "Calculator&",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "visibility": "hidden",
       "vtable_index": null
     },
@@ -4201,8 +4203,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "visibility": "hidden",
       "vtable_index": null
     },
@@ -4245,8 +4247,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "Calculator&",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "visibility": "hidden",
       "vtable_index": null
     },
@@ -4279,8 +4281,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "visibility": "hidden",
       "vtable_index": null
     }
@@ -4328,8 +4330,8 @@
       "origin": "public_header",
       "qualified_name": "abicheck_lab::Calculator",
       "size_bits": 8,
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "virtual_bases": [],
       "vptr_offset_bits": null,
       "vtable": []

@@ -858,6 +858,37 @@ for the CMake/Make profiles.
 
 # 2026-08-21 follow-up: PR2's ABI check is a symbol-table diff, not the real scanner -- because the real scanner is unreachable, not by choice
 
+**2026-08-21 update: resolved for cmake/make, not a general pattern to
+follow for bazel's own advisory leg.** A later session's own sandbox DID
+have network access (`pip download`/`pip install` against the exact pinned
+`abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67
+a2f444bc097cfe24cd2d99c3` URL both succeeded), confirming this entry's own
+"a real CI run does have network access and could install the real
+scanner" prediction. `ci/real_scan.py` now runs a real `abicheck dump
+--depth source`/`compare` invocation for the cmake and make profiles,
+verified end-to-end against this repo's own real CMake+Ninja build: a
+self-comparison reports `NO_CHANGE`, and a real function removal from
+`src/math.cc`/`include/abicheck_lab/math.h` reproducibly reports
+`BREAKING` via `abicheck compare` -- not the symbol-table mechanism this
+entry originally documented. `ci/check_profile.py`'s nm/readelf mechanism
+(the rest of this entry, kept as the historical record of what it is and
+is not) remains in place only for the Bazel profile's own leg of this same
+advisory workflow -- Bazel already has its own real, required gate in
+`abi-scan.yml`, so its leg here never needed the real-scanner path this
+update describes. One integration detail worth recording for anyone
+repeating this: both CMake's and Make's own `compile_commands.json`
+describe the whole project (all of `math`/`strings`/`consumer` in one
+database), and handing the unfiltered database to `abicheck dump -H
+<target's header dir>` fails closed with a real, correct error -- the
+consumer's own TU also includes the target's public header under a
+materially different compile context (`-fPIE` vs the library's own
+`-fPIC`), so abicheck refuses to guess which context to parse the header
+under, exactly analogous to this doc's own P0.2 entry for Bazel's
+`deps(//...)` scope. `ci/real_scan.py`'s `filter_compile_db_for_target`
+pre-filters the database to the target's own translation unit before it
+reaches `abicheck dump`, the same way Bazel's own target-scoped
+`cquery`/`aquery` already does for that profile.
+
 **Context:** PR2 of the multi-build-system integration effort wires an
 actual ABI comparison into all three `ci/profiles.yaml` profiles
 (`ci/check_profile.py`, per-profile receipts via
@@ -925,6 +956,39 @@ not the profile/receipt/gate architecture built around it.
 ---
 
 # 2026-08-21 follow-up: no cross-build-system public-contract equivalence primitive upstream
+
+**2026-08-21 update: the SONAME finding this entry describes is fixed on
+the lab side -- twice, in two different directions.** First fixed by
+aligning CMake/Make to Bazel's existing no-SONAME shape (dropping their
+own SONAME entirely). Revisited and fixed the other way instead: a real
+shared library should carry a SONAME for correct dynamic-linker identity,
+so lacking one everywhere was the wrong convergence point. All three now
+set an identical, explicit SONAME equal to each library's own on-disk
+filename (`libmath.so`/`libstrings.so`, no version suffix): Bazel's
+`//:math`/`strings_lib:strings` via `linkopts = ["-Wl,-soname,lib<target>
+.so"]` (the one target this repo otherwise never changes casually, per
+`BUILD.bazel`'s own comment -- every existing job's cache key, evidence
+pack, and committed baseline are keyed to it, and it's the required
+`abi-scan.yml` gate's own target; this linkopts addition changes neither
+the target's output filename nor its staged layout, only the SONAME field
+itself), CMake (`buildsystems/cmake/CMakeLists.txt`) via its own default
+SONAME-equals-OUTPUT_NAME behavior (no `SOVERSION`/`VERSION` set), Make
+(`buildsystems/make/Makefile`) via the identical explicit `-Wl,-soname`.
+Verified end-to-end against real builds of all three (`readelf -d
+lib<target>.so | grep SONAME` on each, plus a live `consumer_app` run for
+each backend, confirming the loader still resolves `NEEDED libmath.so`
+correctly with no companion symlink needed since the SONAME matches the
+on-disk filename): a fresh three-way build reports the CMake<->Make pair
+fully `EQUIVALENT` (no findings at all), and the SONAME
+`public_contract_mismatch` no longer appears in either Bazel pair either.
+This does not change the ask below (this lab's own
+`ci/compare_build_outputs.py` is still bespoke tooling, not a first-class
+abicheck primitive) -- it only means one of this section's own real
+findings no longer reproduces. A separate, still-open finding from the
+same tooling remains: a real `abicheck compare` between Bazel's and
+CMake/Make's own built `libmath.so` reports `COMPATIBLE_WITH_RISK`, a
+DWARF/source-level difference the SONAME/symbol-table diff can't see on
+its own -- a different investigation, not addressed by this fix.
 
 **Context:** PR3 of the multi-build-system integration effort adds
 `ci/compare_build_outputs.py` -- a pairwise (Bazel↔CMake, Bazel↔Make,
@@ -1082,3 +1146,69 @@ scan-compatible snapshot that way, or (b) pin to an `abicheck` commit
 predating whatever change introduced this `scan`-vs-`dump` fingerprint
 divergence, until it's fixed upstream, or (c) report this exact
 reproduction to `abicheck/abicheck` and pin to the fix once released.
+
+---
+
+# 2026-08-21 confirmation: reproduced fresh against `main` itself, unmodified -- this is not a regression from any open PR
+
+**Confirmed the required gate is broken on `main` right now, not just on a
+PR branch.** Re-ran the exact `abi-scan.yml` "ABICheck source scan" step
+by hand, outside any PR, against `main`'s own unmodified checkout
+(`origin/main` at `cf00f8d`) and its own committed
+`abi/math.abicheck.json`:
+
+```text
+bazel build //:math
+bazel cquery --output=jsonproto 'deps(//:math)' > bazel-cquery.json
+bazel aquery --output=jsonproto --include_param_files \
+  "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+  > bazel-aquery.json
+python3 scripts/build_bazel_evidence_pack.py --cquery bazel-cquery.json \
+  --aquery bazel-aquery.json --workspace "$(pwd)" --output bazel-evidence-pack \
+  --root-target "//:math" --summary-output bazel-evidence-summary.json
+python3 -m abicheck scan bazel-bin/libmath.so -H include/abicheck_lab/math.h \
+  --sources . --build-info bazel-evidence-pack --public-header-dir include \
+  --against abi/math.abicheck.json --depth source --format json -o scan-out.json
+```
+
+using the exact pinned commit (`abicheck @ git+https://github.com/abicheck/
+abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3`) `abi-scan.yml`
+installs. Result:
+
+```json
+{"verdict": "NOT_COMPARABLE", "exit_code": 6,
+ "diff": {"reason": "old and new snapshots were extracted under different
+   compile contexts (profile_fingerprint mismatch; differing fields:
+   compiler_version, include_sequence) — the comparison is not comparable."}}
+```
+
+Same verdict, same exit code, same class of mismatched field
+(`include_sequence`, joined here by `compiler_version` too) as every prior
+reproduction in this doc -- on `main`'s own source, `main`'s own committed
+baseline, no PR diff involved at all. This directly confirms `abi-scan.yml`'s
+own inline comment above the `scan` step ("confirmed by checking PR #16/#17's
+own CI, both on the OLDER pin, both already red for the identical reason")
+with an independent, fresh, hands-on repro rather than relying on that
+comment's own historical claim: **any PR this repo's skip-check judges
+ABI-relevant fails the required gate today, regardless of what it changes.**
+Recent PRs merged into `main` (#20 through #24) did not surface this in
+their own CI because none of them touched Bazel/`//:math` source and were
+therefore correctly judged not-relevant by the skip-check, taking the
+short-circuit path that never reaches the `scan` step at all -- their own
+green `scan` job checks are real, but for a code path that was never
+exercised, not evidence this bug is fixed.
+
+This is the same root cause `verify_capability_receipts` and `aggregate`'s
+own `math-source-gate`/`aggregate-multi-library` capability-receipt
+failures report on any ABI-relevant PR (both are downstream consumers of
+this same `scan` step's own failed outcome) -- there is exactly one root
+cause behind those two receipt failures, not two independent bugs.
+
+No lab-side workflow change can fix this: it is a bug in the pinned
+`abicheck` commit's own `scan`-mode candidate-snapshot construction, not in
+anything `abi-scan.yml`, `baseline.yml`, or any script in this repository
+controls. The three options this doc already lists above (generate the
+baseline via `scan` self-comparison instead of `dump`; pin to a commit
+predating the regression; report upstream and wait for a fix) remain the
+only real paths forward, and none has been implemented by this entry --
+this is a confirmation and repro, not a fix.

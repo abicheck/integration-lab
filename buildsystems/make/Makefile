@@ -50,14 +50,21 @@ all: $(LIBMATH) $(LIBSTRINGS) $(CONSUMER)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# SONAME set explicitly (-Wl,-soname), the same runtime-linking contract a
-# real shared library ships with -- not just -shared with no SONAME.
+# -Wl,-soname,libmath.so: an explicit SONAME equal to this library's own
+# filename -- a real shared library should carry a SONAME for correct
+# dynamic-linker identity. Same string BUILD.bazel's own `math` linkopts
+# and CMakeLists.txt's own (default) SONAME embed -- all three build
+# systems need the identical SONAME for cross_build_equivalence
+# (ci/compare_build_outputs.py) to actually agree, not just each
+# independently "have a SONAME" (see those two files' own comments).
 $(LIBMATH): $(MATH_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) -shared -Wl,-soname,libmath.so \
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) -shared \
+	    -Wl,-soname,libmath.so \
 	    -o $@ $<
 
 $(LIBSTRINGS): $(STRINGS_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) -shared -Wl,-soname,libstrings.so \
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) -shared \
+	    -Wl,-soname,libstrings.so \
 	    -o $@ $<
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's

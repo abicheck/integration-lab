@@ -125,7 +125,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -143,7 +143,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -161,7 +161,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -179,25 +179,7 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
-        },
-        {
-          "attrs": {},
-          "confidence": "high",
-          "conflicts": [],
-          "dst": "type://abicheck_lab::Calculator",
-          "edge": "SOURCE_DECLARES",
-          "facts": [
-            {
-              "attrs": {},
-              "confidence": "high",
-              "producer": "header_ast_l2"
-            }
-          ],
-          "occurrences": [],
-          "provenance": "header_ast_l2",
-          "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {},
@@ -215,7 +197,25 @@
           "occurrences": [],
           "provenance": "header_ast_l2",
           "resolved": {},
-          "src": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h"
+          "src": "header://include/abicheck_lab/math.h"
+        },
+        {
+          "attrs": {},
+          "confidence": "high",
+          "conflicts": [],
+          "dst": "type://abicheck_lab::Calculator",
+          "edge": "SOURCE_DECLARES",
+          "facts": [
+            {
+              "attrs": {},
+              "confidence": "high",
+              "producer": "header_ast_l2"
+            }
+          ],
+          "occurrences": [],
+          "provenance": "header_ast_l2",
+          "resolved": {},
+          "src": "header://include/abicheck_lab/math.h"
         },
         {
           "attrs": {
@@ -427,9 +427,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "header:///home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
+          "id": "header://include/abicheck_lab/math.h",
           "kind": "header",
-          "label": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
+          "label": "include/abicheck_lab/math.h",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -519,9 +519,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Calculator",
+          "id": "type://abicheck_lab::Calculator::Calculator",
           "kind": "record_type",
-          "label": "abicheck_lab::Calculator",
+          "label": "abicheck_lab::Calculator::Calculator",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -542,9 +542,9 @@
               "producer": "header_ast_l2"
             }
           ],
-          "id": "type://abicheck_lab::Calculator::Calculator",
+          "id": "type://abicheck_lab::Calculator",
           "kind": "record_type",
-          "label": "abicheck_lab::Calculator::Calculator",
+          "label": "abicheck_lab::Calculator",
           "provenance": "header_ast_l2",
           "resolved": {
             "visibility": "public_header"
@@ -961,8 +961,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "void",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:8",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:8",
       "visibility": "hidden",
       "vtable_index": null
     },
@@ -1014,8 +1014,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:9",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:9",
       "visibility": "public",
       "vtable_index": null
     },
@@ -1067,8 +1067,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:10",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:10",
       "visibility": "public",
       "vtable_index": null
     },
@@ -1101,8 +1101,8 @@
       "ref_qualifier": "",
       "return_pointer_depth": 0,
       "return_type": "int",
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:13",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:13",
       "visibility": "public",
       "vtable_index": null
     }
@@ -1150,8 +1150,8 @@
       "origin": "public_header",
       "qualified_name": "abicheck_lab::Calculator",
       "size_bits": null,
-      "source_header": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h",
-      "source_location": "/home/runner/work/integration-lab/integration-lab/include/abicheck_lab/math.h:6",
+      "source_header": "include/abicheck_lab/math.h",
+      "source_location": "include/abicheck_lab/math.h:6",
       "virtual_bases": [],
       "vptr_offset_bits": null,
       "vtable": []

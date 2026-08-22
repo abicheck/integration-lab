@@ -11,10 +11,14 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# linkopts sets an explicit SONAME (equal to this target's own output
+# filename) -- same reasoning as //:math's own identical linkopts (see
+# BUILD.bazel's own comment).
 cc_binary(
     name = "strings",
     srcs = ["src/strings.cc"],
     deps = [":strings_api"],
     linkshared = True,
+    linkopts = ["-Wl,-soname,libstrings.so"],
     visibility = ["//visibility:public"],
 )

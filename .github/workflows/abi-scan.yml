@@ -1028,8 +1028,21 @@ jobs:
       # code embedded in the JSON report it uploads) fail this job --
       # directly contradicting `scan_strings`'s own deliberately
       # best-effort/non-blocking contract. Leaving it undeclared, combined
-      # with `--on-unexpected-target warn` below, is what actually achieves
-      # "surfaced, never gating".
+      # with the manifest's own `gate.unexpected_target: "warn"` below, is
+      # what actually achieves "surfaced, never gating".
+      #
+      # `gate.unexpected_target` lives IN the manifest JSON, not as a CLI
+      # flag: the pinned abicheck version this workflow installs removed
+      # the standalone `--on-unexpected-target`/`--on-missing-required`
+      # flags in its own "CLI cleanup phase two" and folded that policy
+      # into the manifest's own `gate` block instead (confirmed directly
+      # against the installed package: `abicheck aggregate --help` no
+      # longer lists either flag, and passing `--on-unexpected-target`
+      # fails with "No such option" -- this is what broke this job for
+      # every PR judged ABI-relevant until this fix). Same coverage
+      # (targets discovered outside the declared set are surfaced, never
+      # folded into this job's own exit code), just declared where the
+      # current CLI actually reads it.
       - name: Build expected-target manifest
         id: manifest
         shell: bash
@@ -1039,7 +1052,16 @@ jobs:
           if [[ "${SCAN_RELEVANT:-}" == "true" ]]; then
             targets=$(jq -c '. + [{"id":"math","required":true}]' <<<"$targets")
           fi
-          jq -n --argjson targets "$targets" '{targets: $targets}' \
+          # aggregate_manifest_version: "2.0" is required, not decorative,
+          # once a manifest carries a "gate" block at all -- abicheck
+          # itself refuses an unversioned manifest with "gate" present
+          # (verified directly: "requires an explicit
+          # 'aggregate_manifest_version' >= '2.0'"), specifically so an
+          # older reader given the same manifest can't silently ignore
+          # "gate" and fall back to the hard-coded default policy without
+          # any signal that it did so.
+          jq -n --argjson targets "$targets" \
+            '{aggregate_manifest_version: "2.0", targets: $targets, gate: {unexpected_target: "warn"}}' \
             > "$RUNNER_TEMP/aggregate-manifest.json"
           echo "count=$(jq 'length' <<<"$targets")" >> "$GITHUB_OUTPUT"
         env:
@@ -1070,15 +1092,16 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/reports"
           if [[ "${{ steps.manifest.outputs.count }}" -gt 0 ]]; then
-            # --on-unexpected-target warn: `strings` (undeclared, per the
-            # comment above) is reported when its own report is discovered,
-            # but never folded into this job's gate -- 'include' (the CLI
-            # default) would fold its own compare exit code into the
-            # aggregate's overall exit code, which is exactly the coupling
-            # this step must not introduce.
+            # gate.unexpected_target: "warn" (embedded in the manifest
+            # itself -- see "Build expected-target manifest" above):
+            # `strings` (undeclared, per the comment above) is reported
+            # when its own report is discovered, but never folded into
+            # this job's gate -- 'include' (the CLI default) would fold
+            # its own compare exit code into the aggregate's overall exit
+            # code, which is exactly the coupling this step must not
+            # introduce.
             abicheck aggregate "$RUNNER_TEMP/reports" \
               --manifest "$RUNNER_TEMP/aggregate-manifest.json" \
-              --on-unexpected-target warn \
               --format json \
               -o "$RUNNER_TEMP/aggregate-report.json"
           else
