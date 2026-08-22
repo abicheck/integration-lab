@@ -217,7 +217,22 @@ _BAZEL_QUERY_RE = re.compile(r"(bazel (?:cquery|aquery)\b.*?)\s*>\s*\"?(\$RUNNER
 # shortest match), so without it this pattern would silently truncate at
 # `.../github.com/abicheck` and never see the real repo name or its ref at
 # all -- confirmed by testing without the lookahead before adding it.
-_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE)
+# DOTALL (Codex review, fresh evidence): a real reinstall is often spelled
+# with an ordinary shell line continuation (`pip install --force-reinstall
+# \` then the VCS URL on the next line) -- without DOTALL, `.` cannot cross
+# that newline, so the whole continued command was invisible to this
+# pattern and a reinstall onto a different ref went unrecognized entirely.
+# Residual, accepted imprecision: since `.*?` can now cross an intervening,
+# unrelated line too, a `pip install` with no ref of its own (`pip install
+# wheel`) can have its OWN match span forward and swallow an unrelated
+# line before landing on the *next* real install's ref -- cosmetically
+# odd (that match's displayed text mixes two commands), but harmless for
+# correctness: `finditer`'s non-overlapping matches still produce one
+# match per real ref present, in order, so `matches[-1]` (the actual
+# comparison target) is unaffected either way. Bounded to one step's
+# `run:` text (never spans across steps), so the blast radius of the
+# imprecision is small.
+_PIP_INSTALL_RE = re.compile(r"pip install\b.*?git\+\S*?/abicheck(?!/)(?:\.git)?(?:@\S+)?", re.IGNORECASE | re.DOTALL)
 
 
 def _normalize_shell(text: str) -> str:

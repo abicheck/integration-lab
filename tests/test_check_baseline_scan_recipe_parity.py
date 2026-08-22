@@ -450,6 +450,23 @@ class TestCheck:
         errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
         assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
 
+    def test_evidence_pack_pip_pin_drift_via_line_continued_reinstall_is_caught(self):
+        # Fresh evidence (Codex review): a real reinstall is often spelled
+        # with an ordinary shell line continuation. Without DOTALL, `.`
+        # cannot cross that newline, so the whole continued command was
+        # invisible to this pattern and a reinstall onto a different ref
+        # went unrecognized entirely.
+        shared_first_install = _PIP_LINE
+        good = f"{shared_first_install}\n{shared_first_install}"
+        continued_reinstall = (
+            "pip install --force-reinstall \\\n"
+            '  "abicheck @ git+https://github.com/abicheck/abicheck.git@'
+            'deadbeef0000000000000000000000000000000"'
+        )
+        drifted = f"{shared_first_install}\n{continued_reinstall}"
+        errors = check(_dump_wf(abicheck_pip_run=good), _scan_wf(abicheck_pip_run=drifted))
+        assert any("BUILD_EVIDENCE_PIP_PIN_MISMATCH" in e for e in errors)
+
     def test_missing_dump_step_is_reported(self):
         errors = check({"jobs": {"collect": {"steps": []}}}, _scan_wf())
         assert len(errors) == 1
