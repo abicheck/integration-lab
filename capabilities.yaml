@@ -350,24 +350,18 @@ capabilities:
     workflow: abi-scan.yml
     job: l4_clang_plugin
     dimensions:
-      # Verified against abicheck/abicheck's own --depth resolution
-      # (cli_compare_helpers._resolve_compare_collect_mode): this job's
-      # compare step passes --build-info but no --sources and no explicit
-      # --depth, which resolves to the "build" collect mode -- L3, not
-      # the "source" (L4) depth its own job name suggests. The plugin
-      # collects L4-shaped facts into the build-info pack (see README's
-      # "Declared-output source-fact collection"), but this particular
-      # compare invocation only asks abicheck to consume it at L3.
-      evidence_depth: build
+      # The comparison passes --depth source explicitly and a following
+      # fail-closed oracle checks the report's requested/effective depth and
+      # assurance. Plugin-shaped facts can no longer silently count as L4.
+      evidence_depth: source
       header_frontend: clang
       toolchain: n/a
       scope: producer_agreement
       target_shape: cc_binary_linkshared
     note: >
-      Best-effort L4 clang-plugin evidence collection, ABI-locked to the
-      runner's exact LLVM major -- every step is continue-on-error and the
-      job never fails on its own; a version mismatch degrades to a
-      labeled "skipped" section rather than a real failure.
+      Clang-plugin evidence collection remains availability-advisory because
+      the plugin is ABI-locked to the runner's LLVM major, but any produced
+      report must prove complete source depth or the job fails.
 
   - id: producer-agreement-report
     status: covered

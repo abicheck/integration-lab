@@ -3,6 +3,31 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 
 cc_library(
+    name = "core_api",
+    hdrs = [
+        "include/abicheck_lab/core.h",
+        "internal/include/abicheck_lab/core_c_api.h",
+    ],
+    includes = ["include", "internal/include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "core_impl",
+    srcs = ["src/core.cc"],
+    deps = [":core_api"],
+    visibility = ["//visibility:private"],
+)
+
+cc_shared_library(
+    name = "core",
+    shared_lib_name = "libcore.so",
+    deps = [":core_impl"],
+    user_link_flags = ["-Wl,-soname,libcore.so"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "math_api",
     hdrs = ["include/abicheck_lab/math.h"],
     includes = ["include"],
@@ -31,7 +56,8 @@ cc_library(
 cc_binary(
     name = "math",
     srcs = ["src/math.cc"],
-    deps = [":math_api"],
+    deps = [":core_api", ":math_api"],
+    dynamic_deps = [":core"],
     linkshared = True,
     linkopts = ["-Wl,-soname,libmath.so"],
     visibility = ["//visibility:public"],
@@ -53,7 +79,7 @@ cc_binary(
 cc_library(
     name = "math_impl",
     srcs = ["src/math.cc"],
-    deps = [":math_api"],
+    deps = [":core_api", ":math_api"],
     visibility = ["//visibility:private"],
 )
 

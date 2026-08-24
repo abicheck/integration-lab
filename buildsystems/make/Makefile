@@ -34,21 +34,29 @@ CXXSTD     := -std=c++17
 CXXFLAGS   := $(CXXSTD) -fPIC -O2 -g -Wall
 CPPFLAGS_MATH    := -I$(LAB_ROOT)/include
 CPPFLAGS_STRINGS := -I$(LAB_ROOT)/strings_lib/include
+CPPFLAGS_INTERNAL := -I$(LAB_ROOT)/internal/include
 
 MATH_SRC     := $(LAB_ROOT)/src/math.cc
+CORE_SRC     := $(LAB_ROOT)/src/core.cc
 STRINGS_SRC  := $(LAB_ROOT)/strings_lib/src/strings.cc
 CONSUMER_SRC := $(LAB_ROOT)/consumer/app.cc
 
 LIBMATH     := $(BUILD_DIR)/libmath.so
+LIBCORE     := $(BUILD_DIR)/libcore.so
 LIBSTRINGS  := $(BUILD_DIR)/libstrings.so
 CONSUMER    := $(BUILD_DIR)/consumer_app
 
 .PHONY: all clean compiledb smoke-test
 
-all: $(LIBMATH) $(LIBSTRINGS) $(CONSUMER)
+all: $(LIBCORE) $(LIBMATH) $(LIBSTRINGS) $(CONSUMER)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
+
+$(LIBCORE): $(CORE_SRC) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) $(CPPFLAGS_INTERNAL) -shared \
+	    -Wl,-soname,libcore.so \
+	    -o $@ $<
 
 # -Wl,-soname,libmath.so: an explicit SONAME equal to this library's own
 # filename -- a real shared library should carry a SONAME for correct
@@ -57,15 +65,15 @@ $(BUILD_DIR):
 # systems need the identical SONAME for cross_build_equivalence
 # (ci/compare_build_outputs.py) to actually agree, not just each
 # independently "have a SONAME" (see those two files' own comments).
-$(LIBMATH): $(MATH_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) -shared \
+$(LIBMATH): $(MATH_SRC) $(LIBCORE) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libmath.so \
-	    -o $@ $<
+	    -o $@ $< -L$(BUILD_DIR) -lcore -Wl,-rpath,'$$ORIGIN'
 
-$(LIBSTRINGS): $(STRINGS_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) -shared \
+$(LIBSTRINGS): $(STRINGS_SRC) $(LIBCORE) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libstrings.so \
-	    -o $@ $<
+	    -o $@ $< -L$(BUILD_DIR) -lcore -Wl,-rpath,'$$ORIGIN'
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's
 # cc_import wrapping) rather than recompiling math.cc into the binary.

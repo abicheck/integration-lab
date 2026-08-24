@@ -47,6 +47,37 @@ moved upstream and what remains lab-only.
 
 ## What is implemented today
 
+**Native project integration shadow.** `.abicheck.yml` now declares the
+customer-facing target/profile/check topology, and every profile producer
+writes the upstream `abicheck.build-output/v1` format to
+`abicheck-build-<profile>/build-output.json`. The former lab-specific receipt
+is retained temporarily as `lab-build-output.json` only for the legacy parity
+jobs. `.github/workflows/project-shadow.yml` validates the project and build
+manifests with the upstream CLI, restores the exact PR-base `accepted-main`
+baseline-set for every profile, then invokes upstream `check-project.yml` with
+required/deferred target, consumer, plugin-contract, and bundle cells. The
+established Bazel gate remains branch-required while the native aggregate earns
+that repository-setting promotion.
+
+The native topology now includes a real `core` provider consumed through an
+internal C ABI by both `math` and `strings`, the three-member SDK bundle, the
+executable consumer, and a math plugin symbol contract. The shadow asserts the
+`DT_NEEDED` provider edges and runs the staged executable for all three GCC
+build-system profiles. Product limitations that cannot yet be wired
+truthfully—target-specific source-evidence routing, separate client compilers,
+per-check runtime environments, and pybind cross-module internals—are recorded
+as machine-readable `expected_gaps` in the scenario manifest instead of being
+reported as covered.
+
+`.github/workflows/project-baseline.yml` publishes generation-scoped
+`accepted-main` baseline-sets to Actions cache on every main push. Pull-request
+project checks restore the exact base-SHA cache key (never a prefix fallback),
+validate profile/project-ref/generation identity, and upload it under
+`check-project.yml`'s baseline artifact convention. The run plan contains 18
+required/deferred cells: three libraries, the consumer, the plugin contract,
+and the SDK bundle across all three profiles; a negative aggregate oracle
+proves that any missing required report fails coverage.
+
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
 ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
 Bazel build, resolves its trusted baseline from the pull request's exact
@@ -63,8 +94,8 @@ profiles, all building the same shared source tree
 | Profile id | Build system | `contract` |
 |---|---|---|
 | `linux-x86_64-gcc14-cxx17-bazel` | Bazel | `true` |
-| `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `false` |
-| `linux-x86_64-gcc14-cxx17-make-bear` | Make (+ Bear when available) | `false` |
+| `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `true` |
+| `linux-x86_64-gcc14-cxx17-make-bear` | Make (+ Bear when available) | `true` |
 
 `.github/workflows/integration-shadow.yml` builds and stages all three on
 every PR and push to `main`, runs a per-profile compatibility check
@@ -107,6 +138,21 @@ baseline lifecycle (`baseline.yml`) keeps the trusted comparison target
 current. Full detail:
 [docs/scenarios-and-capabilities.md](docs/scenarios-and-capabilities.md)
 and [docs/integration-profiles.md](docs/integration-profiles.md#scanner-candidate-certification-canary).
+
+The scenario oracle also contains two evidence/deployment demonstrations that
+run as real binaries rather than mocked report fixtures. The
+`l2-green-l4-macro-break` scenario proves an unchanged binary and L2 header
+result becomes `API_BREAK/public_macro_value_changed` at source depth. The
+`runtime-floor-raised` scenario uses a locally versioned `LABRT_1.0`/`2.0`
+provider and proves the same candidate is risk without a deployment matrix,
+breaking on the 1.0 tier, and floor-compatible on the 2.0 tier. The Clang
+plugin lane now explicitly requests source depth and rejects any produced
+report whose effective depth or assurance does not prove L4 consumption.
+The Python lane builds a real scikit-build-core/pybind11 wheel and then proves
+that byte-identical `_core` extension modules still produce an `API_BREAK`
+when the adjacent `.pyi` renames a keyword and removes its default. This keeps
+native extension ABI evidence distinct from the Python API contract while the
+pybind cross-module internals identity remains an explicit expected gap.
 
 ## Honest current limitations
 

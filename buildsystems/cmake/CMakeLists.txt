@@ -25,6 +25,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Repo root, two levels up from buildsystems/cmake/.
 get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
+add_library(core SHARED "${LAB_ROOT}/src/core.cc")
+target_include_directories(core PUBLIC "${LAB_ROOT}/include")
+target_include_directories(core PRIVATE "${LAB_ROOT}/internal/include")
+set_target_properties(core PROPERTIES OUTPUT_NAME "core")
+
 # ---- math -------------------------------------------------------------
 # Mirrors BUILD.bazel's `math` cc_binary(linkshared = True): same
 # src/math.cc, same public header include/abicheck_lab/math.h.
@@ -42,6 +47,8 @@ get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 # agree, not just each independently "have a SONAME".
 add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
+target_include_directories(math PRIVATE "${LAB_ROOT}/internal/include")
+target_link_libraries(math PRIVATE core)
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
 )
@@ -51,6 +58,8 @@ set_target_properties(math PROPERTIES
 # CMake's default SONAME (== OUTPUT_NAME) -- same reasoning as `math` above.
 add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
+target_include_directories(strings PRIVATE "${LAB_ROOT}/internal/include")
+target_link_libraries(strings PRIVATE core)
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
 )

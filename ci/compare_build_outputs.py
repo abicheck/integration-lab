@@ -697,7 +697,7 @@ def main(argv=None) -> int:
         if profile_id in build_dirs:
             print(f"compare_build_outputs: duplicate --build-dir profile id {profile_id!r}", file=sys.stderr)
             return 1
-        if not (path / "build-output.json").is_file():
+        if not (path / "lab-build-output.json").is_file() and not (path / "build-output.json").is_file():
             print(f"compare_build_outputs: {path} has no build-output.json (profile {profile_id!r})", file=sys.stderr)
             return 1
         build_dirs[profile_id] = path

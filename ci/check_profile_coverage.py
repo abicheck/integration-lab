@@ -93,7 +93,10 @@ def evaluate(
         "checked_targets": checked_targets,
     }
 
-    build_output = _load_json(staged_dir / "build-output.json")
+    receipt = staged_dir / "lab-build-output.json"
+    if not receipt.is_file():
+        receipt = staged_dir / "build-output.json"
+    build_output = _load_json(receipt)
     # A syntactically valid but non-object document (e.g. `[]`) is truthy
     # and not None, so "is None" alone let it through to every .get() call
     # below, each raising AttributeError (CodeRabbit review, PR #20; same

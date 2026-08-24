@@ -1,0 +1,138 @@
+name: Native ABICheck project shadow
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  ABICHECK_REF: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+
+jobs:
+  baseline-ref:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+    steps:
+      - id: ref
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sha="$PR_BASE"
+          if [[ -z "$sha" ]]; then sha="$PUSH_BEFORE"; fi
+          if [[ -z "$sha" || "$sha" =~ ^0+$ ]]; then sha="$CURRENT_SHA"; fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+    env:
+      PROFILE: ${{ matrix.profile }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+      - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
+      - name: Validate native project contract
+        run: |
+          abicheck project validate .abicheck.yml \
+            --toolchain-bindings ci/toolchain-bindings.yml
+          python3 ci/validate_expected_gaps.py scenarios/manifest.yaml
+      - name: Build and validate standardized output
+        run: |
+          python3 ci/run_profile.py --profile-id "$PROFILE"
+          abicheck project validate-build "abicheck-build-$PROFILE"
+          python3 ci/validate_project_foundation.py \
+            --config .abicheck.yml \
+            --profiles ci/profiles.yaml \
+            --build-output "abicheck-build-$PROFILE"
+          python3 ci/validate_cross_dso.py "abicheck-build-$PROFILE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: abicheck-build-${{ env.PROFILE }}
+          path: abicheck-build-${{ env.PROFILE }}/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: abicheck-candidate-${{ env.PROFILE }}
+          path: abicheck-build-${{ env.PROFILE }}/
+
+  restore-baseline:
+    needs: baseline-ref
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+    steps:
+      - name: Restore exact accepted-main baseline
+        id: restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: baseline-set
+          key: integration-lab-main-g1-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
+      - name: Require exact cache hit and baseline identity
+        env:
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+          EXPECTED_REF: ${{ needs.baseline-ref.outputs.sha }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          python3 - <<'PY'
+          import json, os
+          manifest = json.load(open("baseline-set/manifest.json"))
+          assert manifest["profile"] == os.environ["PROFILE"], manifest
+          assert manifest["project_ref"] == os.environ["EXPECTED_REF"], manifest
+          assert manifest["baseline_generation"] == 1, manifest
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: abicheck-baseline-${{ matrix.profile }}-accepted-main
+          path: baseline-set/
+          if-no-files-found: error
+
+  project:
+    needs: [build, restore-baseline, baseline-ref]
+    uses: abicheck/abicheck/.github/workflows/check-project.yml@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+    with:
+      config-path: .abicheck.yml
+      toolchain-bindings-path: ci/toolchain-bindings.yml
+      expected-project-ref: ${{ needs.baseline-ref.outputs.sha }}
+      expected-baseline-generation: '1'
+
+  plan-oracle:
+    needs: project
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: run-plan
+          path: native-plan
+      - run: pip install --quiet pyyaml
+      - name: Assert complete native run plan
+        run: python3 ci/validate_run_plan.py --config .abicheck.yml --run-plan native-plan/run-plan.json
+      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove aggregate fails on missing required reports
+        run: python3 ci/validate_aggregate_fail_closed.py --run-plan native-plan/run-plan.json

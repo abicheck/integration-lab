@@ -28,7 +28,9 @@ package's own docstring.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +69,62 @@ def _git_sha(repo_root: Path) -> str:
         return sha if proc.returncode == 0 and sha else "unknown"
     except FileNotFoundError:
         return "unknown"
+
+
+def _source_tree_digest(repo_root: Path) -> str:
+    """Digest the current bytes of every tracked file, not only Git's index."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=str(repo_root), capture_output=True
+    )
+    digest = hashlib.sha256()
+    if proc.returncode == 0:
+        for raw_name in proc.stdout.split(b"\0"):
+            if not raw_name:
+                continue
+            path = repo_root / raw_name.decode("utf-8", errors="surrogateescape")
+            digest.update(raw_name)
+            digest.update(b"\0")
+            if path.is_file():
+                digest.update(path.read_bytes())
+    return "sha256:" + digest.hexdigest()
+
+
+def _compiler_version(version_line: Optional[str]) -> str:
+    if not version_line:
+        return "unknown"
+    match = re.search(r"(?<!\d)(\d+(?:\.\d+){1,2})(?!\d)", version_line)
+    return match.group(1) if match else version_line
+
+
+def _tool_identity(executable: str) -> Dict[str, str]:
+    resolved = shutil.which(executable)
+    if not resolved:
+        return {"path": executable, "sha256": "unavailable"}
+    path = Path(resolved).resolve()
+    return {
+        "path": str(path),
+        "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def _compiler_abi_macros(executable: str) -> str:
+    """Capture ABI-affecting predefined macros as a compact provenance atom."""
+    try:
+        proc = subprocess.run(
+            [executable, "-dM", "-E", "-x", "c++", "-"],
+            input="#include <bits/c++config.h>\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return ""
+    wanted = ("_GLIBCXX_USE_CXX11_ABI", "__GXX_ABI_VERSION__", "__cplusplus")
+    values = []
+    for line in proc.stdout.splitlines():
+        if any(f" {macro} " in f" {line} " for macro in wanted):
+            values.append(line.removeprefix("#define "))
+    return ";".join(sorted(values))
 
 
 def _copy_header_root(repo_root: Path, header_root: str, dest_root: Path) -> Optional[str]:
@@ -202,7 +260,10 @@ def stage_profile(
     compiler["cc_version"] = backend._tool_version(compiler.get("cc", "")) if compiler.get("cc") else None
     compiler["cxx_version"] = backend._tool_version(compiler.get("cxx", "")) if compiler.get("cxx") else None
 
-    doc: Dict[str, Any] = {
+    # Keep the former lab-only receipt as a sidecar for the existing parity
+    # and coverage checks while build-output.json adopts the upstream public
+    # contract.  New consumers must read build-output.json, never this file.
+    legacy_doc: Dict[str, Any] = {
         "schema_version": 1,
         "project": {"name": "abicheck-integration-lab"},
         "git": {"sha": _git_sha(repo_root), "ref": None},
@@ -230,6 +291,71 @@ def stage_profile(
         "success": bool(build_result.success) and not header_diagnostics,
     }
 
+    (out_dir / "lab-build-output.json").write_text(
+        json.dumps(legacy_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    declared_target_roots = profile.get("target_header_roots", {})
+    native_targets = []
+    digests: Dict[str, str] = {}
+    for name, target in build_result.targets.items():
+        staged_path = stage_manifest.get(name, {}).get("path")
+        if not target.built or not staged_path:
+            continue
+        binary = f"artifacts/{staged_path}"
+        target_doc = {
+                "id": name,
+                "binary": binary,
+                "public_header_roots": [
+                    f"headers/{root}" for root in declared_target_roots.get(name, [])
+                ],
+            }
+        if name in {"core", "math", "strings"}:
+            target_doc["bundle"] = "sdk"
+        native_targets.append(target_doc)
+        if target.sha256:
+            digests[binary] = f"sha256:{target.sha256}"
+
+    cxx_version_line = compiler.get("cxx_version")
+    compiler_identity = _tool_identity(compiler.get("cxx", ""))
+    doc: Dict[str, Any] = {
+        "schema": "abicheck.build-output/v1",
+        "project": "abicheck/integration-lab",
+        "head_sha": _git_sha(repo_root),
+        "source_tree_digest": _source_tree_digest(repo_root),
+        "profile": {
+            "id": profile["id"],
+            "os": "linux",
+            "arch": "x86_64",
+            "compiler": {
+                "family": compiler.get("family", "unknown"),
+                "version": _compiler_version(cxx_version_line),
+                "path": compiler_identity["path"],
+                "digest": compiler_identity["sha256"],
+                "standard": compiler.get("standard", ""),
+                "abi_macros": _compiler_abi_macros(compiler.get("cxx", "")),
+            },
+            "cxx_abi": "itanium",
+            "stdlib": "libstdc++",
+            "config": profile.get("generator") or profile["backend"],
+        },
+        "targets": native_targets,
+        "bundles": [
+            {"id": "sdk", "targets": ["core", "math", "strings"]}
+        ],
+        "evidence_producer": {
+            "kind": "build-system",
+            "tool": profile["backend"],
+            "version": "1",
+        },
+        "digests": digests,
+        "diagnostics": {
+            "warnings": list(build_result.diagnostics) + header_diagnostics,
+            "skipped_targets": [
+                name for name, target in build_result.targets.items() if not target.built
+            ],
+        },
+    }
     (out_dir / "build-output.json").write_text(
         json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -280,7 +406,10 @@ def main(argv=None) -> int:
         print(f"emit_build_output: {exc}", file=sys.stderr)
         return 1
 
-    print(json.dumps({"profile_id": args.profile_id, "success": doc["success"]}))
+    legacy = json.loads(
+        ((args.out_dir or args.repo_root) / f"abicheck-build-{args.profile_id}" / "lab-build-output.json").read_text()
+    )
+    print(json.dumps({"profile_id": args.profile_id, "success": legacy["success"]}))
 
     if args.validate:
         from validate_build_output import validate_file
@@ -292,7 +421,7 @@ def main(argv=None) -> int:
                 print(f"schema violation: {err}", file=sys.stderr)
             return 1
 
-    return 0 if doc["success"] else 1
+    return 0 if legacy["success"] else 1
 
 
 if __name__ == "__main__":

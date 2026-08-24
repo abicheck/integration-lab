@@ -218,7 +218,9 @@ def _load_json(path: Path) -> Any:
 
 
 def _load_build_output(staged_dir: Path) -> Dict[str, Any]:
-    path = staged_dir / "build-output.json"
+    path = staged_dir / "lab-build-output.json"
+    if not path.is_file():
+        path = staged_dir / "build-output.json"
     if not path.is_file():
         raise CheckProfileError(f"no build-output.json under {staged_dir} -- run ci/run_profile.py first")
     return _load_json(path)

@@ -1,0 +1,57 @@
+name: Native project accepted-main baseline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  ABICHECK_REF: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+    env:
+      PROFILE: ${{ matrix.profile }}
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+      - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
+      - name: Build and validate profile
+        run: |
+          abicheck project validate .abicheck.yml --toolchain-bindings ci/toolchain-bindings.yml
+          python3 ci/run_profile.py --profile-id "$PROFILE"
+          abicheck project validate-build "abicheck-build-$PROFILE"
+          python3 ci/validate_project_foundation.py \
+            --config .abicheck.yml --profiles ci/profiles.yaml \
+            --build-output "abicheck-build-$PROFILE"
+          python3 ci/validate_cross_dso.py "abicheck-build-$PROFILE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: abicheck-build-${{ env.PROFILE }}
+          path: abicheck-build-${{ env.PROFILE }}/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    uses: abicheck/abicheck/.github/workflows/update-main-baseline.yml@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+    with:
+      build-output-artifact-prefix: abicheck-build-
+      key-prefix: integration-lab-main
+      head-sha: ${{ github.sha }}
+      depth: binary
+      baseline-generation: '1'
+      validation: strict

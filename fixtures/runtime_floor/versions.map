@@ -1,0 +1,2 @@
+LABRT_1.0 { global: labrt_api; local: *; };
+LABRT_2.0 { global: labrt_new_api; } LABRT_1.0;

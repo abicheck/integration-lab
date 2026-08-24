@@ -1811,10 +1811,22 @@ jobs:
             --header new=include/abicheck_lab/math.h \
             --ast-frontend clang \
             --build-info bazel-bin/tools/abicheck/math_abicheck_inputs \
+            --depth source \
             --format json \
             -o abicheck-l4-clang-plugin.json \
             --policy strict_abi || true
           test -s abicheck-l4-clang-plugin.json
+
+      # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate
+      # successful report production on the report's own requested/effective
+      # depth and assurance envelope so an implicit L3 fallback cannot appear
+      # as a green "L4 plugin" result.
+      - name: Enforce source-depth plugin report contract
+        if: steps.l4_clang_plugin_compare.outcome == 'success'
+        run: |
+          python3 ci/validate_source_depth.py \
+            abicheck-l4-clang-plugin.json \
+            --expected source
 
       - name: Upload l4-clang-plugin artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
