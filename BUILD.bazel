@@ -56,6 +56,17 @@ cc_library(
 cc_binary(
     name = "math",
     srcs = ["src/math.cc"],
+    deps = [":math_api"],
+    linkshared = True,
+    linkopts = ["-Wl,-soname,libmath.so"],
+    visibility = ["//visibility:public"],
+)
+
+# The project variant owns the core provider edge. Keeping it separate from
+# //:math preserves the scope contract of the long-lived committed baseline.
+cc_binary(
+    name = "project_math",
+    srcs = ["src/project_math.cc"],
     deps = [":core_api", ":math_api"],
     dynamic_deps = [":core"],
     linkshared = True,
@@ -79,7 +90,7 @@ cc_binary(
 cc_library(
     name = "math_impl",
     srcs = ["src/math.cc"],
-    deps = [":core_api", ":math_api"],
+    deps = [":math_api"],
     visibility = ["//visibility:private"],
 )
 

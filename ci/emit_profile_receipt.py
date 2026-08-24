@@ -151,8 +151,14 @@ def build_receipt(
     sha: str,
     required: bool,
 ) -> Dict[str, Any]:
+    # The standardized build-output/v1 intentionally omits the legacy
+    # execution fields consumed here. Prefer the migration sidecar so a
+    # valid standardized document is not mistaken for a failed build.
     build_output_path = staged_dir / "build-output.json"
-    build_output = _load_json(build_output_path)
+    metadata_path = staged_dir / "lab-build-output.json"
+    if not metadata_path.is_file():
+        metadata_path = build_output_path
+    build_output = _load_json(metadata_path)
     # A failed/corrupted profile run can leave syntactically valid JSON with
     # a non-object top level (e.g. `[]`) at build-output.json -- that's
     # truthy and not None, so every .get() call below would raise

@@ -17,6 +17,15 @@ cc_library(
 cc_binary(
     name = "strings",
     srcs = ["src/strings.cc"],
+    deps = [":strings_api"],
+    linkshared = True,
+    linkopts = ["-Wl,-soname,libstrings.so"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "project_strings",
+    srcs = ["src/project_strings.cc"],
     deps = ["//:core_api", ":strings_api"],
     dynamic_deps = ["//:core"],
     linkshared = True,

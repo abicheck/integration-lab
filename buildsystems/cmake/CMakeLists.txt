@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 
 # Always emit compile_commands.json (PR1 item 4's own requirement) --
 # redundant with CMAKE_EXPORT_COMPILE_COMMANDS in CMakePresets.json, set
@@ -45,7 +46,7 @@ set_target_properties(core PROPERTIES OUTPUT_NAME "core")
 # comments) -- all three build systems need the identical SONAME string
 # for cross_build_equivalence (ci/compare_build_outputs.py) to actually
 # agree, not just each independently "have a SONAME".
-add_library(math SHARED "${LAB_ROOT}/src/math.cc")
+add_library(math SHARED "${LAB_ROOT}/src/project_math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
 target_include_directories(math PRIVATE "${LAB_ROOT}/internal/include")
 target_link_libraries(math PRIVATE core)
@@ -56,7 +57,7 @@ set_target_properties(math PROPERTIES
 # ---- strings ------------------------------------------------------------
 # Mirrors strings_lib/BUILD.bazel's `strings` cc_binary(linkshared = True).
 # CMake's default SONAME (== OUTPUT_NAME) -- same reasoning as `math` above.
-add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
+add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/project_strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
 target_include_directories(strings PRIVATE "${LAB_ROOT}/internal/include")
 target_link_libraries(strings PRIVATE core)
@@ -80,7 +81,6 @@ target_link_libraries(consumer_app PRIVATE math)
 # once the original build directory is gone (CodeRabbit review, PR #19).
 # $ORIGIN covers the build tree (consumer_app and libmath.so* colocated in
 # build/); $ORIGIN/../lib covers the staged layout.
-set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 set_target_properties(consumer_app PROPERTIES
     BUILD_RPATH "$ORIGIN:$ORIGIN/../lib"
 )

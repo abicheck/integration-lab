@@ -65,9 +65,9 @@ profiles:
       standard: c++17
     targets:
       core: "//:core"
-      math: "//:math"
+      math: "//:project_math"
       math_shared: "//:math_shared"
-      strings: "//strings_lib:strings"
+      strings: "//strings_lib:project_strings"
       consumer: "//consumer:consumer_app"
     header_roots:
       - include
@@ -78,7 +78,10 @@ profiles:
       math_shared: [include]
       strings: [strings_lib/include]
       consumer: []
-    build_command: "bazel build //:core //:math //:math_shared //strings_lib:strings //consumer:consumer_app"
+    staged_names:
+      math: libmath.so
+      strings: libstrings.so
+    build_command: "bazel build //:core //:project_math //:math_shared //strings_lib:project_strings //consumer:consumer_app"
     # PR2 item 4 (ci/check_profile_coverage.py): profile-appropriate
     # coverage requirements, read alongside this profile's own
     # `evidence.backend_evidence` shape (see collect_evidence() in

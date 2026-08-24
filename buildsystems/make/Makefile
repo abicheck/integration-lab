@@ -36,9 +36,9 @@ CPPFLAGS_MATH    := -I$(LAB_ROOT)/include
 CPPFLAGS_STRINGS := -I$(LAB_ROOT)/strings_lib/include
 CPPFLAGS_INTERNAL := -I$(LAB_ROOT)/internal/include
 
-MATH_SRC     := $(LAB_ROOT)/src/math.cc
+MATH_SRC     := $(LAB_ROOT)/src/project_math.cc
 CORE_SRC     := $(LAB_ROOT)/src/core.cc
-STRINGS_SRC  := $(LAB_ROOT)/strings_lib/src/strings.cc
+STRINGS_SRC  := $(LAB_ROOT)/strings_lib/src/project_strings.cc
 CONSUMER_SRC := $(LAB_ROOT)/consumer/app.cc
 
 LIBMATH     := $(BUILD_DIR)/libmath.so

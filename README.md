@@ -78,6 +78,12 @@ required/deferred cells: three libraries, the consumer, the plugin contract,
 and the SDK bundle across all three profiles; a negative aggregate oracle
 proves that any missing required report fails coverage.
 
+The one-time introduction PR has no trusted project cache to restore because
+its base commit predates the publisher workflow. The shadow detects that state
+from the base tree and runs build/manifest validation only; the first main push
+publishes the cache, after which missing or stale exact-base baselines fail
+closed. It never manufactures a PR baseline from the candidate under test.
+
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
 ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
 Bazel build, resolves its trusted baseline from the pull request's exact

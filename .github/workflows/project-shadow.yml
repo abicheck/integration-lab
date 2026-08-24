@@ -17,7 +17,12 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.ref.outputs.sha }}
+      native_ready: ${{ steps.readiness.outputs.native_ready }}
     steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - id: ref
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -29,6 +34,20 @@ jobs:
           if [[ -z "$sha" ]]; then sha="$PUSH_BEFORE"; fi
           if [[ -z "$sha" || "$sha" =~ ^0+$ ]]; then sha="$CURRENT_SHA"; fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - id: readiness
+        env:
+          BASE_SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          # The introduction PR cannot restore a cache published by a
+          # workflow that does not exist on its base commit.  Skip only that
+          # one bootstrap comparison; project-baseline.yml seeds main and
+          # every later PR must take the fail-closed path below.
+          if git cat-file -e "$BASE_SHA:.github/workflows/project-baseline.yml" 2>/dev/null; then
+            echo "native_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "native_ready=false" >> "$GITHUB_OUTPUT"
+            echo "Native project baseline is not present on $BASE_SHA; bootstrap build validation only."
+          fi
 
   build:
     runs-on: ubuntu-24.04
@@ -73,6 +92,7 @@ jobs:
 
   restore-baseline:
     needs: baseline-ref
+    if: needs.baseline-ref.outputs.native_ready == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -111,6 +131,7 @@ jobs:
 
   project:
     needs: [build, restore-baseline, baseline-ref]
+    if: needs.baseline-ref.outputs.native_ready == 'true'
     uses: abicheck/abicheck/.github/workflows/check-project.yml@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
     with:
       config-path: .abicheck.yml
@@ -120,7 +141,7 @@ jobs:
 
   plan-oracle:
     needs: project
-    if: always()
+    if: needs.project.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11

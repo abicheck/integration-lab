@@ -47,6 +47,29 @@ def test_receipt_passed_when_build_ok_and_verdicts_clean(tmp_path):
     assert validate_document(receipt, SCHEMA_PATH) == []
 
 
+def test_receipt_prefers_legacy_sidecar_for_execution_fields(tmp_path):
+    staged = _stage(tmp_path)
+    (staged / "lab-build-output.json").write_text(json.dumps({
+        "success": True,
+        "profile": {"backend": "make"},
+        "compiler": {"family": "gcc", "cxx": "g++-14"},
+    }))
+    (staged / "build-output.json").write_text(json.dumps({
+        "schema": "abicheck.build-output/v1",
+        "profile": {"id": "p1", "compiler": {"family": "gcc"}},
+        "targets": [],
+    }))
+    receipt = build_receipt(
+        profile_id="p1", staged_dir=staged,
+        report_paths={"math": _report(tmp_path, "math", "NO_CHANGE")},
+        coverage_result=None, workflow="wf.yml", job="build", run_id="1",
+        run_attempt="1", sha="abc", required=False,
+    )
+    assert receipt["status"] == "passed"
+    assert receipt["build_system"] == "make"
+    assert receipt["compiler"]["cxx"] == "g++-14"
+
+
 def test_receipt_failed_on_breaking_verdict(tmp_path):
     staged = _stage(tmp_path)
     report_paths = {"math": _report(tmp_path, "math", "BREAKING")}
