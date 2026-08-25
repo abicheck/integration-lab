@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 import yaml
 
-
-def _run(argv: list[str], allow_verdict: bool = False) -> None:
-    result = subprocess.run(argv)
-    if result.returncode and not allow_verdict:
-        raise RuntimeError(f"command failed ({result.returncode}): {' '.join(argv)}")
+from scenario_command import run_command
 
 
 def _oracle(report: dict, expected: dict) -> list[str]:
@@ -43,14 +38,14 @@ def run(manifest: Path, output: Path, cc: str) -> list[str]:
     for side in ("old", "new"):
         directory = output / side
         directory.mkdir(parents=True, exist_ok=True)
-        _run([cc, "-shared", "-fPIC", "-g", str(root / side / "core.c"),
+        run_command([cc, "-shared", "-fPIC", "-g", str(root / side / "core.c"),
               "-Wl,-soname,libcore.so", "-o", str(directory / "libcore.so")])
-        _run([cc, "-shared", "-fPIC", "-g", str(root / "math.c"), f"-L{directory}",
+        run_command([cc, "-shared", "-fPIC", "-g", str(root / "math.c"), f"-L{directory}",
               "-lcore", "-Wl,-rpath,$ORIGIN", "-Wl,-soname,libmath.so",
               "-o", str(directory / "libmath.so")])
     report_path = output / "report.json"
-    _run(["abicheck", "compare", str(output / "old"), str(output / "new"),
-          "--format", "json", "-o", str(report_path)], allow_verdict=True)
+    run_command(["abicheck", "compare", str(output / "old"), str(output / "new"),
+                 "--format", "json", "-o", str(report_path)], verdict_report=report_path)
     return _oracle(json.loads(report_path.read_text()), scenario["expect"])
 
 

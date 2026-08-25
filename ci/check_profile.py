@@ -283,7 +283,8 @@ def _load_build_output(staged_dir: Path, *, prefer_standard: bool = False) -> Di
         }
     return {
         **document,
-        "success": not bool(document.get("diagnostics", {}).get("skipped_targets")),
+        "success": not bool(document.get("diagnostics", {}).get("skipped_targets"))
+        and not bool(document.get("diagnostics", {}).get("errors")),
         "git": {"sha": document.get("head_sha")},
         "profile": {
             **profile,

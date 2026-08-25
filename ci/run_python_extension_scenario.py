@@ -11,11 +11,7 @@ import sysconfig
 from pathlib import Path
 import yaml
 
-
-def _run(argv: list[str], allow_verdict: bool = False) -> None:
-    result = subprocess.run(argv)
-    if result.returncode and not allow_verdict:
-        raise RuntimeError(f"command failed ({result.returncode}): {' '.join(argv)}")
+from scenario_command import run_command
 
 
 def _oracle(report: dict, expected: dict, hashes: list[str]) -> list[str]:
@@ -46,7 +42,7 @@ def run(manifest: Path, output: Path, cxx: str) -> list[str]:
     includes = subprocess.check_output(["python", "-m", "pybind11", "--includes"], text=True).split()
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     built = output / f"_core{suffix}"
-    _run([cxx, "-O2", "-shared", "-std=c++17", "-fPIC", *includes, str(source), "-o", str(built)])
+    run_command([cxx, "-O2", "-shared", "-std=c++17", "-fPIC", *includes, str(source), "-o", str(built)])
     snapshots, hashes = [], []
     for side in ("v1", "v2"):
         side_dir = output / side
@@ -56,11 +52,12 @@ def run(manifest: Path, output: Path, cxx: str) -> list[str]:
         shutil.copy2(stubs / f"{side}.pyi", side_dir / "_core.pyi")
         hashes.append(hashlib.sha256(binary.read_bytes()).hexdigest())
         snapshot = output / f"{side}.json"
-        _run(["abicheck", "dump", str(binary), "-o", str(snapshot)])
+        run_command(["abicheck", "dump", str(binary), "-o", str(snapshot)])
         snapshots.append(snapshot)
     report_path = output / "report.json"
-    _run(["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-          "--format", "json", "--policy", "strict_abi", "-o", str(report_path)], True)
+    run_command(["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
+                 "--format", "json", "--policy", "strict_abi", "-o", str(report_path)],
+                verdict_report=report_path)
     return _oracle(json.loads(report_path.read_text()), scenario["expect"], hashes)
 
 

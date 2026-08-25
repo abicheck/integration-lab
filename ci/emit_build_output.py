@@ -361,7 +361,8 @@ def stage_profile(
         },
         "digests": digests,
         "diagnostics": {
-            "warnings": list(build_result.diagnostics) + header_diagnostics,
+            "warnings": list(build_result.diagnostics),
+            "errors": header_diagnostics,
             "skipped_targets": [
                 name
                 for name, target in build_result.targets.items()

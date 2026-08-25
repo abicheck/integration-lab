@@ -5,15 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 from pathlib import Path
 import yaml
 
-
-def _run(argv: list[str], *, allow_verdict: bool = False) -> None:
-    proc = subprocess.run(argv, text=True)
-    if proc.returncode and not allow_verdict:
-        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(argv)}")
+from scenario_command import run_command
 
 
 def _assert_report(report: dict, expected: dict) -> list[str]:
@@ -39,7 +34,7 @@ def run(manifest: Path, scenario_id: str, output: Path, cxx: str) -> list[str]:
     for side in ("v1", "v2"):
         root = fixture / side
         library = output / f"{side}.so"
-        _run([cxx, "-std=c++17", "-g", "-fPIC", "-shared", f"-I{root}",
+        run_command([cxx, "-std=c++17", "-g", "-fPIC", "-shared", f"-I{root}",
               str(root / "api.cc"), "-o", str(library)])
         compile_db = [{
             "directory": str(root.resolve()),
@@ -59,15 +54,15 @@ def run(manifest: Path, scenario_id: str, output: Path, cxx: str) -> list[str]:
             if depth == "source":
                 command += ["--sources", str(root), "--build-info",
                             str(output / f"{side}-compile_commands.json")]
-            _run(command)
+            run_command(command)
             provenance = json.loads(snapshot.read_text()).get("dump_provenance", {})
             if provenance.get("effective_depth") != scenario["expect"][depth]["effective_depth"]:
                 errors.append(f"{side}/{depth}: effective depth mismatch")
             snapshots.append(snapshot)
         report_path = output / f"report-{depth}.json"
-        _run(["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-              "--format", "json", "--policy", "strict_abi", "-o", str(report_path)],
-             allow_verdict=True)
+        run_command(["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
+                     "--format", "json", "--policy", "strict_abi", "-o", str(report_path)],
+                    verdict_report=report_path)
         report = json.loads(report_path.read_text())
         errors.extend(f"{depth}: {error}" for error in _assert_report(report, scenario["expect"][depth]))
     return errors

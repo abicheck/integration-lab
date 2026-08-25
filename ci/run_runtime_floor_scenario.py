@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 import yaml
 
-
-def _run(argv: list[str], allow_verdict: bool = False) -> None:
-    result = subprocess.run(argv)
-    if result.returncode and not allow_verdict:
-        raise RuntimeError(f"command failed ({result.returncode}): {' '.join(argv)}")
+from scenario_command import run_command
 
 
 def _oracle(report: dict, expected: dict) -> list[str]:
@@ -49,14 +44,14 @@ def run(manifest: Path, output: Path, cc: str) -> list[str]:
     fixture = manifest.parents[1] / scenario["fixture"]
     output.mkdir(parents=True, exist_ok=True)
     provider = output / "liblabrt.so"
-    _run([cc, "-shared", "-fPIC", str(fixture / "provider.c"),
+    run_command([cc, "-shared", "-fPIC", str(fixture / "provider.c"),
           f"-Wl,--version-script={fixture / 'versions.map'}", "-Wl,-soname,liblabrt.so", "-o", str(provider)])
     snapshots = []
     for side in ("v1", "v2"):
         binary, snapshot = output / f"{side}.so", output / f"{side}.json"
-        _run([cc, "-shared", "-fPIC", str(fixture / f"{side}.c"), f"-L{output}", "-llabrt",
+        run_command([cc, "-shared", "-fPIC", str(fixture / f"{side}.c"), f"-L{output}", "-llabrt",
               "-Wl,-rpath,$ORIGIN", "-o", str(binary)])
-        _run(["abicheck", "dump", str(binary), "-o", str(snapshot)])
+        run_command(["abicheck", "dump", str(binary), "-o", str(snapshot)])
         snapshots.append(snapshot)
     errors = []
     matrices = {
@@ -70,7 +65,7 @@ def run(manifest: Path, output: Path, cc: str) -> list[str]:
                    "--format", "json", "--policy", "strict_abi", "-o", str(report_path)]
         if matrix:
             command += ["--env-matrix", str(matrix)]
-        _run(command, allow_verdict=True)
+        run_command(command, verdict_report=report_path)
         errors.extend(f"{name}: {error}" for error in _oracle(
             json.loads(report_path.read_text()), scenario["expect"][name]))
     return errors

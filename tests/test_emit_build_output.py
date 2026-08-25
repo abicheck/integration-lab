@@ -161,6 +161,9 @@ def test_stage_profile_reflects_missing_target(tmp_path, profile):
         "target 'math' produced no output",
         f"header_roots entry 'include' does not exist under {repo_root}",
     ]
+    assert doc["diagnostics"]["errors"] == [
+        f"header_roots entry 'include' does not exist under {repo_root}",
+    ]
 
 
 def test_stage_profile_marks_built_but_unstaged_target_skipped(tmp_path, profile):
