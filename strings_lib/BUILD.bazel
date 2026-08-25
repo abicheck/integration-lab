@@ -26,6 +26,7 @@ cc_binary(
 cc_binary(
     name = "project_strings",
     srcs = ["src/strings.cc"],
+    copts = ["-O2"],
     deps = [":strings_api"],
     dynamic_deps = ["//:core"],
     linkshared = True,

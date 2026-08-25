@@ -74,6 +74,7 @@ cc_binary(
 cc_binary(
     name = "project_math",
     srcs = ["src/math.cc"],
+    copts = ["-O2"],
     deps = [":math_api"],
     dynamic_deps = [":core"],
     linkshared = True,

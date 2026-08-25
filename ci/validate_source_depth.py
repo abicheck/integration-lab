@@ -31,8 +31,18 @@ def validate(report: dict[str, Any], expected: str = "source") -> list[str]:
     if effective != expected:
         errors.append(f"effective_depth={effective!r}, expected {expected!r}")
     assurance = report.get("analysis_assurance")
-    if isinstance(assurance, dict) and assurance.get("status") != "complete":
-        errors.append(f"analysis_assurance.status={assurance.get('status')!r}, expected 'complete'")
+    if isinstance(assurance, dict):
+        # The overall assurance can legitimately be partial for an
+        # orthogonal channel (for example asymmetric historical DWARF) even
+        # when the requested source-depth contract itself was satisfied.
+        # Gate the depth-specific proof rather than conflating it with every
+        # other assurance dimension in the report.
+        if assurance.get("depth_satisfied") is not True:
+            errors.append(
+                f"analysis_assurance.depth_satisfied={assurance.get('depth_satisfied')!r}, expected True"
+            )
+    else:
+        errors.append("analysis_assurance is missing; source-depth satisfaction is unproven")
     operational = report.get("operational_errors")
     if operational:
         errors.append(f"report has {len(operational)} operational error(s)")

@@ -49,8 +49,8 @@ set_target_properties(core PROPERTIES OUTPUT_NAME "core")
 add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
 target_include_directories(math PRIVATE "${LAB_ROOT}/internal/include")
-target_link_libraries(math PRIVATE core)
-target_link_options(math PRIVATE "LINKER:--no-as-needed,-u,abicheck_lab_core_scale")
+target_link_libraries(math PRIVATE "-Wl,--no-as-needed" core "-Wl,--as-needed")
+target_link_options(math PRIVATE "LINKER:-z,now")
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
 )
@@ -61,8 +61,8 @@ set_target_properties(math PROPERTIES
 add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
 target_include_directories(strings PRIVATE "${LAB_ROOT}/internal/include")
-target_link_libraries(strings PRIVATE core)
-target_link_options(strings PRIVATE "LINKER:--no-as-needed,-u,abicheck_lab_core_scale")
+target_link_libraries(strings PRIVATE "-Wl,--no-as-needed" core "-Wl,--as-needed")
+target_link_options(strings PRIVATE "LINKER:-z,now")
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
 )

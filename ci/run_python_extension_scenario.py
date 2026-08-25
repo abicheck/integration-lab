@@ -31,6 +31,12 @@ def _oracle(report: dict, expected: dict, hashes: list[str]) -> list[str]:
     return errors
 
 
+def _reset_side_dir(path: Path) -> None:
+    """Create an empty scenario side directory, safely replacing a prior run."""
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True)
+
+
 def run(manifest: Path, output: Path, cxx: str) -> list[str]:
     doc = yaml.safe_load(manifest.read_text()) or {}
     scenario = next(item for item in doc["python_scenarios"] if item["id"] == "pybind-keyword-renamed")
@@ -44,7 +50,7 @@ def run(manifest: Path, output: Path, cxx: str) -> list[str]:
     snapshots, hashes = [], []
     for side in ("v1", "v2"):
         side_dir = output / side
-        side_dir.mkdir()
+        _reset_side_dir(side_dir)
         binary = side_dir / built.name
         shutil.copy2(built, binary)
         shutil.copy2(stubs / f"{side}.pyi", side_dir / "_core.pyi")

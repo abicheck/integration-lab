@@ -69,12 +69,12 @@ $(LIBCORE): $(CORE_SRC) | $(BUILD_DIR)
 $(LIBMATH): $(MATH_SRC) $(LIBCORE) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libmath.so \
-	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed,-u,abicheck_lab_core_scale -lcore -Wl,-rpath,'$$ORIGIN'
+	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed -lcore -Wl,--as-needed,-z,now,-rpath,'$$ORIGIN'
 
 $(LIBSTRINGS): $(STRINGS_SRC) $(LIBCORE) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libstrings.so \
-	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed,-u,abicheck_lab_core_scale -lcore -Wl,-rpath,'$$ORIGIN'
+	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed -lcore -Wl,--as-needed,-z,now,-rpath,'$$ORIGIN'
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's
 # cc_import wrapping) rather than recompiling math.cc into the binary.
