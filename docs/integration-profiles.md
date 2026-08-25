@@ -81,9 +81,9 @@ checked. Per profile: the candidate artifact exists and its digest matches
 what was staged, public headers are actually present
 (`require_public_headers`), and a backend-appropriate compile-evidence
 signal was collected — Bazel: `min_resolved_targets` via `bazel cquery`;
-CMake/Make: `min_compile_units` via a non-empty `compile_commands.json`
-(`require_compile_commands: false` on the Make profile, since `bear` is
-optional there).
+CMake/Make: `min_compile_units` via a non-empty `compile_commands.json`.
+Bear and its generated database are mandatory for the Make contract profile,
+so missing source evidence fails closed before comparison.
 
 ## The current lab checker (`ci/check_profile.py`): real scanner for
 cmake/make, a lab-only signal for bazel's own leg

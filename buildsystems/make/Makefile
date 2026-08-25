@@ -88,17 +88,13 @@ $(CONSUMER): $(CONSUMER_SRC) $(LIBMATH) | $(BUILD_DIR)
 	$(CXX) $(CXXSTD) -I$(LAB_ROOT)/include \
 	    -o $@ $< -L$(BUILD_DIR) -lmath -Wl,-rpath,'$$ORIGIN:$$ORIGIN/../lib'
 
-# Optional compile_commands.json via `bear` (PR1 item 5's own requirement:
-# invoke it if present, degrade gracefully -- never fail hard -- if it
-# isn't). See ci/backends/make.py's own handling of this same gap.
+# The native Make contract requires compile_commands.json.  Calling Bear
+# directly deliberately makes a missing tool or failed capture fatal rather
+# than allowing a source-evidence check to degrade to a shallow green result.
 compiledb:
-	@if command -v bear >/dev/null 2>&1; then \
-	    $(MAKE) clean; \
-	    mkdir -p $(BUILD_DIR); \
-	    bear --output $(BUILD_DIR)/compile_commands.json -- $(MAKE) all; \
-	else \
-	    echo "bear not found on PATH -- skipping compile_commands.json generation" >&2; \
-	fi
+	$(MAKE) clean
+	mkdir -p $(BUILD_DIR)
+	bear --output $(BUILD_DIR)/compile_commands.json -- $(MAKE) all
 
 smoke-test: all
 	LD_LIBRARY_PATH=$(BUILD_DIR) $(BUILD_DIR)/consumer_app

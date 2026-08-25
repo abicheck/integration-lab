@@ -101,7 +101,7 @@ profiles, all building the same shared source tree
 |---|---|---|
 | `linux-x86_64-gcc14-cxx17-bazel` | Bazel | `true` |
 | `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `true` |
-| `linux-x86_64-gcc14-cxx17-make-bear` | Make (+ Bear when available) | `true` |
+| `linux-x86_64-gcc14-cxx17-make-bear` | Make + required Bear evidence | `true` |
 
 `.github/workflows/integration-shadow.yml` builds and stages all three on
 every PR and push to `main`, runs a per-profile compatibility check
@@ -199,9 +199,10 @@ pybind cross-module internals identity remains an explicit expected gap.
   small subset (`add_function`/`remove_function`) proving both a
   compatible and a breaking verdict work under a second build system, not
   yet Make.
-- **Make's `bear`-captured evidence is best-effort, not authoritative** —
-  when `bear` isn't on `PATH`, the Make profile degrades to "no
-  compile-commands evidence" rather than failing.
+- **Make source evidence is fail-closed.** Bear and the generated
+  `compile_commands.json` are mandatory for the Make contract profile; a
+  missing tool, failed capture, or absent database fails the profile before
+  comparison rather than degrading to a binary-only green result.
 
 See [docs/roadmap.md](docs/roadmap.md) for what closes these gaps, and in
 what order.

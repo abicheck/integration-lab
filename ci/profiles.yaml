@@ -181,15 +181,11 @@ profiles:
       strings: [strings_lib/include]
       consumer: []
     build_command: "make -C buildsystems/make CC=gcc-14 CXX=g++-14"
-    # See the bazel profile's own `coverage` comment above. `bear` is
-    # optional on this backend (make.py's own verify_environment() note),
-    # so `require_compile_commands: false` -- a runner without `bear`
-    # degrades to "no compile_commands.json evidence" (a coverage note),
-    # not a coverage failure, matching make.py's existing best-effort
-    # posture for it. When compile_commands.json IS present (bear
-    # installed), min_compile_units still applies to it.
+    # Bear is a hard dependency for this contract profile. A missing or
+    # empty compile database fails environment/evidence validation; it may
+    # not degrade a required check to a binary-only success.
     coverage:
       checked_targets: [math, strings]
       require_public_headers: true
       min_compile_units: 1
-      require_compile_commands: false
+      require_compile_commands: true

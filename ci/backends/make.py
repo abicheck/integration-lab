@@ -1,7 +1,8 @@
-"""Make backend: drives buildsystems/make/Makefile via real `make`
-subprocess calls. Optionally invokes `bear` for a compile_commands.json
-when it's on PATH -- degrades gracefully (a note, not a failure) when it
-isn't, per PR1 item 5's own requirement.
+"""Make backend with mandatory Bear compile evidence.
+
+The native Make profile is a project contract.  It must therefore fail
+closed when it cannot produce the compile database consumed by the scanner;
+a successful binary build is not sufficient evidence for that profile.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ class MakeBackend(BuildBackend):
     def verify_environment(self) -> EnvironmentCheck:
         missing = []
         versions = {}
-        for tool in ("make",):
+        for tool in ("make", "bear"):
             version = self._tool_version(tool)
             if version is None:
                 missing.append(tool)
@@ -38,15 +39,7 @@ class MakeBackend(BuildBackend):
             missing.append(cxx)
         else:
             versions[cxx] = cxx_version
-        notes = []
-        if shutil.which("bear") is None:
-            notes.append(
-                "bear not found on PATH -- compile_commands.json generation will be "
-                "skipped (see Makefile's own `compiledb` target); this does not fail "
-                "verify_environment() since bear is optional evidence, not required "
-                "to build."
-            )
-        return EnvironmentCheck(ok=not missing, tool_versions=versions, missing=missing, notes=notes)
+        return EnvironmentCheck(ok=not missing, tool_versions=versions, missing=missing)
 
     def clean(self) -> None:
         # check=False previously discarded a failed `make clean` (e.g. a
@@ -107,19 +100,17 @@ class MakeBackend(BuildBackend):
     def collect_evidence(self, build_result: BuildResult) -> Dict[str, Any]:
         evidence: Dict[str, Any] = {"kind": "make+bear"}
         if shutil.which("bear") is None:
-            evidence["compile_commands_present"] = False
-            evidence["note"] = "bear not installed on this runner -- compile_commands.json not generated"
-            return evidence
-        try:
-            self._run(["make", "compiledb", *self._cc_cxx_args()])
-        except BackendError as exc:
-            evidence["compile_commands_present"] = False
-            evidence["note"] = f"bear invocation failed: {exc}"
-            return evidence
+            raise BackendError(
+                "bear is required by the Make contract profile but was not found on PATH"
+            )
+        self._run(["make", "compiledb", *self._cc_cxx_args()])
         compile_commands = self._build_dir / "compile_commands.json"
-        evidence["compile_commands_present"] = compile_commands.is_file()
-        if evidence["compile_commands_present"]:
-            evidence["compile_commands_path"] = str(compile_commands)
+        if not compile_commands.is_file():
+            raise BackendError(
+                f"Make evidence collection succeeded without producing {compile_commands}"
+            )
+        evidence["compile_commands_present"] = True
+        evidence["compile_commands_path"] = str(compile_commands)
         return evidence
 
     def stage(self, build_result: BuildResult, dest_dir: Path) -> Dict[str, Any]:

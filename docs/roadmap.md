@@ -20,14 +20,16 @@ account of what is implemented today.
    Bazel already has its own real, required gate in `abi-scan.yml`, so it
    never needed a second real-scanner path here. What's still open: this
    is still `integration-shadow.yml`'s advisory workflow, not a required
-   gate (see item 4 below); Make's `bear`-captured evidence remains
-   best-effort, not authoritative, when `bear` isn't on `PATH`.
-2. **Replace shadow orchestration with `check-target`/`check-project` where
-   appropriate.** Once the real scanner runs per profile, evaluate whether
-   `ci/run_profile.py`'s current build-then-shadow-check orchestration
-   should be replaced by a more direct `abicheck check-target`/
-   `check-project`-style invocation per backend, rather than this lab's own
-   staging-and-checking scaffolding.
+   gate (see item 4 below). Make evidence is now fail-closed: Bear and a
+   non-empty compile database are mandatory for its contract profile.
+2. **Consume native `check-project`: done at binary depth.**
+   `.github/workflows/project-shadow.yml` validates `.abicheck.yml` and every
+   standardized build output, restores exact-base accepted-main baselines,
+   and invokes upstream `check-project.yml`. Its run-plan oracle derives the
+   exact target/profile/channel/depth cells from the project declaration and
+   verifies each cell's required/gate policy. Source-depth promotion remains
+   blocked on upstream target-specific build-output evidence projection and
+   is recorded as an `expected_gap`, not emulated with lab routing glue.
 3. **Broaden cross-build-system public-contract equivalence.** An advisory
    version already exists (`ci/compare_build_outputs.py`, the
    `cross_build_equivalence` job — see

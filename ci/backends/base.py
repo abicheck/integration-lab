@@ -4,15 +4,15 @@ concrete backend (bazel.py / cmake.py / make.py) returns.
 Design goals, all deliberate:
 
 - No GitHub-Actions-specific code anywhere in this file or its
-  implementations -- a backend is a plain Python object driven by
-  subprocess calls, so `pytest` can exercise it directly and a future
-  driver (a different CI system, a local script) can reuse it unchanged.
+implementations -- a backend is a plain Python object driven by
+subprocess calls, so `pytest` can exercise it directly and a future
+driver (a different CI system, a local script) can reuse it unchanged.
 - Every method actually shells out to the real toolchain (`bazel`,
   `cmake`/`ninja`, `make`/`bear`) -- nothing here is a mock or a stub that
   only pretends to build. verify_environment() is the one method allowed
-  to *report* an unavailable tool rather than crash, so a driver can
-  degrade a profile to "skipped: toolchain missing" instead of a hard
-  failure when e.g. `bear` isn't installed (see make.py).
+to *report* an unavailable tool rather than crash. Contract-profile drivers
+then fail that environment check before building; in particular, Make cannot
+silently omit its required Bear evidence.
 """
 from __future__ import annotations
 

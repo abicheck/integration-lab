@@ -14,7 +14,7 @@ import shutil
 
 import pytest
 
-from base import BuildBackend, TargetResult
+from base import BackendError, BuildBackend, BuildResult, TargetResult
 from backends import build_backend, get_backend_class
 
 
@@ -49,6 +49,51 @@ def test_get_backend_class_resolves_all_three():
 def test_get_backend_class_rejects_unknown():
     with pytest.raises(ValueError):
         get_backend_class("nonexistent")
+
+
+def test_make_environment_requires_bear(tmp_path, monkeypatch):
+    from make import MakeBackend
+
+    backend = MakeBackend(
+        {"root": ".", "compiler": {"cxx": "g++-14"}}, tmp_path
+    )
+    monkeypatch.setattr(
+        backend,
+        "_tool_version",
+        lambda tool, version_flag="--version": None if tool == "bear" else "version",
+    )
+
+    check = backend.verify_environment()
+
+    assert not check.ok
+    assert check.missing == ["bear"]
+
+
+def test_make_evidence_fails_when_bear_disappears(tmp_path, monkeypatch):
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: None)
+
+    with pytest.raises(BackendError, match="required by the Make contract"):
+        backend.collect_evidence(result)
+
+
+def test_make_evidence_requires_generated_database(tmp_path, monkeypatch):
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: "/usr/bin/bear")
+    monkeypatch.setattr(backend, "_run", lambda *args, **kwargs: None)
+
+    with pytest.raises(BackendError, match="without producing"):
+        backend.collect_evidence(result)
 
 
 def _profiles_by_id():
@@ -86,6 +131,7 @@ def test_cmake_backend_builds_real_targets(repo_root):
 
 
 @pytest.mark.skipif(shutil.which("make") is None, reason="make not installed")
+@pytest.mark.skipif(shutil.which("bear") is None, reason="bear not installed")
 @pytest.mark.skipif(shutil.which("g++-14") is None, reason="g++-14 not installed")
 def test_make_backend_builds_real_targets(repo_root):
     profiles = _profiles_by_id()
