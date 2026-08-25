@@ -37,7 +37,7 @@ jobs:
           abicheck project validate-build "abicheck-build-$PROFILE"
           python3 ci/validate_project_foundation.py \
             --config .abicheck.yml --profiles ci/profiles.yaml \
-            --build-output "abicheck-build-$PROFILE"
+            --build-root "abicheck-build-$PROFILE"
           python3 ci/validate_cross_dso.py "abicheck-build-$PROFILE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

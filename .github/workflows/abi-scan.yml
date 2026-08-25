@@ -1822,6 +1822,7 @@ jobs:
       # depth and assurance envelope so an implicit L3 fallback cannot appear
       # as a green "L4 plugin" result.
       - name: Enforce source-depth plugin report contract
+        id: validate_l4_plugin_depth
         if: steps.l4_clang_plugin_compare.outcome == 'success'
         run: |
           python3 ci/validate_source_depth.py \
@@ -1864,6 +1865,8 @@ jobs:
               echo '⏭️ Skipped: could not install abicheck to consume the collected facts.'
             elif [ "${{ steps.l4_clang_plugin_compare.outcome }}" != "success" ]; then
               echo '⚠️ Plugin build and fact collection succeeded, but the abicheck compare step failed -- see the job log above.'
+            elif [ "${{ steps.validate_l4_plugin_depth.outcome }}" != "success" ]; then
+              echo '❌ Plugin report did not prove complete requested/effective source depth -- see the validation step above.'
             else
               echo '✅ Ran successfully -- see the `abicheck-l4-clang-plugin` artifact for the report.'
             fi

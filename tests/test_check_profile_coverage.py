@@ -62,6 +62,30 @@ def test_bazel_profile_passes_with_resolved_targets(tmp_path):
     assert result["gate_status"] == "PASS", result["failures"]
 
 
+def test_canonical_only_receipt_is_normalized(tmp_path):
+    staged, real_sha = _stage(
+        tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": ["//:math"]},
+        sha256=None,
+    )
+    legacy = json.loads((staged / "build-output.json").read_text())
+    (staged / "build-output.json").write_text(json.dumps({
+        "schema": "abicheck.build-output/v1",
+        "head_sha": "abc",
+        "profile": {"id": "p-bazel", "config": "bazel", "compiler": {"family": "gcc"}},
+        "targets": [{
+            "id": "math", "binary": "artifacts/lib/libmath.so",
+            "public_header_roots": legacy["header_roots"],
+        }],
+        "digests": {"artifacts/lib/libmath.so": f"sha256:{real_sha}"},
+        "diagnostics": {"skipped_targets": []},
+        "evidence_producer": {"tool": "bazel"},
+    }))
+    profile = {**_BAZEL_PROFILE, "coverage": {
+        "checked_targets": ["math"], "require_public_headers": True,
+    }}
+    assert evaluate(profile, staged)["gate_status"] == "PASS"
+
+
 def test_bazel_profile_fails_with_zero_resolved_targets(tmp_path):
     staged, _ = _stage(tmp_path, backend_evidence={"kind": "bazel-cquery", "targets": []}, sha256=None)
     result = evaluate(_BAZEL_PROFILE, staged)

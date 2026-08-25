@@ -19,8 +19,15 @@
         "arch": {"type": "string"},
         "compiler": {
           "type": "object",
-          "required": ["family", "version"],
-          "properties": {"family": {"type": "string"}, "version": {"type": "string"}}
+          "required": ["family", "version", "path", "digest", "standard", "abi_macros"],
+          "properties": {
+            "family": {"type": "string", "minLength": 1},
+            "version": {"type": "string", "minLength": 1},
+            "path": {"type": "string", "minLength": 1},
+            "digest": {"type": "string", "minLength": 1},
+            "standard": {"type": "string", "minLength": 1},
+            "abi_macros": {"type": "string"}
+          }
         }
       }
     },
@@ -34,7 +41,14 @@
           "binary": {"type": "string", "minLength": 1},
           "public_header_roots": {"type": "array", "items": {"type": "string"}},
           "generated_header_roots": {"type": "array", "items": {"type": "string"}},
-          "evidence": {"type": "object"}
+          "evidence": {
+            "type": "object",
+            "required": ["projection", "path"],
+            "properties": {
+              "projection": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1}
+            }
+          }
         }
       }
     },

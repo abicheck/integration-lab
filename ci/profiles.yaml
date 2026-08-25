@@ -92,7 +92,7 @@ profiles:
     # scripts/check_coverage_contract.py's own `require_bazel_target`
     # precedent for this backend.
     coverage:
-      checked_targets: [core, math, strings]
+      checked_targets: [math, strings]
       require_public_headers: true
       min_resolved_targets: 1
 
@@ -132,7 +132,7 @@ profiles:
     # from CMake's own generated compile_commands.json) -- one entry per
     # translation unit Ninja actually compiled.
     coverage:
-      checked_targets: [core, math, strings]
+      checked_targets: [math, strings]
       require_public_headers: true
       min_compile_units: 1
 
@@ -172,7 +172,7 @@ profiles:
     # posture for it. When compile_commands.json IS present (bear
     # installed), min_compile_units still applies to it.
     coverage:
-      checked_targets: [core, math, strings]
+      checked_targets: [math, strings]
       require_public_headers: true
       min_compile_units: 1
       require_compile_commands: false

@@ -24,6 +24,10 @@ def _oracle(report: dict, expected: dict) -> list[str]:
                if all(finding.get(key) == value for key, value in wanted.items())]
     if len(matches) != 1:
         errors.append(f"expected exactly one matching cross-DSO finding, got {len(matches)}")
+    if len(report.get("bundle_findings", [])) != 1:
+        errors.append(
+            f"expected exactly one total bundle finding, got {len(report.get('bundle_findings', []))}"
+        )
     libraries = {item.get("library"): item.get("verdict") for item in report.get("libraries", [])}
     if libraries.get("libmath.so") != "NO_CHANGE":
         errors.append(f"consumer cell should stay NO_CHANGE, got {libraries.get('libmath.so')!r}")

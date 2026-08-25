@@ -10,3 +10,6 @@ def test_bundle_oracle_attributes_provider_and_consumer():
               "libraries": [{"library": "libcore.so", "verdict": "BREAKING"},
                             {"library": "libmath.so", "verdict": "NO_CHANGE"}]}
     assert _oracle(report, expected) == []
+
+    report["bundle_findings"].append({"kind": "unexpected"})
+    assert any("total bundle finding" in error for error in _oracle(report, expected))

@@ -46,10 +46,11 @@ set_target_properties(core PROPERTIES OUTPUT_NAME "core")
 # comments) -- all three build systems need the identical SONAME string
 # for cross_build_equivalence (ci/compare_build_outputs.py) to actually
 # agree, not just each independently "have a SONAME".
-add_library(math SHARED "${LAB_ROOT}/src/project_math.cc")
+add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
 target_include_directories(math PRIVATE "${LAB_ROOT}/internal/include")
 target_link_libraries(math PRIVATE core)
+target_link_options(math PRIVATE "LINKER:--no-as-needed,-u,abicheck_lab_core_scale")
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
 )
@@ -57,10 +58,11 @@ set_target_properties(math PROPERTIES
 # ---- strings ------------------------------------------------------------
 # Mirrors strings_lib/BUILD.bazel's `strings` cc_binary(linkshared = True).
 # CMake's default SONAME (== OUTPUT_NAME) -- same reasoning as `math` above.
-add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/project_strings.cc")
+add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
 target_include_directories(strings PRIVATE "${LAB_ROOT}/internal/include")
 target_link_libraries(strings PRIVATE core)
+target_link_options(strings PRIVATE "LINKER:--no-as-needed,-u,abicheck_lab_core_scale")
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
 )

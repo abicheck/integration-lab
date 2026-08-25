@@ -45,3 +45,12 @@ def test_source_check_requires_declared_target_pack(tmp_path):
     ))
     assert any("lacks a declared per-target evidence pack" in error
                for error in validate(config, profiles, root))
+
+
+def test_missing_or_malformed_receipt_is_reported(tmp_path):
+    config, profiles, root = _write_fixture(tmp_path)
+    receipt = root / "build-output.json"
+    receipt.unlink()
+    assert any("cannot load" in error for error in validate(config, profiles, root))
+    receipt.write_text("{")
+    assert any("cannot load" in error for error in validate(config, profiles, root))

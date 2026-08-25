@@ -13,7 +13,9 @@ NEEDED_RE = re.compile(r"Shared library: \[([^]]+)\]")
 
 
 def needed(binary: Path) -> set[str]:
-    result = subprocess.run(["readelf", "-d", str(binary)], capture_output=True, text=True)
+    result = subprocess.run(
+        ["readelf", "-d", str(binary)], capture_output=True, text=True, timeout=60
+    )
     if result.returncode:
         raise RuntimeError(result.stderr or result.stdout)
     return set(NEEDED_RE.findall(result.stdout))
@@ -35,7 +37,9 @@ def validate(root: Path) -> list[str]:
     app = root / "artifacts/bin/consumer_app"
     if not errors and app.is_file():
         env = dict(os.environ, LD_LIBRARY_PATH=str(libdir))
-        result = subprocess.run([str(app)], env=env, capture_output=True, text=True)
+        result = subprocess.run(
+            [str(app)], env=env, capture_output=True, text=True, timeout=120
+        )
         if result.returncode:
             errors.append(f"staged consumer_app failed ({result.returncode}): {result.stderr}")
     return errors
@@ -47,7 +51,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         errors = validate(args.build_output)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"ERROR: {exc}")
         return 1
     for error in errors:

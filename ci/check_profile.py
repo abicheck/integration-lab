@@ -222,8 +222,65 @@ def _load_build_output(staged_dir: Path) -> Dict[str, Any]:
     if not path.is_file():
         path = staged_dir / "build-output.json"
     if not path.is_file():
-        raise CheckProfileError(f"no build-output.json under {staged_dir} -- run ci/run_profile.py first")
-    return _load_json(path)
+        raise CheckProfileError(
+            f"no lab-build-output.json or build-output.json under {staged_dir} -- run ci/run_profile.py first"
+        )
+    document = _load_json(path)
+    if not isinstance(document, dict):
+        raise CheckProfileError(f"{path} must contain a JSON object")
+    if document.get("schema") != "abicheck.build-output/v1":
+        return document
+
+    # Adapt the public build-output contract to the established internal
+    # receipt view. This keeps canonical-only downloaded artifacts usable
+    # without teaching every legacy consumer two unrelated shapes.
+    digests = document.get("digests", {})
+    targets = {}
+    for target in document.get("targets", []):
+        if not isinstance(target, dict) or not target.get("id"):
+            continue
+        binary = target.get("binary")
+        digest = digests.get(binary, "") if binary else ""
+        targets[target["id"]] = {
+            "kind": "executable" if target.get("kind") in {"app-consumer", "executable"} else "shared_library",
+            "built": bool(binary),
+            "path": binary,
+            "sha256": digest.removeprefix("sha256:") or None,
+            "size_bytes": None,
+        }
+    profile = document.get("profile", {})
+    producer = document.get("evidence_producer", {})
+    backend = producer.get("tool") or profile.get("config") or "unknown"
+    if backend == "bazel":
+        backend_evidence = {
+            "kind": "bazel-cquery",
+            "targets": sorted(targets),
+        }
+    else:
+        compile_db = staged_dir / "evidence/compile_commands.json"
+        backend_evidence = {
+            "kind": "compile_commands",
+            "compile_commands_present": compile_db.is_file(),
+            "compile_commands_path": "evidence/compile_commands.json" if compile_db.is_file() else None,
+            "note": "canonical receipt has no staged compile database" if not compile_db.is_file() else "",
+        }
+    return {
+        **document,
+        "success": not bool(document.get("diagnostics", {}).get("skipped_targets")),
+        "git": {"sha": document.get("head_sha")},
+        "profile": {
+            **profile,
+            "backend": backend,
+        },
+        "compiler": profile.get("compiler", {}),
+        "targets": targets,
+        "header_roots": sorted({
+            root
+            for target in document.get("targets", []) if isinstance(target, dict)
+            for root in target.get("public_header_roots", [])
+        }),
+        "evidence": {"dir": "evidence", "backend_evidence": backend_evidence},
+    }
 
 
 def _target_library_path(staged_dir: Path, build_output: Dict[str, Any], target: str) -> Path:

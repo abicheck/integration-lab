@@ -25,6 +25,21 @@ def _oracle(report: dict, expected: dict) -> list[str]:
         errors.append(f"expected exactly one LABRT runtime_floor_raised finding, got {len(floors)}")
     elif floors[0].get("severity") != expected["floor_severity"]:
         errors.append(f"floor severity={floors[0].get('severity')!r}, expected {expected['floor_severity']!r}")
+    expected_changes = {
+        ("symbol_version_required_added", "LABRT_2.0", expected["floor_severity"]),
+        ("symbol_version_required_removed", "LABRT_1.0", "compatible"),
+        ("runtime_floor_raised", "liblabrt.so:LABRT", expected["floor_severity"]),
+        ("imported_symbol_added", "labrt_new_api", "risk"),
+        ("imported_symbol_removed", "labrt_api", "compatible"),
+    }
+    actual_changes = {
+        (change.get("kind"), change.get("symbol"), change.get("severity"))
+        for change in report.get("changes", [])
+    }
+    if actual_changes != expected_changes:
+        errors.append(
+            f"changes={sorted(actual_changes)!r}, expected exactly {sorted(expected_changes)!r}"
+        )
     return errors
 
 

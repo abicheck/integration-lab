@@ -10,9 +10,15 @@ import yaml
 
 
 def validate(config_path: Path, profiles_path: Path, build_root: Path) -> list[str]:
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    producer = yaml.safe_load(profiles_path.read_text(encoding="utf-8")) or {}
-    output = json.loads((build_root / "build-output.json").read_text(encoding="utf-8"))
+    receipt = build_root / "build-output.json"
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        producer = yaml.safe_load(profiles_path.read_text(encoding="utf-8")) or {}
+        output = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        return [f"cannot load project foundation input: {exc}"]
+    if not isinstance(config, dict) or not isinstance(producer, dict) or not isinstance(output, dict):
+        return ["project configuration, profile manifest, and build output must be mappings"]
     errors: list[str] = []
 
     native_profiles = config.get("profiles", {})
@@ -70,9 +76,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--profiles", type=Path, required=True)
-    parser.add_argument("--build-output", type=Path, required=True)
+    parser.add_argument(
+        "--build-root", type=Path, required=True,
+        help="staged abicheck-build-<profile-id>/ directory",
+    )
     args = parser.parse_args()
-    errors = validate(args.config, args.profiles, args.build_output)
+    errors = validate(args.config, args.profiles, args.build_root)
     for error in errors:
         print(f"ERROR: {error}")
     if errors:

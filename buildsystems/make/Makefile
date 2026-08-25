@@ -36,9 +36,9 @@ CPPFLAGS_MATH    := -I$(LAB_ROOT)/include
 CPPFLAGS_STRINGS := -I$(LAB_ROOT)/strings_lib/include
 CPPFLAGS_INTERNAL := -I$(LAB_ROOT)/internal/include
 
-MATH_SRC     := $(LAB_ROOT)/src/project_math.cc
+MATH_SRC     := $(LAB_ROOT)/src/math.cc
 CORE_SRC     := $(LAB_ROOT)/src/core.cc
-STRINGS_SRC  := $(LAB_ROOT)/strings_lib/src/project_strings.cc
+STRINGS_SRC  := $(LAB_ROOT)/strings_lib/src/strings.cc
 CONSUMER_SRC := $(LAB_ROOT)/consumer/app.cc
 
 LIBMATH     := $(BUILD_DIR)/libmath.so
@@ -68,12 +68,12 @@ $(LIBCORE): $(CORE_SRC) | $(BUILD_DIR)
 $(LIBMATH): $(MATH_SRC) $(LIBCORE) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libmath.so \
-	    -o $@ $< -L$(BUILD_DIR) -lcore -Wl,-rpath,'$$ORIGIN'
+	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed,-u,abicheck_lab_core_scale -lcore -Wl,-rpath,'$$ORIGIN'
 
 $(LIBSTRINGS): $(STRINGS_SRC) $(LIBCORE) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS_STRINGS) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libstrings.so \
-	    -o $@ $< -L$(BUILD_DIR) -lcore -Wl,-rpath,'$$ORIGIN'
+	    -o $@ $< -L$(BUILD_DIR) -Wl,--no-as-needed,-u,abicheck_lab_core_scale -lcore -Wl,-rpath,'$$ORIGIN'
 
 # Dynamically links against libmath.so (mirrors consumer/BUILD.bazel's
 # cc_import wrapping) rather than recompiling math.cc into the binary.

@@ -120,7 +120,7 @@ Two more workflows keep each profile's own baseline current:
 `profile-baseline.yml` refreshes `abi/profiles/<id>/*.abicheck.json` on
 every push to `main`, and `release.yml` re-certifies and publishes an
 immutable per-profile baseline asset on every published release (today,
-only for the one `contract: true` profile). Full detail:
+for every profile selected by the release policy). Full detail:
 [docs/integration-profiles.md](docs/integration-profiles.md) and
 [docs/operations.md](docs/operations.md#multi-build-system-profile-baseline-lifecycle).
 

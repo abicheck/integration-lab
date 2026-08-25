@@ -20,3 +20,8 @@ def test_shallow_or_incomplete_report_fails():
 def test_operational_errors_fail_even_at_source_depth():
     report = {"level": {"depth": "source"}, "operational_errors": [{"kind": "evidence"}]}
     assert any("operational" in error for error in validate(report))
+
+
+def test_level_only_report_does_not_prove_requested_depth():
+    errors = validate({"level": {"depth": "source"}})
+    assert any("requested_depth=None" in error for error in errors)

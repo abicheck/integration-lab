@@ -26,7 +26,7 @@ def _depths(report: dict[str, Any]) -> tuple[Any, Any]:
 def validate(report: dict[str, Any], expected: str = "source") -> list[str]:
     errors = []
     requested, effective = _depths(report)
-    if requested not in (None, expected):
+    if requested != expected:
         errors.append(f"requested_depth={requested!r}, expected {expected!r}")
     if effective != expected:
         errors.append(f"effective_depth={effective!r}, expected {expected!r}")
