@@ -5,7 +5,7 @@ targets:
   core:
     kind: library
     binary_pattern: "artifacts/lib/libcore.so*"
-    public_headers: ["headers/include/abicheck_lab"]
+    public_headers: ["headers/core_include/abicheck_lab"]
     bundle: sdk
     checks:
       - channel: accepted-main

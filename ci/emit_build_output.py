@@ -256,6 +256,10 @@ def stage_profile(
             "size_bytes": target.size_bytes,
         }
 
+    for target_id, legacy_id in profile.get("legacy_target_aliases", {}).items():
+        if legacy_id in targets_doc:
+            targets_doc[target_id] = dict(targets_doc[legacy_id])
+
     compiler = dict(profile.get("compiler", {}))
     compiler["cc_version"] = backend._tool_version(compiler.get("cc", "")) if compiler.get("cc") else None
     compiler["cxx_version"] = backend._tool_version(compiler.get("cxx", "")) if compiler.get("cxx") else None
@@ -298,7 +302,10 @@ def stage_profile(
     declared_target_roots = profile.get("target_header_roots", {})
     native_targets = []
     digests: Dict[str, str] = {}
+    native_excludes = set(profile.get("native_exclude_targets", []))
     for name, target in build_result.targets.items():
+        if name in native_excludes:
+            continue
         staged_path = stage_manifest.get(name, {}).get("path")
         if not target.built or not staged_path:
             continue

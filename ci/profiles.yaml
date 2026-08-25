@@ -71,9 +71,10 @@ profiles:
       consumer: "//consumer:consumer_app"
     header_roots:
       - include
+      - core_include
       - strings_lib/include
     target_header_roots:
-      core: [include]
+      core: [core_include]
       math: [include]
       math_shared: [include]
       strings: [strings_lib/include]
@@ -117,14 +118,29 @@ profiles:
       math: math
       strings: strings
       consumer: consumer_app
+      legacy_math: legacy_math
+      legacy_strings: legacy_strings
     header_roots:
       - include
+      - core_include
       - strings_lib/include
     target_header_roots:
-      core: [include]
+      core: [core_include]
       math: [include]
       strings: [strings_lib/include]
       consumer: []
+      legacy_math: [include]
+      legacy_strings: [strings_lib/include]
+    staged_names:
+      legacy_math: legacy/libmath.so
+      legacy_strings: legacy/libstrings.so
+    soname_companions:
+      legacy_math: libmath.so.1
+      legacy_strings: libstrings.so.1
+    legacy_target_aliases:
+      math: legacy_math
+      strings: legacy_strings
+    native_exclude_targets: [legacy_math, legacy_strings]
     build_command: "cmake --preset gcc14-cxx17 && cmake --build --preset gcc14-cxx17"
     # See the bazel profile's own `coverage` comment above for the general
     # shape. `min_compile_units` here reads
@@ -157,9 +173,10 @@ profiles:
       consumer: consumer_app
     header_roots:
       - include
+      - core_include
       - strings_lib/include
     target_header_roots:
-      core: [include]
+      core: [core_include]
       math: [include]
       strings: [strings_lib/include]
       consumer: []

@@ -36,7 +36,9 @@ def validate(config_path: Path, profiles_path: Path, build_root: Path) -> list[s
         return errors
 
     actual_targets = {target.get("id") for target in output.get("targets", [])}
-    expected_targets = set(declared.get("targets", {}))
+    expected_targets = set(declared.get("targets", {})) - set(
+        declared.get("native_exclude_targets", [])
+    )
     if actual_targets != expected_targets:
         errors.append(
             f"{profile_id}: target ids differ: output={sorted(actual_targets)} "

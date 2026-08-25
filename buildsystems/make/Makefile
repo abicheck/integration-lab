@@ -33,6 +33,7 @@ endif
 CXXSTD     := -std=c++17
 CXXFLAGS   := $(CXXSTD) -fPIC -O2 -g -Wall
 CPPFLAGS_MATH    := -I$(LAB_ROOT)/include
+CPPFLAGS_CORE    := -I$(LAB_ROOT)/core_include
 CPPFLAGS_STRINGS := -I$(LAB_ROOT)/strings_lib/include
 CPPFLAGS_INTERNAL := -I$(LAB_ROOT)/internal/include
 
@@ -54,7 +55,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(LIBCORE): $(CORE_SRC) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS_MATH) $(CPPFLAGS_INTERNAL) -shared \
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS_CORE) $(CPPFLAGS_INTERNAL) -shared \
 	    -Wl,-soname,libcore.so \
 	    -o $@ $<
 

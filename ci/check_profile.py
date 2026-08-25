@@ -156,6 +156,12 @@ BEAR_ABSENT_MECHANISM_NOTE = (
     "profile always uses"
 )
 
+LEGACY_BASELINE_MECHANISM_NOTE = (
+    "nm/readelf dynamic-symbol-table + target-scoped public-header-digest diff -- "
+    "explicit migration fallback because the trusted PR-base profile baseline predates "
+    "embedded abicheck snapshots; profile-baseline.yml replaces it on the next main push"
+)
+
 # ELF/linker-internal dynamic symbols that show up in every shared object's
 # .dynsym regardless of what the library's own source exports -- never part
 # of a library's own public ABI. The first three are exactly the ones the
@@ -217,10 +223,11 @@ def _load_json(path: Path) -> Any:
         return json.load(fh)
 
 
-def _load_build_output(staged_dir: Path) -> Dict[str, Any]:
-    path = staged_dir / "lab-build-output.json"
-    if not path.is_file():
-        path = staged_dir / "build-output.json"
+def _load_build_output(staged_dir: Path, *, prefer_standard: bool = False) -> Dict[str, Any]:
+    candidates = ("build-output.json", "lab-build-output.json") if prefer_standard else (
+        "lab-build-output.json", "build-output.json"
+    )
+    path = next((staged_dir / name for name in candidates if (staged_dir / name).is_file()), staged_dir / candidates[0])
     if not path.is_file():
         raise CheckProfileError(
             f"no lab-build-output.json or build-output.json under {staged_dir} -- run ci/run_profile.py first"
@@ -355,7 +362,11 @@ def _sha256_file(path: Path) -> str:
 
 
 def _header_root_prefix(target: str) -> str:
-    return "strings_lib/include" if target == "strings" else "include"
+    if target == "strings":
+        return "strings_lib/include"
+    if target == "core":
+        return "core_include"
+    return "include"
 
 
 def _public_headers_for_target(staged_dir: Path, build_output: Dict[str, Any], target: str) -> Dict[str, str]:
@@ -526,6 +537,8 @@ def compare_profile(
     target: str,
     staged_dir: Path,
     baseline: Dict[str, Any],
+    *,
+    allow_legacy_baseline: bool = False,
 ) -> Dict[str, Any]:
     facts: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -887,6 +900,7 @@ def compare_profile(
         _apply_real_scan_verdict(
             facts, profile_id, target, staged_dir, build_output, baseline,
             loader_breaking=loader_breaking, loader_detail=loader_detail,
+            allow_legacy_baseline=allow_legacy_baseline,
         )
 
     return facts
@@ -925,6 +939,7 @@ def _apply_real_scan_verdict(
     *,
     loader_breaking: bool,
     loader_detail: str,
+    allow_legacy_baseline: bool,
 ) -> None:
     """Overrides facts["verdict"]/["detail"] with the real `abicheck
     compare` result for cmake/make backends -- the nm/readelf-derived
@@ -967,6 +982,16 @@ def _apply_real_scan_verdict(
     if not isinstance(baseline_snapshot, dict) or candidate_bear_absent:
         if "abicheck_snapshot_skipped_reason" in baseline or candidate_bear_absent:
             facts.update(mechanism=BEAR_ABSENT_MECHANISM_NOTE)
+            return
+        if allow_legacy_baseline and not loader_breaking:
+            facts.update(
+                mechanism=LEGACY_BASELINE_MECHANISM_NOTE,
+                detail=(
+                    f"{facts.get('detail', '')}; trusted baseline predates embedded "
+                    "abicheck snapshots, so this explicitly requested migration check "
+                    "used its recorded symbol/header contract"
+                ),
+            )
             return
         verdict, detail = _combine_with_loader_break(
             "NOT_COMPARABLE",
@@ -1040,6 +1065,10 @@ def main(argv=None) -> int:
     check_p.add_argument("--staged-dir", type=Path, required=True)
     check_p.add_argument("--baseline", type=Path, required=True)
     check_p.add_argument("--out", type=Path, required=True)
+    check_p.add_argument(
+        "--allow-legacy-baseline", action="store_true",
+        help="explicitly use a trusted pre-snapshot baseline's symbol/header contract during migration",
+    )
 
     args = parser.parse_args(argv)
 
@@ -1086,7 +1115,10 @@ def main(argv=None) -> int:
             baseline = None
         if not isinstance(baseline, dict):
             baseline = {}
-        report = compare_profile(args.profile_id, args.target, args.staged_dir, baseline)
+        report = compare_profile(
+            args.profile_id, args.target, args.staged_dir, baseline,
+            allow_legacy_baseline=args.allow_legacy_baseline,
+        )
         _write_json(report, args.out)
         print(json.dumps({"mode": "check", "profile_id": args.profile_id, "target": args.target, "verdict": report["verdict"]}))
         return 0 if report["verdict"] in ("NO_CHANGE", "COMPATIBLE") else 1

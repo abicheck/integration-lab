@@ -364,6 +364,24 @@ def test_compare_profile_real_scan_backend_fails_closed_on_baseline_without_snap
     assert "no embedded abicheck_snapshot" in result["detail"]
 
 
+def test_compare_profile_explicitly_allows_trusted_legacy_baseline_during_migration(tmp_path):
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    baseline["backend"] = "cmake"
+    build_output_path = staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "cmake"
+    build_output_path.write_text(json.dumps(build_output))
+
+    result = compare_profile(
+        "p1", "math", staged, baseline, allow_legacy_baseline=True
+    )
+    assert result["verdict"] == "NO_CHANGE"
+    assert "explicitly requested migration check" in result["detail"]
+    assert "migration fallback" in result["mechanism"]
+
+
 def test_compare_profile_backend_mismatch_fails_closed(tmp_path):
     # A profile whose backend was migrated (e.g. cmake -> bazel) while
     # keeping the same profile_id/target passes every identity check that

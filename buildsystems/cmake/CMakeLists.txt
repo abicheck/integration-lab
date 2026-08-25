@@ -27,7 +27,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
 add_library(core SHARED "${LAB_ROOT}/src/core.cc")
-target_include_directories(core PUBLIC "${LAB_ROOT}/include")
+target_include_directories(core PUBLIC "${LAB_ROOT}/core_include")
 target_include_directories(core PRIVATE "${LAB_ROOT}/internal/include")
 set_target_properties(core PROPERTIES OUTPUT_NAME "core")
 
@@ -66,6 +66,22 @@ target_link_options(strings PRIVATE "LINKER:--no-as-needed,-u,abicheck_lab_core_
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
 )
+
+# Transitional artifacts for the lab-owned profile baselines.  Those
+# baselines predate the native project contract and intentionally retain
+# their historical SONAMEs; the standardized project artifacts above use
+# the cross-build-system SONAME contract instead.
+configure_file("${LAB_ROOT}/src/math.cc" "${CMAKE_CURRENT_BINARY_DIR}/legacy_math.cc" COPYONLY)
+configure_file("${LAB_ROOT}/strings_lib/src/strings.cc" "${CMAKE_CURRENT_BINARY_DIR}/legacy_strings.cc" COPYONLY)
+add_library(legacy_math SHARED "${CMAKE_CURRENT_BINARY_DIR}/legacy_math.cc")
+target_include_directories(legacy_math PUBLIC "${LAB_ROOT}/include")
+target_link_options(legacy_math PRIVATE "LINKER:-soname,libmath.so.1")
+set_target_properties(legacy_math PROPERTIES NO_SONAME TRUE)
+
+add_library(legacy_strings SHARED "${CMAKE_CURRENT_BINARY_DIR}/legacy_strings.cc")
+target_include_directories(legacy_strings PUBLIC "${LAB_ROOT}/strings_lib/include")
+target_link_options(legacy_strings PRIVATE "LINKER:-soname,libstrings.so.1")
+set_target_properties(legacy_strings PROPERTIES NO_SONAME TRUE)
 
 # ---- consumer_app ---------------------------------------------------------
 # Mirrors consumer/BUILD.bazel's `consumer_app` cc_binary: links dynamically

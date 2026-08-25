@@ -4,8 +4,8 @@ load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 
 cc_library(
     name = "core_api",
-    hdrs = ["include/abicheck_lab/core.h"],
-    includes = ["include"],
+    hdrs = ["core_include/abicheck_lab/core.h"],
+    includes = ["core_include"],
     visibility = ["//visibility:public"],
 )
 
