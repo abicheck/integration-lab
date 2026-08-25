@@ -1805,16 +1805,27 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          set +e
           abicheck compare \
             "$RUNNER_TEMP/math.base.abicheck.json" \
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
             --ast-frontend clang \
-            --build-info bazel-bin/tools/abicheck/math_abicheck_inputs \
+            --build-info new=bazel-bin/tools/abicheck/math_abicheck_inputs \
             --depth source \
+            --require-complete-analysis \
             --format json \
             -o abicheck-l4-clang-plugin.json \
-            --policy strict_abi || true
+            --policy strict_abi
+          compare_rc=$?
+          set -e
+          # Verdict-bearing exits are valid report production. Usage/input
+          # failures (notably 64) can also leave a non-empty JSON error
+          # envelope, which must not be mistaken for a compatibility report.
+          case "$compare_rc" in
+            0|1|2|4) ;;
+            *) echo "::error::abicheck compare failed with operational exit $compare_rc"; exit "$compare_rc" ;;
+          esac
           test -s abicheck-l4-clang-plugin.json
 
       # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate

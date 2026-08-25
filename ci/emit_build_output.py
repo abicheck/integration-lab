@@ -119,7 +119,10 @@ def _compiler_abi_macros(executable: str) -> str:
         )
     except FileNotFoundError:
         return ""
-    wanted = ("_GLIBCXX_USE_CXX11_ABI", "__GXX_ABI_VERSION__", "__cplusplus")
+    # GCC spells this without trailing underscores.  Keeping the misspelled
+    # name here silently dropped the compiler ABI-mode atom from every GCC
+    # receipt, including builds using an explicit -fabi-version override.
+    wanted = ("_GLIBCXX_USE_CXX11_ABI", "__GXX_ABI_VERSION", "__cplusplus")
     values = []
     for line in proc.stdout.splitlines():
         if any(f" {macro} " in f" {line} " for macro in wanted):

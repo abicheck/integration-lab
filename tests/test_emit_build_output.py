@@ -14,7 +14,7 @@ import json
 import pytest
 
 from base import BuildResult, TargetResult
-from emit_build_output import stage_profile
+from emit_build_output import _compiler_abi_macros, stage_profile
 from validate_build_output import validate_document, validate_file
 
 
@@ -41,6 +41,23 @@ class _FakeBackend:
 
     def _tool_version(self, exe):
         return f"{exe} (fake)" if exe else None
+
+
+def test_compiler_abi_macros_records_gcc_abi_version(monkeypatch):
+    class Result:
+        stdout = "\n".join([
+            "#define __GXX_ABI_VERSION 1019",
+            "#define _GLIBCXX_USE_CXX11_ABI 1",
+            "#define __cplusplus 201703L",
+            "#define __IGNORED 1",
+        ])
+
+    monkeypatch.setattr("emit_build_output.subprocess.run", lambda *args, **kwargs: Result())
+
+    macros = _compiler_abi_macros("g++-14")
+
+    assert "__GXX_ABI_VERSION 1019" in macros
+    assert "__IGNORED" not in macros
 
 
 def _make_target(tmp_path, name, kind, content=b"fake-binary-bytes"):
