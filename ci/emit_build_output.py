@@ -312,6 +312,7 @@ def stage_profile(
         binary = f"artifacts/{staged_path}"
         target_doc = {
                 "id": name,
+                "kind": target.kind,
                 "binary": binary,
                 "public_header_roots": [
                     f"headers/{root}" for root in declared_target_roots.get(name, [])
@@ -359,7 +360,10 @@ def stage_profile(
         "diagnostics": {
             "warnings": list(build_result.diagnostics) + header_diagnostics,
             "skipped_targets": [
-                name for name, target in build_result.targets.items() if not target.built
+                name
+                for name, target in build_result.targets.items()
+                if not target.built
+                or not stage_manifest.get(name, {}).get("staged", False)
             ],
         },
     }

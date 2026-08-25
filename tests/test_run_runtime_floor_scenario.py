@@ -16,3 +16,17 @@ def test_runtime_floor_oracle_checks_severity_and_verdict():
     assert any("expected exactly" in error for error in _oracle(
         report, {"verdict": "BREAKING", "floor_severity": "breaking"}
     ))
+
+
+def test_runtime_floor_oracle_rejects_duplicate_findings():
+    changes = [
+        {"kind": "symbol_version_required_added", "symbol": "LABRT_2.0", "severity": "breaking"},
+        {"kind": "symbol_version_required_removed", "symbol": "LABRT_1.0", "severity": "compatible"},
+        {"kind": "runtime_floor_raised", "symbol": "liblabrt.so:LABRT", "severity": "breaking"},
+        {"kind": "imported_symbol_added", "symbol": "labrt_new_api", "severity": "risk"},
+        {"kind": "imported_symbol_removed", "symbol": "labrt_api", "severity": "compatible"},
+    ]
+    report = {"verdict": "BREAKING", "changes": changes + [dict(changes[3])]}
+    assert any("expected exactly" in error for error in _oracle(
+        report, {"verdict": "BREAKING", "floor_severity": "breaking"}
+    ))

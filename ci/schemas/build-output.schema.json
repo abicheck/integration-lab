@@ -38,6 +38,7 @@
         "required": ["id", "binary", "public_header_roots"],
         "properties": {
           "id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["shared_library", "executable"]},
           "binary": {"type": "string", "minLength": 1},
           "public_header_roots": {"type": "array", "items": {"type": "string"}},
           "generated_header_roots": {"type": "array", "items": {"type": "string"}},

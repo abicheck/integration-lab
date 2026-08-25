@@ -32,11 +32,11 @@ def _oracle(report: dict, expected: dict) -> list[str]:
         ("imported_symbol_added", "labrt_new_api", "risk"),
         ("imported_symbol_removed", "labrt_api", "compatible"),
     }
-    actual_changes = {
+    actual_changes = [
         (change.get("kind"), change.get("symbol"), change.get("severity"))
         for change in report.get("changes", [])
-    }
-    if actual_changes != expected_changes:
+    ]
+    if len(actual_changes) != len(expected_changes) or set(actual_changes) != expected_changes:
         errors.append(
             f"changes={sorted(actual_changes)!r}, expected exactly {sorted(expected_changes)!r}"
         )

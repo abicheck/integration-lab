@@ -26,9 +26,31 @@ import subprocess
 
 import pytest
 
-from check_profile import CheckProfileError, build_baseline, compare_profile, dynamic_symbols
+from check_profile import (
+    CheckProfileError,
+    _load_build_output,
+    build_baseline,
+    compare_profile,
+    dynamic_symbols,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not installed")
+
+
+def test_canonical_target_without_kind_is_not_assumed_shared_library(tmp_path):
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "build-output.json").write_text(json.dumps({
+        "schema": "abicheck.build-output/v1",
+        "profile": {"id": "p1", "config": "cmake"},
+        "targets": [{"id": "tool", "binary": "artifacts/bin/tool"}],
+        "digests": {},
+        "diagnostics": {"skipped_targets": []},
+    }))
+
+    output = _load_build_output(staged)
+
+    assert output["targets"]["tool"]["kind"] == "unknown"
 
 
 def _compile_shared_lib(tmp_path, source: str, name: str = "libfake.so", extra_args=()):

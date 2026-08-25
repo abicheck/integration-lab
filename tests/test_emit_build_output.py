@@ -103,6 +103,8 @@ def test_stage_profile_writes_expected_layout(tmp_path, profile):
     assert doc["profile"]["id"] == "test-profile"
     assert json.loads((out_dir / "lab-build-output.json").read_text())["profile"]["contract"] is False
     assert next(t for t in doc["targets"] if t["id"] == "math")["binary"] == "artifacts/lib/math.bin"
+    assert next(t for t in doc["targets"] if t["id"] == "math")["kind"] == "shared_library"
+    assert next(t for t in doc["targets"] if t["id"] == "consumer")["kind"] == "executable"
     assert doc["digests"]["artifacts/lib/math.bin"] == f"sha256:{math_target.sha256}"
     assert any(t["id"] == "consumer" for t in doc["targets"])
     assert next(t for t in doc["targets"] if t["id"] == "math")["public_header_roots"] == ["headers/include"]
@@ -142,6 +144,25 @@ def test_stage_profile_reflects_missing_target(tmp_path, profile):
         "target 'math' produced no output",
         f"header_roots entry 'include' does not exist under {repo_root}",
     ]
+
+
+def test_stage_profile_marks_built_but_unstaged_target_skipped(tmp_path, profile):
+    repo_root = tmp_path / "repo"
+    (repo_root / "include").mkdir(parents=True)
+    target = _make_target(tmp_path, "math", "shared_library")
+    build_result = BuildResult(
+        profile_id=profile["id"], backend="cmake", success=True,
+        started_at=0.0, ended_at=0.1, targets={"math": target}, diagnostics=[],
+    )
+    backend = _FakeBackend(
+        stage_manifest={"math": {"staged": False}},
+        evidence={"kind": "fake"}, description={"backend": "cmake"},
+    )
+
+    doc = stage_profile(profile, repo_root, build_result, backend, tmp_path / "out")
+
+    assert doc["targets"] == []
+    assert doc["diagnostics"]["skipped_targets"] == ["math"]
 
 
 def test_staged_build_output_validates_against_schema(tmp_path, profile):

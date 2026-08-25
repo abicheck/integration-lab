@@ -248,8 +248,18 @@ def _load_build_output(staged_dir: Path, *, prefer_standard: bool = False) -> Di
             continue
         binary = target.get("binary")
         digest = digests.get(binary, "") if binary else ""
+        declared_kind = target.get("kind")
+        if declared_kind in {"app-consumer", "executable"}:
+            normalized_kind = "executable"
+        elif declared_kind in {"library", "shared_library"}:
+            normalized_kind = "shared_library"
+        else:
+            # build-output/v1 historically did not require a target role.
+            # Do not guess that an unknown artifact is a DSO: that would put
+            # executables into cross-build shared-library equivalence checks.
+            normalized_kind = "unknown"
         targets[target["id"]] = {
-            "kind": "executable" if target.get("kind") in {"app-consumer", "executable"} else "shared_library",
+            "kind": normalized_kind,
             "built": bool(binary),
             "path": binary,
             "sha256": digest.removeprefix("sha256:") or None,
