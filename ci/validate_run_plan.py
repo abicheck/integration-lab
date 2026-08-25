@@ -23,8 +23,15 @@ def validate(config_path: Path, plan_path: Path) -> list[str]:
                     check_id = f"{name}@{profile}#{channel}@{depth}"
                     expected[check_id] = check
     checks = plan.get("checks", [])
-    actual = {check.get("check_id") for check in checks}
     errors = []
+    invalid_ids = [check.get("check_id") for check in checks
+                   if not isinstance(check.get("check_id"), str) or not check.get("check_id")]
+    if invalid_ids:
+        errors.append(f"run-plan contains invalid check_id value(s): {invalid_ids!r}")
+    actual = {
+        check.get("check_id") for check in checks
+        if isinstance(check.get("check_id"), str) and check.get("check_id")
+    }
     if actual != set(expected):
         errors.append(
             f"run-plan cells differ: actual={sorted(actual)} expected={sorted(expected)}"

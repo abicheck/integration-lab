@@ -33,6 +33,20 @@ jobs:
           sha="$PR_BASE"
           if [[ -z "$sha" ]]; then sha="$PUSH_BEFORE"; fi
           if [[ -z "$sha" || "$sha" =~ ^0+$ ]]; then sha="$CURRENT_SHA"; fi
+          # Baseline refresh commits are written by automation credentials
+          # whose pushes do not start another workflow run. They only modify
+          # committed legacy abi/ snapshots, so no native project cache can
+          # exist for that SHA and the project inputs are identical to its
+          # first parent. Resolve through any such commits to the nearest
+          # project-producing ancestor instead of demanding an impossible
+          # cache key. Any non-abi change stops the walk and remains exact.
+          while parent="$(git rev-parse "$sha^" 2>/dev/null)" && \
+                changed="$(git diff --name-only "$parent" "$sha")" && \
+                [[ -n "$changed" ]] && \
+                ! grep -qvE '^abi/' <<<"$changed"; do
+            echo "Baseline-only commit $sha has no workflow-produced native cache; using $parent."
+            sha="$parent"
+          done
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - id: readiness
         env:

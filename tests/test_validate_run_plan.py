@@ -70,3 +70,20 @@ def test_declared_depth_and_gate_policy_must_be_preserved(tmp_path):
     assert any("required=True" in error for error in errors)
     assert any("gate_mode='deferred'" in error for error in errors)
     assert any("requested_depth='binary'" in error for error in errors)
+
+
+def test_missing_check_id_is_reported_without_sorting_error(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text(
+        "targets:\n  core:\n    checks: [{channel: accepted-main, depth: binary}]\n"
+        "profiles:\n  p: {}\n"
+    )
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({
+        "checks": [{"check_id": None, "requested_depth": "binary"}],
+        "gate": {"missing_required": "fail", "unexpected_target": "fail"},
+    }))
+
+    errors = validate(config, plan)
+    assert any("invalid check_id" in error for error in errors)
+    assert any("run-plan cells differ" in error for error in errors)

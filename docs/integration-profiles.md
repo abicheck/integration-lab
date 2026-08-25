@@ -22,14 +22,13 @@ than copies of it:
 | Profile id | Backend | `contract` | Notes |
 |---|---|---|---|
 | `linux-x86_64-gcc14-cxx17-bazel` | Bazel | `true` | The existing, unchanged root Bazel build `abi-scan.yml` already gates on. |
-| `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `false` | `buildsystems/cmake/CMakeLists.txt` references the shared sources directly. |
-| `linux-x86_64-gcc14-cxx17-make-bear` | Make | `false` | `buildsystems/make/Makefile`, with optional `bear`-generated `compile_commands.json`. |
+| `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `true` | `buildsystems/cmake/CMakeLists.txt` references the shared sources directly. |
+| `linux-x86_64-gcc14-cxx17-make-bear` | Make | `true` | `buildsystems/make/Makefile`, with required `bear`-generated `compile_commands.json`. |
 
-`contract: true` marks the one profile whose result is trusted as a
-required project contract today — nothing about that changes here.
-`contract: false` (a **contract profile** is the term for one where this
-flips) marks an **advisory profile**: failures are reported but never block
-a merge.
+`contract: true` marks all three profiles as required project-contract cells
+in the native project shadow. The shadow workflow itself remains advisory
+until its aggregate status is promoted in branch protection; profile contract
+membership and repository-level required-check promotion are separate choices.
 
 Each profile also declares a `coverage` block (see below) and the exact
 `cc`/`cxx`/`standard` it's pinned to — there is no silent fallback to

@@ -96,6 +96,41 @@ def test_make_evidence_requires_generated_database(tmp_path, monkeypatch):
         backend.collect_evidence(result)
 
 
+@pytest.mark.parametrize("contents", ["[]", "{}", "not json", "[null]"])
+def test_make_evidence_requires_usable_database(tmp_path, monkeypatch, contents):
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    backend._build_dir.mkdir()
+    (backend._build_dir / "compile_commands.json").write_text(contents)
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: "/usr/bin/bear")
+    monkeypatch.setattr(backend, "_run", lambda *args, **kwargs: None)
+
+    with pytest.raises(BackendError, match="compile database"):
+        backend.collect_evidence(result)
+
+
+def test_make_evidence_accepts_nonempty_command_array(tmp_path, monkeypatch):
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    backend._build_dir.mkdir()
+    database = backend._build_dir / "compile_commands.json"
+    database.write_text('[{"file": "src/math.cc", "command": "g++ -c src/math.cc"}]')
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: "/usr/bin/bear")
+    monkeypatch.setattr(backend, "_run", lambda *args, **kwargs: None)
+
+    evidence = backend.collect_evidence(result)
+    assert evidence["compile_commands_present"] is True
+    assert evidence["compile_commands_path"] == str(database)
+
+
 def _profiles_by_id():
     from select_profiles import load_profiles
     from pathlib import Path

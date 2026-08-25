@@ -6,6 +6,7 @@ a successful binary build is not sufficient evidence for that profile.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from pathlib import Path
@@ -109,6 +110,16 @@ class MakeBackend(BuildBackend):
             raise BackendError(
                 f"Make evidence collection succeeded without producing {compile_commands}"
             )
+        try:
+            commands = json.loads(compile_commands.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackendError(f"Make compile database is not valid JSON: {exc}") from exc
+        if not isinstance(commands, list) or not commands:
+            raise BackendError(
+                "Make compile database must be a non-empty JSON array of compile commands"
+            )
+        if any(not isinstance(command, dict) for command in commands):
+            raise BackendError("Make compile database entries must be JSON objects")
         evidence["compile_commands_present"] = True
         evidence["compile_commands_path"] = str(compile_commands)
         return evidence
