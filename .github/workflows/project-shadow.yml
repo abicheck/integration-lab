@@ -122,14 +122,18 @@ jobs:
         with:
           path: baseline-set
           key: integration-lab-main-g1-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
+          # A prefix restore is a transport fallback only. The following
+          # step still requires the manifest's project_ref to equal the
+          # resolved trusted ancestor exactly, so an older unrelated cache
+          # can never be accepted as the comparison baseline.
+          restore-keys: |
+            integration-lab-main-g1-${{ matrix.profile }}-
       - name: Require exact cache hit and baseline identity
         env:
-          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
           EXPECTED_REF: ${{ needs.baseline-ref.outputs.sha }}
           PROFILE: ${{ matrix.profile }}
         run: |
           set -euo pipefail
-          test "$CACHE_HIT" = true
           python3 - <<'PY'
           import json, os
           manifest = json.load(open("baseline-set/manifest.json"))

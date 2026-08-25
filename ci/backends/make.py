@@ -120,6 +120,18 @@ class MakeBackend(BuildBackend):
             )
         if any(not isinstance(command, dict) for command in commands):
             raise BackendError("Make compile database entries must be JSON objects")
+        for index, command in enumerate(commands):
+            missing = [field for field in ("directory", "file") if not command.get(field)]
+            has_invocation = bool(command.get("command")) or (
+                isinstance(command.get("arguments"), list) and bool(command["arguments"])
+            )
+            if missing or not has_invocation:
+                required = ", ".join(missing) or "command or non-empty arguments"
+                if missing and not has_invocation:
+                    required += ", command or non-empty arguments"
+                raise BackendError(
+                    f"Make compile database entry {index} is missing required field(s): {required}"
+                )
         evidence["compile_commands_present"] = True
         evidence["compile_commands_path"] = str(compile_commands)
         return evidence

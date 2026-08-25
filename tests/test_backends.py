@@ -96,7 +96,20 @@ def test_make_evidence_requires_generated_database(tmp_path, monkeypatch):
         backend.collect_evidence(result)
 
 
-@pytest.mark.parametrize("contents", ["[]", "{}", "not json", "[null]"])
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "[]",
+        "{}",
+        "not json",
+        "[null]",
+        "[{}]",
+        '[{"directory": "/tmp", "file": "src/math.cc"}]',
+        '[{"directory": "/tmp", "command": "g++ -c src/math.cc"}]',
+        '[{"file": "src/math.cc", "command": "g++ -c src/math.cc"}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "arguments": []}]',
+    ],
+)
 def test_make_evidence_requires_usable_database(tmp_path, monkeypatch, contents):
     from make import MakeBackend
 
@@ -119,7 +132,10 @@ def test_make_evidence_accepts_nonempty_command_array(tmp_path, monkeypatch):
     backend = MakeBackend({"root": "."}, tmp_path)
     backend._build_dir.mkdir()
     database = backend._build_dir / "compile_commands.json"
-    database.write_text('[{"file": "src/math.cc", "command": "g++ -c src/math.cc"}]')
+    database.write_text(
+        '[{"directory": "/tmp", "file": "src/math.cc", '
+        '"command": "g++ -c src/math.cc"}]'
+    )
     result = BuildResult(
         profile_id="make", backend="make", success=True, started_at=0, ended_at=1
     )
