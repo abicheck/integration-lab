@@ -228,9 +228,10 @@ class BazelBackend(BuildBackend):
                 manifest[name] = {"staged": False}
                 continue
             out_subdir = bin_dir if target.kind == "executable" else lib_dir
-            dest = out_subdir / target.path.name
+            staged_name = self.profile.get("staged_names", {}).get(name, target.path.name)
+            dest = out_subdir / staged_name
             shutil.copy2(target.path, dest)
-            if target.kind == "executable":
+            if target.kind in {"executable", "shared_library"}:
                 # bazel-bin/ outputs are read-only (mode 0555 -- Bazel's own
                 # convention for action outputs), and shutil.copy2 preserves
                 # that mode on the staged copy. patchelf then needs to write
@@ -263,8 +264,9 @@ class BazelBackend(BuildBackend):
                 patchelf = shutil.which("patchelf")
                 rewrite_failed = patchelf is None
                 if patchelf:
+                    staged_rpath = "$ORIGIN/../lib" if target.kind == "executable" else "$ORIGIN"
                     proc = self._run(
-                        [patchelf, "--set-rpath", "$ORIGIN/../lib", str(dest)],
+                        [patchelf, "--set-rpath", staged_rpath, str(dest)],
                         check=False,
                     )
                     rewrite_failed = proc.returncode != 0
@@ -272,7 +274,7 @@ class BazelBackend(BuildBackend):
                     detail = "patchelf not found" if patchelf is None else "patchelf --set-rpath failed"
                     build_result.success = False
                     build_result.diagnostics.append(
-                        f"could not rewrite RUNPATH for staged executable {name!r}: {detail}"
+                        f"could not rewrite RUNPATH for staged {target.kind} {name!r}: {detail}"
                     )
                     manifest[name] = {"staged": False, "error": detail}
                     continue

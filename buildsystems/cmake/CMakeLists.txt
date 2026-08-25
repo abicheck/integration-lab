@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 
 # Always emit compile_commands.json (PR1 item 4's own requirement) --
 # redundant with CMAKE_EXPORT_COMPILE_COMMANDS in CMakePresets.json, set
@@ -24,6 +25,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Repo root, two levels up from buildsystems/cmake/.
 get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+
+add_library(core SHARED "${LAB_ROOT}/src/core.cc")
+target_include_directories(core PUBLIC "${LAB_ROOT}/core_include")
+target_include_directories(core PRIVATE "${LAB_ROOT}/internal/include")
+set_target_properties(core PROPERTIES OUTPUT_NAME "core")
 
 # ---- math -------------------------------------------------------------
 # Mirrors BUILD.bazel's `math` cc_binary(linkshared = True): same
@@ -42,6 +48,9 @@ get_filename_component(LAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 # agree, not just each independently "have a SONAME".
 add_library(math SHARED "${LAB_ROOT}/src/math.cc")
 target_include_directories(math PUBLIC "${LAB_ROOT}/include")
+target_include_directories(math PRIVATE "${LAB_ROOT}/internal/include")
+target_link_libraries(math PRIVATE "-Wl,--no-as-needed" core "-Wl,--as-needed")
+target_link_options(math PRIVATE "LINKER:-z,now")
 set_target_properties(math PROPERTIES
     OUTPUT_NAME "math"
 )
@@ -51,9 +60,28 @@ set_target_properties(math PROPERTIES
 # CMake's default SONAME (== OUTPUT_NAME) -- same reasoning as `math` above.
 add_library(strings SHARED "${LAB_ROOT}/strings_lib/src/strings.cc")
 target_include_directories(strings PUBLIC "${LAB_ROOT}/strings_lib/include")
+target_include_directories(strings PRIVATE "${LAB_ROOT}/internal/include")
+target_link_libraries(strings PRIVATE "-Wl,--no-as-needed" core "-Wl,--as-needed")
+target_link_options(strings PRIVATE "LINKER:-z,now")
 set_target_properties(strings PROPERTIES
     OUTPUT_NAME "strings"
 )
+
+# Transitional artifacts for the lab-owned profile baselines.  Those
+# baselines predate the native project contract and intentionally retain
+# their historical SONAMEs; the standardized project artifacts above use
+# the cross-build-system SONAME contract instead.
+configure_file("${LAB_ROOT}/src/math.cc" "${CMAKE_CURRENT_BINARY_DIR}/legacy_math.cc" COPYONLY)
+configure_file("${LAB_ROOT}/strings_lib/src/strings.cc" "${CMAKE_CURRENT_BINARY_DIR}/legacy_strings.cc" COPYONLY)
+add_library(legacy_math SHARED "${CMAKE_CURRENT_BINARY_DIR}/legacy_math.cc")
+target_include_directories(legacy_math PUBLIC "${LAB_ROOT}/include")
+target_link_options(legacy_math PRIVATE "LINKER:-soname,libmath.so.1")
+set_target_properties(legacy_math PROPERTIES NO_SONAME TRUE)
+
+add_library(legacy_strings SHARED "${CMAKE_CURRENT_BINARY_DIR}/legacy_strings.cc")
+target_include_directories(legacy_strings PUBLIC "${LAB_ROOT}/strings_lib/include")
+target_link_options(legacy_strings PRIVATE "LINKER:-soname,libstrings.so.1")
+set_target_properties(legacy_strings PROPERTIES NO_SONAME TRUE)
 
 # ---- consumer_app ---------------------------------------------------------
 # Mirrors consumer/BUILD.bazel's `consumer_app` cc_binary: links dynamically
@@ -71,7 +99,6 @@ target_link_libraries(consumer_app PRIVATE math)
 # once the original build directory is gone (CodeRabbit review, PR #19).
 # $ORIGIN covers the build tree (consumer_app and libmath.so* colocated in
 # build/); $ORIGIN/../lib covers the staged layout.
-set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 set_target_properties(consumer_app PROPERTIES
     BUILD_RPATH "$ORIGIN:$ORIGIN/../lib"
 )

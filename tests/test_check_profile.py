@@ -26,9 +26,31 @@ import subprocess
 
 import pytest
 
-from check_profile import CheckProfileError, build_baseline, compare_profile, dynamic_symbols
+from check_profile import (
+    CheckProfileError,
+    _load_build_output,
+    build_baseline,
+    compare_profile,
+    dynamic_symbols,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not installed")
+
+
+def test_canonical_target_without_kind_is_not_assumed_shared_library(tmp_path):
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "build-output.json").write_text(json.dumps({
+        "schema": "abicheck.build-output/v1",
+        "profile": {"id": "p1", "config": "cmake"},
+        "targets": [{"id": "tool", "binary": "artifacts/bin/tool"}],
+        "digests": {},
+        "diagnostics": {"skipped_targets": []},
+    }))
+
+    output = _load_build_output(staged)
+
+    assert output["targets"]["tool"]["kind"] == "unknown"
 
 
 def _compile_shared_lib(tmp_path, source: str, name: str = "libfake.so", extra_args=()):
@@ -362,6 +384,24 @@ def test_compare_profile_real_scan_backend_fails_closed_on_baseline_without_snap
     result = compare_profile("p1", "math", staged, baseline)
     assert result["verdict"] == "NOT_COMPARABLE"
     assert "no embedded abicheck_snapshot" in result["detail"]
+
+
+def test_compare_profile_explicitly_allows_trusted_legacy_baseline_during_migration(tmp_path):
+    lib = _compile_shared_lib(tmp_path, "int foo(void) { return 1; }\n")
+    staged = _stage_profile(tmp_path, lib)
+    baseline = build_baseline("p1", "math", staged)
+    baseline["backend"] = "cmake"
+    build_output_path = staged / "build-output.json"
+    build_output = json.loads(build_output_path.read_text())
+    build_output["profile"]["backend"] = "cmake"
+    build_output_path.write_text(json.dumps(build_output))
+
+    result = compare_profile(
+        "p1", "math", staged, baseline, allow_legacy_baseline=True
+    )
+    assert result["verdict"] == "NO_CHANGE"
+    assert "explicitly requested migration check" in result["detail"]
+    assert "migration fallback" in result["mechanism"]
 
 
 def test_compare_profile_backend_mismatch_fails_closed(tmp_path):

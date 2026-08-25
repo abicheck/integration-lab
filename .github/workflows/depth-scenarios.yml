@@ -1,0 +1,77 @@
+name: Evidence depth scenarios
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  project-cross-dso:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove cross-DSO provider signature break
+        run: python3 ci/run_project_bundle_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: project-cross-dso-break
+          path: project-bundle-results/
+          if-no-files-found: error
+
+  l2-green-l4-red:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove L2 green and L4 macro break
+        run: python3 ci/run_depth_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l2-green-l4-macro-break
+          path: depth-scenario-results/
+          if-no-files-found: error
+
+  runtime-floor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Verify deterministic LABRT runtime-floor matrix
+        run: python3 ci/run_runtime_floor_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-floor-raised
+          path: runtime-floor-results/
+          if-no-files-found: error
+
+  python-extension:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pybind11 pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Build scikit-build-core wheel
+        run: python -m pip wheel --no-deps bindings/python -w python-extension-results/wheels
+      - name: Prove stub-only pybind11 API break
+        run: python3 ci/run_python_extension_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pybind-keyword-renamed
+          path: python-extension-results/
+          if-no-files-found: error

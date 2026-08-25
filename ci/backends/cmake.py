@@ -133,8 +133,13 @@ class CMakeBackend(BuildBackend):
                 manifest[name] = {"staged": False}
                 continue
             out_subdir = bin_dir if target.kind == "executable" else lib_dir
-            dest = out_subdir / target.path.name
+            staged_name = self.profile.get("staged_names", {}).get(name, target.path.name)
+            dest = out_subdir / staged_name
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(target.path, dest)
+            companion = self.profile.get("soname_companions", {}).get(name)
+            if companion:
+                shutil.copy2(target.path, dest.parent / companion)
             if target.kind == "shared_library":
                 # CMakeLists.txt sets no SOVERSION/VERSION for math/strings
                 # (see that file's own comment: CMake's default SONAME ==

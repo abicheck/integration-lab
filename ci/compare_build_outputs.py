@@ -483,8 +483,8 @@ def compare_pair(
     canonical_targets: List[str],
     run_abicheck: bool = True,
 ) -> Dict[str, Any]:
-    build_output_a = _load_build_output(staged_a)
-    build_output_b = _load_build_output(staged_b)
+    build_output_a = _load_build_output(staged_a, prefer_standard=True)
+    build_output_b = _load_build_output(staged_b, prefer_standard=True)
 
     # canonical_targets is the shared_library subset of ci/profiles.yaml's
     # `coverage.checked_targets` common to BOTH profiles being compared --
@@ -585,7 +585,7 @@ def compare_all(
 
     shas = set()
     for profile_id, staged_dir in build_dirs.items():
-        build_output = _load_build_output(staged_dir)
+        build_output = _load_build_output(staged_dir, prefer_standard=True)
         sha = build_output.get("git", {}).get("sha")
         if sha and sha != "unknown":
             shas.add(sha)
@@ -697,7 +697,7 @@ def main(argv=None) -> int:
         if profile_id in build_dirs:
             print(f"compare_build_outputs: duplicate --build-dir profile id {profile_id!r}", file=sys.stderr)
             return 1
-        if not (path / "build-output.json").is_file():
+        if not (path / "lab-build-output.json").is_file() and not (path / "build-output.json").is_file():
             print(f"compare_build_outputs: {path} has no build-output.json (profile {profile_id!r})", file=sys.stderr)
             return 1
         build_dirs[profile_id] = path

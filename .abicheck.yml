@@ -1,0 +1,113 @@
+# The customer-facing ABICheck project contract.  Keep build mechanics in
+# ci/profiles.yaml until every backend consumes this file directly; compatibility
+# topology belongs here and nowhere in workflow matrices.
+targets:
+  core:
+    kind: library
+    binary_pattern: "artifacts/lib/libcore.so*"
+    public_headers: ["headers/core_include/abicheck_lab"]
+    bundle: sdk
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: &all_profiles
+          - linux-x86_64-gcc14-cxx17-bazel
+          - linux-x86_64-gcc14-cxx17-cmake-ninja
+          - linux-x86_64-gcc14-cxx17-make-bear
+  math:
+    kind: library
+    binary_pattern: "artifacts/lib/libmath.so*"
+    public_headers: ["headers/include/abicheck_lab"]
+    bundle: sdk
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: *all_profiles
+  strings:
+    kind: library
+    binary_pattern: "artifacts/lib/libstrings.so*"
+    public_headers: ["headers/strings_lib/include/abicheck_lab"]
+    bundle: sdk
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: *all_profiles
+  consumer-app:
+    kind: app-consumer
+    consumer_binary_pattern: "artifacts/bin/consumer_app"
+    library: math
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: *all_profiles
+  math-plugin-contract:
+    kind: plugin-contract
+    contract_file: "plugins/contracts/math-plugin.syms"
+    library: math
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: *all_profiles
+
+bundles:
+  sdk:
+    targets: [core, math, strings]
+    checks:
+      - channel: accepted-main
+        depth: binary
+        required: true
+        gate_mode: deferred
+        profiles: *all_profiles
+
+profiles:
+  linux-x86_64-gcc14-cxx17-bazel:
+    contract: true
+    os: linux
+    arch: x86_64
+    compile:
+      compiler_family: gcc
+      compiler_version: ">=14,<15"
+      binding: gcc14
+      standard: c++17
+      stdlib: libstdc++
+  linux-x86_64-gcc14-cxx17-cmake-ninja:
+    contract: true
+    os: linux
+    arch: x86_64
+    compile:
+      compiler_family: gcc
+      compiler_version: ">=14,<15"
+      binding: gcc14
+      standard: c++17
+      stdlib: libstdc++
+  linux-x86_64-gcc14-cxx17-make-bear:
+    contract: true
+    os: linux
+    arch: x86_64
+    compile:
+      compiler_family: gcc
+      compiler_version: ">=14,<15"
+      binding: gcc14
+      standard: c++17
+      stdlib: libstdc++
+
+baseline:
+  channels:
+    accepted-main:
+      source: actions-cache
+      key_prefix: integration-lab-main
+
+aggregate:
+  gate:
+    missing_required: fail
+    unexpected_target: fail

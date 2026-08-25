@@ -3,6 +3,38 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
 
 cc_library(
+    name = "core_api",
+    hdrs = ["core_include/abicheck_lab/core.h"],
+    includes = ["core_include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "core_internal_api",
+    hdrs = ["internal/include/abicheck_lab/core_c_api.h"],
+    includes = ["internal/include"],
+    visibility = [
+        "//:__pkg__",
+        "//strings_lib:__pkg__",
+    ],
+)
+
+cc_library(
+    name = "core_impl",
+    srcs = ["src/core.cc"],
+    deps = [":core_api", ":core_internal_api"],
+    visibility = ["//visibility:private"],
+)
+
+cc_shared_library(
+    name = "core",
+    shared_lib_name = "libcore.so",
+    deps = [":core_impl"],
+    user_link_flags = ["-Wl,-soname,libcore.so"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "math_api",
     hdrs = ["include/abicheck_lab/math.h"],
     includes = ["include"],
@@ -34,6 +66,22 @@ cc_binary(
     deps = [":math_api"],
     linkshared = True,
     linkopts = ["-Wl,-soname,libmath.so"],
+    visibility = ["//visibility:public"],
+)
+
+# The project variant owns the core provider edge. Keeping it separate from
+# //:math preserves the scope contract of the long-lived committed baseline.
+cc_binary(
+    name = "project_math",
+    srcs = ["src/math.cc"],
+    copts = ["-O2"],
+    deps = [":math_api"],
+    dynamic_deps = [":core"],
+    linkshared = True,
+    linkopts = [
+        "-Wl,--no-as-needed,-u,abicheck_lab_core_scale",
+        "-Wl,-soname,libmath.so",
+    ],
     visibility = ["//visibility:public"],
 )
 

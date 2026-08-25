@@ -52,6 +52,7 @@ REPO_ROOT = CI_DIR.parent
 if str(CI_DIR) not in sys.path:
     sys.path.insert(0, str(CI_DIR))
 
+from check_profile import CheckProfileError, _load_build_output  # noqa: E402
 from select_profiles import load_profiles  # noqa: E402
 
 
@@ -93,7 +94,10 @@ def evaluate(
         "checked_targets": checked_targets,
     }
 
-    build_output = _load_json(staged_dir / "build-output.json")
+    try:
+        build_output = _load_build_output(staged_dir)
+    except (CheckProfileError, OSError, json.JSONDecodeError):
+        build_output = None
     # A syntactically valid but non-object document (e.g. `[]`) is truthy
     # and not None, so "is None" alone let it through to every .get() call
     # below, each raising AttributeError (CodeRabbit review, PR #20; same

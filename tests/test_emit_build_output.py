@@ -14,7 +14,7 @@ import json
 import pytest
 
 from base import BuildResult, TargetResult
-from emit_build_output import stage_profile
+from emit_build_output import _compiler_abi_macros, stage_profile
 from validate_build_output import validate_document, validate_file
 
 
@@ -43,6 +43,23 @@ class _FakeBackend:
         return f"{exe} (fake)" if exe else None
 
 
+def test_compiler_abi_macros_records_gcc_abi_version(monkeypatch):
+    class Result:
+        stdout = "\n".join([
+            "#define __GXX_ABI_VERSION 1019",
+            "#define _GLIBCXX_USE_CXX11_ABI 1",
+            "#define __cplusplus 201703L",
+            "#define __IGNORED 1",
+        ])
+
+    monkeypatch.setattr("emit_build_output.subprocess.run", lambda *args, **kwargs: Result())
+
+    macros = _compiler_abi_macros("g++-14")
+
+    assert "__GXX_ABI_VERSION 1019" in macros
+    assert "__IGNORED" not in macros
+
+
 def _make_target(tmp_path, name, kind, content=b"fake-binary-bytes"):
     path = tmp_path / f"{name}.bin"
     path.write_bytes(content)
@@ -60,6 +77,7 @@ def profile():
         "compiler": {"family": "gcc", "cc": "gcc-14", "cxx": "g++-14", "standard": "c++17"},
         "targets": {"math": "math", "consumer": "consumer_app"},
         "header_roots": ["include"],
+        "target_header_roots": {"math": ["include"], "consumer": []},
     }
 
 
@@ -98,14 +116,16 @@ def test_stage_profile_writes_expected_layout(tmp_path, profile):
     assert (out_dir / "provenance" / "build-system.json").is_file()
     assert (out_dir / "headers" / "include" / "abicheck_lab" / "math.h").is_file()
 
-    assert doc["success"] is True
+    assert (out_dir / "lab-build-output.json").is_file()
     assert doc["profile"]["id"] == "test-profile"
-    assert doc["profile"]["contract"] is False
-    assert doc["targets"]["math"]["built"] is True
-    assert doc["targets"]["math"]["sha256"] == math_target.sha256
-    assert doc["targets"]["consumer"]["kind"] == "executable"
-    assert doc["header_roots"] == ["headers/include"]
-    assert doc["duration_s"] == pytest.approx(1.5)
+    assert json.loads((out_dir / "lab-build-output.json").read_text())["profile"]["contract"] is False
+    assert next(t for t in doc["targets"] if t["id"] == "math")["binary"] == "artifacts/lib/math.bin"
+    assert next(t for t in doc["targets"] if t["id"] == "math")["kind"] == "shared_library"
+    assert next(t for t in doc["targets"] if t["id"] == "consumer")["kind"] == "executable"
+    assert doc["digests"]["artifacts/lib/math.bin"] == f"sha256:{math_target.sha256}"
+    assert any(t["id"] == "consumer" for t in doc["targets"])
+    assert next(t for t in doc["targets"] if t["id"] == "math")["public_header_roots"] == ["headers/include"]
+    assert doc["schema"] == "abicheck.build-output/v1"
 
     on_disk = json.loads((out_dir / "build-output.json").read_text())
     assert on_disk == doc
@@ -133,13 +153,36 @@ def test_stage_profile_reflects_missing_target(tmp_path, profile):
     out_dir = tmp_path / "out"
     doc = stage_profile(profile, repo_root, build_result, backend, out_dir)
 
-    assert doc["success"] is False
-    assert doc["targets"]["math"]["built"] is False
-    assert doc["targets"]["math"]["path"] is None
-    assert doc["diagnostics"] == [
+    legacy = json.loads((out_dir / "lab-build-output.json").read_text())
+    assert legacy["success"] is False
+    assert legacy["targets"]["math"]["built"] is False
+    assert legacy["targets"]["math"]["path"] is None
+    assert legacy["diagnostics"] == [
         "target 'math' produced no output",
         f"header_roots entry 'include' does not exist under {repo_root}",
     ]
+    assert doc["diagnostics"]["errors"] == [
+        f"header_roots entry 'include' does not exist under {repo_root}",
+    ]
+
+
+def test_stage_profile_marks_built_but_unstaged_target_skipped(tmp_path, profile):
+    repo_root = tmp_path / "repo"
+    (repo_root / "include").mkdir(parents=True)
+    target = _make_target(tmp_path, "math", "shared_library")
+    build_result = BuildResult(
+        profile_id=profile["id"], backend="cmake", success=True,
+        started_at=0.0, ended_at=0.1, targets={"math": target}, diagnostics=[],
+    )
+    backend = _FakeBackend(
+        stage_manifest={"math": {"staged": False}},
+        evidence={"kind": "fake"}, description={"backend": "cmake"},
+    )
+
+    doc = stage_profile(profile, repo_root, build_result, backend, tmp_path / "out")
+
+    assert doc["targets"] == []
+    assert doc["diagnostics"]["skipped_targets"] == ["math"]
 
 
 def test_staged_build_output_validates_against_schema(tmp_path, profile):
@@ -169,25 +212,11 @@ def test_staged_build_output_validates_against_schema(tmp_path, profile):
 
 
 def test_validate_document_flags_missing_required_field():
-    doc = {"schema_version": 1}
+    doc = {"schema": "abicheck.build-output/v1"}
     errors = validate_document(doc)
     assert errors  # missing every other required top-level field
 
 
-def test_validate_document_flags_bad_backend_enum():
-    doc = {
-        "schema_version": 1,
-        "project": {"name": "x"},
-        "git": {"sha": "abc"},
-        "profile": {"id": "p", "backend": "make-wrong", "contract": False, "root": "."},
-        "compiler": {"family": "gcc", "cc": "gcc-14", "cxx": "g++-14", "standard": "c++17"},
-        "generated_at": "2026-01-01T00:00:00Z",
-        "targets": {},
-        "header_roots": [],
-        "evidence": {"dir": "evidence"},
-        "provenance": {"dir": "provenance"},
-        "diagnostics": [],
-        "success": True,
-    }
-    errors = validate_document(doc)
+def test_validate_document_flags_bad_schema():
+    errors = validate_document({"schema": "wrong"})
     assert errors

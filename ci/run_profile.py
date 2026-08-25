@@ -62,18 +62,19 @@ def main(argv=None) -> int:
     out_dir = args.out_dir / f"abicheck-build-{args.profile_id}"
     schema_errors = validate_file(out_dir / "build-output.json")
 
+    legacy = json.loads((out_dir / "lab-build-output.json").read_text(encoding="utf-8"))
     summary = {
         "profile_id": args.profile_id,
-        "backend": doc["profile"]["backend"],
-        "contract": doc["profile"]["contract"],
-        "success": doc["success"],
+        "backend": legacy["profile"]["backend"],
+        "contract": legacy["profile"]["contract"],
+        "success": legacy["success"],
         "schema_valid": not schema_errors,
         "schema_errors": schema_errors,
         "staged_dir": str(out_dir),
-        "diagnostics": doc["diagnostics"],
+        "diagnostics": legacy["diagnostics"],
     }
     print(json.dumps(summary))
-    return 0 if (doc["success"] and not schema_errors) else 1
+    return 0 if (legacy["success"] and not schema_errors) else 1
 
 
 if __name__ == "__main__":

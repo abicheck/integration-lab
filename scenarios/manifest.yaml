@@ -28,6 +28,78 @@
 #                                        frontend, and a future divergence
 #                                        would be a real cross-backend bug
 #                                        worth catching here.
+expected_gaps:
+  - id: same-binary-clang-client-only-break
+    status: expected_gap
+    upstream_issue: "abicheck#consumer-compile-execution"
+    expected_failure: {phase: check-project, reason: consumer_compile_not_applied}
+  - id: per-check-runtime-environment
+    status: expected_gap
+    upstream_issue: "abicheck#per-cell-environment"
+    expected_failure: {phase: project-plan, reason: environment_selector_not_supported}
+  - id: pybind-cross-module-internals
+    status: expected_gap
+    upstream_issue: "abicheck#binding-abi-provider"
+    expected_failure: {phase: compare, reason: binding_internals_identity_not_collected}
+  - id: target-specific-source-evidence-routing
+    status: expected_gap
+    upstream_issue: "abicheck#run-plan-build-output-projection"
+    expected_failure: {phase: check-project, reason: target_evidence_path_not_projected}
+
+depth_scenarios:
+  - id: l2-green-l4-macro-break
+    runner: ci/run_depth_scenario.py
+    status: supported
+    fixture: fixtures/l2_l4_macro
+    expect:
+      headers:
+        verdict: NO_CHANGE
+        effective_depth: headers
+        findings: []
+      source:
+        verdict: API_BREAK
+        effective_depth: source
+        findings:
+          - {kind: public_macro_value_changed, symbol: LAB_MAX_ITEMS}
+
+runtime_scenarios:
+  - id: runtime-floor-raised
+    runner: ci/run_runtime_floor_scenario.py
+    status: supported
+    fixture: fixtures/runtime_floor
+    expect:
+      no_matrix: {verdict: COMPATIBLE_WITH_RISK, floor_severity: risk}
+      labrt_1: {verdict: BREAKING, floor_severity: breaking}
+      # The floor itself is compatible on LABRT 2.0. The aggregate remains
+      # risk because the candidate also starts importing a new function.
+      labrt_2: {verdict: COMPATIBLE_WITH_RISK, floor_severity: compatible}
+
+python_scenarios:
+  - id: pybind-keyword-renamed
+    runner: ci/run_python_extension_scenario.py
+    status: supported
+    source: bindings/python/src/module.cpp
+    stubs: bindings/python/scenarios/keyword-renamed
+    expect:
+      verdict: API_BREAK
+      binary_identical: true
+      findings:
+        - {kind: python_api_parameter_renamed, symbol: "python:_core.transform"}
+        - {kind: python_api_default_removed, symbol: "python:_core.transform"}
+
+project_scenarios:
+  - id: project-cross-dso-break
+    runner: ci/run_project_bundle_scenario.py
+    status: supported
+    fixture: fixtures/project_cross_dso
+    expect:
+      verdict: BREAKING
+      bundle_finding:
+        kind: bundle_intra_dep_signature_changed
+        symbol: core_scale
+        provider_library: libcore.so
+        consumer_library: libmath.so
+
 scenarios:
   - name: add_function
     description: >

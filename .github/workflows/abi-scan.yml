@@ -1805,16 +1805,40 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          set +e
           abicheck compare \
             "$RUNNER_TEMP/math.base.abicheck.json" \
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
             --ast-frontend clang \
-            --build-info bazel-bin/tools/abicheck/math_abicheck_inputs \
+            --build-info new=bazel-bin/tools/abicheck/math_abicheck_inputs \
+            --depth source \
+            --require-complete-analysis \
             --format json \
             -o abicheck-l4-clang-plugin.json \
-            --policy strict_abi || true
+            --policy strict_abi
+          compare_rc=$?
+          set -e
+          # Verdict-bearing exits are valid report production. Usage/input
+          # failures (notably 64) can also leave a non-empty JSON error
+          # envelope, which must not be mistaken for a compatibility report.
+          case "$compare_rc" in
+            0|1|2|4) ;;
+            *) echo "::error::abicheck compare failed with operational exit $compare_rc"; exit "$compare_rc" ;;
+          esac
           test -s abicheck-l4-clang-plugin.json
+
+      # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate
+      # successful report production on the report's own requested/effective
+      # depth and assurance envelope so an implicit L3 fallback cannot appear
+      # as a green "L4 plugin" result.
+      - name: Enforce source-depth plugin report contract
+        id: validate_l4_plugin_depth
+        if: steps.l4_clang_plugin_compare.outcome == 'success'
+        run: |
+          python3 ci/validate_source_depth.py \
+            abicheck-l4-clang-plugin.json \
+            --expected source
 
       - name: Upload l4-clang-plugin artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
@@ -1852,6 +1876,8 @@ jobs:
               echo '⏭️ Skipped: could not install abicheck to consume the collected facts.'
             elif [ "${{ steps.l4_clang_plugin_compare.outcome }}" != "success" ]; then
               echo '⚠️ Plugin build and fact collection succeeded, but the abicheck compare step failed -- see the job log above.'
+            elif [ "${{ steps.validate_l4_plugin_depth.outcome }}" != "success" ]; then
+              echo '❌ Plugin report did not prove complete requested/effective source depth -- see the validation step above.'
             else
               echo '✅ Ran successfully -- see the `abicheck-l4-clang-plugin` artifact for the report.'
             fi

@@ -22,3 +22,17 @@ cc_binary(
     linkopts = ["-Wl,-soname,libstrings.so"],
     visibility = ["//visibility:public"],
 )
+
+cc_binary(
+    name = "project_strings",
+    srcs = ["src/strings.cc"],
+    copts = ["-O2"],
+    deps = [":strings_api"],
+    dynamic_deps = ["//:core"],
+    linkshared = True,
+    linkopts = [
+        "-Wl,--no-as-needed,-u,abicheck_lab_core_scale",
+        "-Wl,-soname,libstrings.so",
+    ],
+    visibility = ["//visibility:public"],
+)

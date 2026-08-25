@@ -179,11 +179,13 @@ def test_cli_main_contract_only_narrows_to_contract_true_profiles(repo_paths, ca
     import json
 
     doc = json.loads(capsys.readouterr().out)
-    # ci/profiles.yaml declares exactly one contract: true profile today
-    # (linux-x86_64-gcc14-cxx17-bazel) -- this asserts against the real
-    # file, not a synthetic fixture, so it breaks loudly the day a second
-    # profile is promoted (a real, useful signal, not staleness).
-    assert doc["profiles"] == ["linux-x86_64-gcc14-cxx17-bazel"]
+    # Native baseline-backed project checks promote all three producers to
+    # contract profiles; release baseline publication must include each one.
+    assert doc["profiles"] == [
+        "linux-x86_64-gcc14-cxx17-bazel",
+        "linux-x86_64-gcc14-cxx17-cmake-ninja",
+        "linux-x86_64-gcc14-cxx17-make-bear",
+    ]
     assert doc["required"] == []  # events.release.required is [] today
 
 

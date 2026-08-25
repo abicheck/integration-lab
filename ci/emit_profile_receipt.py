@@ -45,6 +45,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from check_profile import CheckProfileError, _load_build_output
+
 # Deliberately NOT imported from ci/real_scan.py, even though that module
 # defines the identical REAL_SCAN_BACKENDS frozenset: real_scan.py itself
 # imports scripts/normalize_baseline.py at module load time (appends to
@@ -151,8 +153,16 @@ def build_receipt(
     sha: str,
     required: bool,
 ) -> Dict[str, Any]:
+    # The standardized build-output/v1 intentionally omits the legacy
+    # execution fields consumed here. Prefer the migration sidecar so a
+    # valid standardized document is not mistaken for a failed build.
     build_output_path = staged_dir / "build-output.json"
-    build_output = _load_json(build_output_path)
+    try:
+        # This shared loader prefers the execution sidecar and adapts a
+        # canonical-only build-output/v1 receipt to the same internal shape.
+        build_output = _load_build_output(staged_dir)
+    except (CheckProfileError, OSError, json.JSONDecodeError):
+        build_output = None
     # A failed/corrupted profile run can leave syntactically valid JSON with
     # a non-object top level (e.g. `[]`) at build-output.json -- that's
     # truthy and not None, so every .get() call below would raise
