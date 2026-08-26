@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -156,9 +157,21 @@ def _findings(report: Dict[str, Any]) -> set:
     return found
 
 
+#: Bundle findings that are package-level ACCOUNTING -- an extension
+#: appeared or disappeared. Asserted exactly. Everything else a bundle
+#: comparison reports (dependency-closure findings, say) is recorded but
+#: not pinned: a genuinely loadable second module necessarily links CPython,
+#: so its intra-bundle dependency findings are a property of the
+#: interpreter it was built against, not of the addition being noticed.
+BUNDLE_ACCOUNTING_KINDS = ("bundle_library_added", "bundle_library_removed")
+
+
 def assert_report(report: Dict[str, Any], expected: Dict[str, Any]) -> List[str]:
     errors = []
-    if report.get("verdict") != expected["verdict"]:
+    # `verdict` is asserted only where the case declares one. The
+    # added-extension case deliberately does not: see
+    # BUNDLE_ACCOUNTING_KINDS above.
+    if "verdict" in expected and report.get("verdict") != expected["verdict"]:
         errors.append(f"verdict={report.get('verdict')!r}, expected {expected['verdict']!r}")
 
     declared = {(f["kind"], f["symbol"]) for f in expected.get("findings", [])}
@@ -185,16 +198,30 @@ def assert_report(report: Dict[str, Any], expected: Dict[str, Any]) -> List[str]
             f"bundle_verdict={report.get('bundle_verdict')!r}, "
             f"expected {expected['bundle_verdict']!r}"
         )
-    declared_bundle = {(f["kind"], f["symbol"]) for f in expected.get("bundle_findings", [])}
+
+    declared_bundle = {
+        (f["kind"], f["symbol"]) for f in expected.get("bundle_accounting_findings", [])
+    }
     observed_bundle = {
         (f.get("kind"), module_stem(f.get("symbol") or ""))
         for f in (report.get("bundle_findings") or [])
+        if f.get("kind") in BUNDLE_ACCOUNTING_KINDS
     }
     if observed_bundle != declared_bundle:
         errors.append(
-            f"bundle_findings={sorted(observed_bundle)!r}, expected {sorted(declared_bundle)!r}"
+            f"bundle accounting findings={sorted(observed_bundle)!r}, "
+            f"expected {sorted(declared_bundle)!r}"
         )
     return errors
+
+
+def other_bundle_findings(report: Dict[str, Any]) -> List[tuple]:
+    """Bundle findings outside the accounting vocabulary, for the receipt."""
+    return sorted(
+        (f.get("kind"), f.get("symbol"))
+        for f in (report.get("bundle_findings") or [])
+        if f.get("kind") not in BUNDLE_ACCOUNTING_KINDS
+    )
 
 
 # --------------------------------------------------------------------------
@@ -222,28 +249,103 @@ def build_wheel(package_root: Path, stub: Optional[Path], out_dir: Path, work: P
     return wheels[0]
 
 
-def add_extension_copy(wheel: Path, out_dir: Path, new_stem: str) -> Path:
-    """Repack `wheel` with one extra extension module inside the package.
+#: A minimal, genuinely loadable CPython extension. Plain C API rather than
+#: pybind11: no build dependency beyond Python's own headers, and what
+#: matters here is the module initializer, not the binding layer.
+_EXTRA_MODULE_SOURCE = """\
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
 
-    Deterministic way to exercise package-level added/removed accounting
-    without shipping a second module in the real package: the added file is
-    a byte copy of the existing extension under a different module name, so
-    the only difference the comparison can see is the extension's presence.
+static PyObject *lab_extra_ping(PyObject *self, PyObject *args) {
+  (void)self; (void)args;
+  return PyLong_FromLong(42);
+}
+
+static PyMethodDef lab_extra_methods[] = {
+    {"ping", lab_extra_ping, METH_NOARGS, "Return 42."},
+    {NULL, NULL, 0, NULL},
+};
+
+static struct PyModuleDef lab_extra_module = {
+    PyModuleDef_HEAD_INIT, "%(module)s", NULL, -1, lab_extra_methods,
+    NULL, NULL, NULL, NULL,
+};
+
+PyMODINIT_FUNC PyInit_%(module)s(void) {
+  return PyModule_Create(&lab_extra_module);
+}
+"""
+
+
+def build_extension_module(module: str, work: Path, cc: str = "cc") -> Path:
+    """Compile a real extension module exporting ``PyInit_<module>``.
+
+    Renaming a byte copy of the existing extension does NOT produce a second
+    module: the copy still exports ``PyInit__core``, so importing it fails
+    with "dynamic module does not define module export function". A scenario
+    built on such a copy can pass on archive filename discovery alone while
+    the "added module" is not loadable at all -- which is not what it claims
+    to prove (Codex review, PR #30).
+    """
+    work.mkdir(parents=True, exist_ok=True)
+    source = work / f"{module}.c"
+    source.write_text(_EXTRA_MODULE_SOURCE % {"module": module}, encoding="utf-8")
+    include = sysconfig.get_paths().get("include")
+    if not include or not Path(include).is_dir():
+        raise ScenarioError(
+            "Python development headers (Python.h) are required to build the "
+            f"second extension module; {include!r} is not a directory"
+        )
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    built = work / f"{module}{suffix}"
+    run_command([cc, "-shared", "-fPIC", f"-I{include}", str(source), "-o", str(built)])
+    return built
+
+
+def assert_module_is_loadable(extension: Path, module: str) -> None:
+    """Import the built module in a subprocess to prove it really loads.
+
+    In a subprocess, not this interpreter: importing an extension cannot be
+    undone, and a broken one can abort the process outright.
+    """
+    probe = (
+        "import importlib.util, sys;"
+        f"spec = importlib.util.spec_from_file_location({module!r}, {str(extension)!r});"
+        "mod = importlib.util.module_from_spec(spec);"
+        "spec.loader.exec_module(mod);"
+        "sys.exit(0 if mod.ping() == 42 else 1)"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ScenarioError(
+            f"{extension.name} does not load as module {module!r}: "
+            f"{(result.stderr or '').strip()}"
+        )
+
+
+def add_extension_module(wheel: Path, out_dir: Path, module: str, work: Path) -> Path:
+    """Repack ``wheel`` with a second, genuinely loadable extension module.
+
+    The added module is compiled for this interpreter with the matching
+    ``PyInit_<module>`` initializer and is import-checked before it goes into
+    the archive, so the package-level accounting this exercises is accounting
+    for a real extension rather than for a renamed file.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / wheel.name
     shutil.copy2(wheel, target)
     with zipfile.ZipFile(wheel) as archive:
-        extensions = [n for n in archive.namelist() if n.endswith(".so")]
-        if not extensions:
-            raise ScenarioError(f"{wheel.name}: no extension to copy")
-        source_name = extensions[0]
-        payload = archive.read(source_name)
-    added = source_name.replace("_core.", f"{new_stem}.")
-    if added == source_name:
-        raise ScenarioError(f"{source_name}: could not derive a second module name")
+        existing = [n for n in archive.namelist() if n.endswith((".so", ".pyd"))]
+    if not existing:
+        raise ScenarioError(f"{wheel.name}: no extension to sit alongside")
+    package = str(Path(existing[0]).parent)
+
+    built = build_extension_module(module, work)
+    assert_module_is_loadable(built, module)
+
+    member = f"{package}/{built.name}" if package not in ("", ".") else built.name
     with zipfile.ZipFile(target, "a", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(added, payload)
+        archive.write(built, member)
     return target
 
 
@@ -282,7 +384,10 @@ def run(manifest: Path, output: Path) -> List[str]:
         case_id = case["id"]
         old = wheels[case.get("old", "old")]
         if case.get("new") == "old_plus_extension":
-            new = add_extension_copy(old, output / f"{case_id}-plus", case["added_module"])
+            new = add_extension_module(
+                old, output / f"{case_id}-plus", case["added_module"],
+                output / f"{case_id}-build",
+            )
         else:
             new = wheels[case.get("new", "new")]
         report_path = output / f"{case_id}-report.json"
@@ -293,7 +398,13 @@ def run(manifest: Path, output: Path) -> List[str]:
         )
         report = json.loads(report_path.read_text(encoding="utf-8"))
         case_errors = assert_report(report, case["expect"])
-        summary[case_id] = case_errors or "ok"
+        summary[case_id] = {
+            "result": case_errors or "ok",
+            "verdict": report.get("verdict"),
+            "bundle_verdict": report.get("bundle_verdict"),
+            # Recorded, not asserted -- see BUNDLE_ACCOUNTING_KINDS.
+            "other_bundle_findings": other_bundle_findings(report),
+        }
         errors.extend(f"{case_id}: {error}" for error in case_errors)
 
     summary["wheel_tags"] = parse_wheel_tags(wheels["old"])

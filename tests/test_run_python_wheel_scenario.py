@@ -186,16 +186,96 @@ def test_added_extension_is_detected_regardless_of_abi_tag(scenario: dict):
     case = _case(scenario, "extension-added-to-the-package")
     for abi in ("cp311", "cp312", "cp313"):
         report = {
-            "verdict": "COMPATIBLE", "libraries": [], "changed_libraries": [],
+            "verdict": "BREAKING", "libraries": [], "changed_libraries": [],
             "unmatched_old": [],
             "unmatched_new": [f"_extra.{abi}-x86_64-linux-gnu.so"],
-            "bundle_verdict": "COMPATIBLE",
-            "bundle_findings": [{
-                "kind": "bundle_library_added",
-                "symbol": f"_extra.{abi}-x86_64-linux-gnu.so",
-            }],
+            "bundle_verdict": "BREAKING",
+            "bundle_findings": [
+                {"kind": "bundle_library_added",
+                 "symbol": f"_extra.{abi}-x86_64-linux-gnu.so"},
+                # A real second module links CPython, so its dependency
+                # findings vary by interpreter and must not be pinned.
+                {"kind": "bundle_intra_dep_removed", "symbol": "PyLong_FromLong"},
+            ],
         }
         assert wheel.assert_report(report, case["expect"]) == [], abi
+
+
+def test_interpreter_dependent_bundle_findings_are_not_pinned(scenario: dict):
+    case = _case(scenario, "extension-added-to-the-package")
+    base = {
+        "verdict": "BREAKING", "libraries": [], "changed_libraries": [],
+        "unmatched_old": [], "unmatched_new": ["_extra.cp311-x86_64-linux-gnu.so"],
+        "bundle_findings": [
+            {"kind": "bundle_library_added", "symbol": "_extra.cp311.so"},
+        ],
+    }
+    for extra in ([], [{"kind": "bundle_intra_dep_removed", "symbol": "PyModule_Create2"}]):
+        report = dict(base, bundle_findings=base["bundle_findings"] + extra)
+        assert wheel.assert_report(report, case["expect"]) == []
+
+
+def test_missing_accounting_finding_still_fails(scenario: dict):
+    """Loosening the non-accounting findings must not loosen accounting."""
+    case = _case(scenario, "extension-added-to-the-package")
+    report = {
+        "verdict": "BREAKING", "libraries": [], "changed_libraries": [],
+        "unmatched_old": [], "unmatched_new": ["_extra.cp311-x86_64-linux-gnu.so"],
+        "bundle_findings": [
+            {"kind": "bundle_intra_dep_removed", "symbol": "PyLong_FromLong"},
+        ],
+    }
+    assert any(
+        "bundle accounting findings" in e for e in wheel.assert_report(report, case["expect"])
+    )
+
+
+def test_other_bundle_findings_are_recorded_for_the_receipt():
+    report = {"bundle_findings": [
+        {"kind": "bundle_library_added", "symbol": "_extra.so"},
+        {"kind": "bundle_intra_dep_removed", "symbol": "PyLong_FromLong"},
+    ]}
+    assert wheel.other_bundle_findings(report) == [
+        ("bundle_intra_dep_removed", "PyLong_FromLong")
+    ]
+
+
+# --------------------------------------------------------------------------
+# The added module must be a real, loadable extension
+# --------------------------------------------------------------------------
+
+
+def test_added_module_exports_the_matching_initializer(tmp_path: Path):
+    """Regression guard for the Codex finding.
+
+    A byte copy of _core.so renamed to _extra.so still exports
+    PyInit__core, so it cannot be imported as _extra at all -- the scenario
+    would then pass on archive filename discovery alone.
+    """
+    import subprocess as sp
+
+    built = wheel.build_extension_module("_extra", tmp_path / "build")
+    assert built.is_file()
+    symbols = sp.run(
+        ["nm", "-D", "--defined-only", str(built)], capture_output=True, text=True
+    ).stdout
+    assert "PyInit__extra" in symbols
+    assert "PyInit__core" not in symbols
+
+
+def test_added_module_actually_imports(tmp_path: Path):
+    built = wheel.build_extension_module("_extra", tmp_path / "build")
+    # Raises ScenarioError if it does not load; returns None if it does.
+    assert wheel.assert_module_is_loadable(built, "_extra") is None
+
+
+def test_unloadable_module_is_rejected(tmp_path: Path):
+    """A renamed copy is exactly what this must refuse."""
+    built = wheel.build_extension_module("_core", tmp_path / "build")
+    impostor = tmp_path / "build" / built.name.replace("_core", "_extra")
+    impostor.write_bytes(built.read_bytes())
+    with pytest.raises(wheel.ScenarioError, match="does not load as module"):
+        wheel.assert_module_is_loadable(impostor, "_extra")
 
 
 def test_unnoticed_package_level_extension_removal_fails(scenario: dict):

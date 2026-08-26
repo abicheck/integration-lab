@@ -382,13 +382,16 @@ wheel_scenarios:
       unmatched_old: []
       unmatched_new: []
       bundle_verdict: NO_CHANGE
-      bundle_findings: []
+      bundle_accounting_findings: []
   - id: extension-added-to-the-package
     old: old
     new: old_plus_extension
+    # Compiled for this interpreter with the matching PyInit__extra and
+    # import-checked before it is packed, so this exercises accounting for a
+    # real extension rather than for a renamed byte copy of _core (which
+    # still exports PyInit__core and cannot be imported at all).
     added_module: _extra
     expect:
-      verdict: COMPATIBLE
       findings: []
       changed_libraries: []
       unmatched_old: []
@@ -397,8 +400,13 @@ wheel_scenarios:
       # expectation would pin this scenario to one Python version.
       unmatched_new:
       - _extra
-      bundle_verdict: COMPATIBLE
-      bundle_findings:
+      # Package-level accounting only. No `verdict`/`bundle_verdict` is
+      # declared here on purpose: a genuinely loadable second module links
+      # CPython, so the bundle's dependency-closure findings (and the
+      # verdict they drive) are a property of the interpreter it was built
+      # against, not of the addition being noticed. Those findings are
+      # recorded in the receipt instead of pinned.
+      bundle_accounting_findings:
       - kind: bundle_library_added
         symbol: _extra
 
