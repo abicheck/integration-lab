@@ -102,14 +102,16 @@ def test_two_reports_naming_no_targets_do_not_agree(tmp_path, monkeypatch):
     replay = tmp_path / "replay.json"
     replay.write_text(json.dumps({
         "verdict": "COMPATIBLE",
-        "analysis_assurance": {"status": "complete", "effective_depth": "source"},
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                               "effective_depth": "source"},
         "diff": {"findings": []},
     }), encoding="utf-8")
     monkeypatch.setattr(
         reuse, "run_compare",
         lambda **kw: reuse.Outcome(0, {
             "verdict": "NO_CHANGE",
-            "analysis_assurance": {"status": "complete", "effective_depth": "source"},
+            "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                               "effective_depth": "source"},
             "changes": [],
         }, []),
     )
@@ -140,7 +142,8 @@ def test_scan_and_compare_shapes_agree_on_kind_symbol(tmp_path, monkeypatch):
             {
                 "verdict": "BREAKING",
                 "library": "libmath.so",
-                "analysis_assurance": {"effective_depth": "source"},
+                "analysis_assurance": {"effective_depth": "source",
+                                       "depth_satisfied": True, "status": "complete"},
                 "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]},
             }
         ),
@@ -153,7 +156,8 @@ def test_scan_and_compare_shapes_agree_on_kind_symbol(tmp_path, monkeypatch):
             {
                 "verdict": "BREAKING",
                 "library": "libmath.so",
-                "analysis_assurance": {"effective_depth": "source"},
+                "analysis_assurance": {"effective_depth": "source",
+                                       "depth_satisfied": True, "status": "complete"},
                 "changes": [
                     {"kind": "SYMBOL_REMOVED", "symbol": "f0", "old_value": "int f0()", "new_value": ""}
                 ],
@@ -172,7 +176,8 @@ def test_diverging_findings_are_reported_on_both_sides(tmp_path, monkeypatch):
     replay = tmp_path / "replay.json"
     replay.write_text(
         json.dumps({"verdict": "BREAKING", "library": "libmath.so",
-                    "analysis_assurance": {"status": "complete", "effective_depth": "source"},
+                    "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                               "effective_depth": "source"},
                     "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]}}),
         encoding="utf-8",
     )
@@ -427,7 +432,8 @@ def test_bundle_requires_a_pack(tmp_path):
 
 def test_a_clean_replay_report_is_a_usable_reference():
     assert reuse.replay_reference_problems(
-        {"verdict": "COMPATIBLE", "analysis_assurance": {"status": "complete"}}
+        {"verdict": "COMPATIBLE",
+         "analysis_assurance": {"depth_satisfied": True, "status": "complete"}}
     ) == []
 
 
@@ -438,10 +444,12 @@ def test_a_replay_report_with_operational_errors_is_rejected():
 
 def test_a_replay_report_with_partial_assurance_is_rejected():
     problems = reuse.replay_reference_problems(
-        {"analysis_assurance": {"status": "partial", "notes": ["public surface unresolved"]}}
+        {"analysis_assurance": {"depth_satisfied": True, "status": "partial",
+                                "notes": ["public surface unresolved"]}}
     )
-    assert problems and "expected 'complete'" in problems[0]
-    assert "public surface unresolved" in problems[0], "the note explains why"
+    status_problem = next(p for p in problems if "status=" in p)
+    assert "expected 'complete'" in status_problem
+    assert "public surface unresolved" in status_problem, "the note explains why"
 
 
 def test_a_replay_report_denying_depth_is_rejected():
@@ -481,14 +489,16 @@ def test_an_incomplete_replay_fails_the_three_agreement_assertions(tmp_path, mon
     replay.write_text(json.dumps({
         "verdict": "BREAKING", "library": "libmath.so",
         "operational_errors": ["header parse failed"],
-        "analysis_assurance": {"effective_depth": "source"},
+        "analysis_assurance": {"effective_depth": "source",
+                                       "depth_satisfied": True, "status": "complete"},
         "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]},
     }), encoding="utf-8")
     monkeypatch.setattr(
         reuse, "run_compare",
         lambda **kw: reuse.Outcome(2, {
             "verdict": "BREAKING", "library": "libmath.so",
-            "analysis_assurance": {"effective_depth": "source"},
+            "analysis_assurance": {"effective_depth": "source",
+                                       "depth_satisfied": True, "status": "complete"},
             "changes": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}],
         }, []),
     )
@@ -510,14 +520,16 @@ def test_a_sound_replay_still_lets_the_agreement_assertions_pass(tmp_path, monke
     replay = tmp_path / "replay.json"
     replay.write_text(json.dumps({
         "verdict": "BREAKING", "library": "libmath.so",
-        "analysis_assurance": {"effective_depth": "source", "status": "complete"},
+        "analysis_assurance": {"effective_depth": "source", "status": "complete",
+                               "depth_satisfied": True},
         "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]},
     }), encoding="utf-8")
     monkeypatch.setattr(
         reuse, "run_compare",
         lambda **kw: reuse.Outcome(2, {
             "verdict": "BREAKING", "library": "libmath.so",
-            "analysis_assurance": {"effective_depth": "source", "status": "complete"},
+            "analysis_assurance": {"effective_depth": "source", "status": "complete",
+                               "depth_satisfied": True},
             "changes": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}],
         }, []),
     )
@@ -539,3 +551,36 @@ def test_a_corrupt_replay_file_is_reported_not_crashed_on(tmp_path, monkeypatch)
     receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
     sound = next(a for a in receipt["assertions"] if a["assertion"] == "replay-reference-is-sound")
     assert not sound["passed"]
+
+
+def test_an_empty_assurance_block_is_rejected():
+    """Codex review, third pass on this validator. Requiring the block but
+    rejecting only EXPLICIT negatives let `analysis_assurance: {}` through:
+    depth_satisfied is None (not False) and status is None (not
+    != "complete"). With `level.depth: source` supplying effective_depth() by
+    fallback, every agreement assertion then succeeded on a reference that
+    proved nothing.
+    """
+    problems = reuse.replay_reference_problems(
+        {"analysis_assurance": {}, "level": {"depth": "source"}}
+    )
+    assert any("depth_satisfied=None" in p for p in problems)
+    assert any("status=None" in p for p in problems)
+
+
+@pytest.mark.parametrize("assurance", [
+    {"status": "complete"},                       # depth_satisfied absent
+    {"depth_satisfied": True},                    # status absent
+    {"depth_satisfied": False, "status": "complete"},
+    {"depth_satisfied": True, "status": "partial"},
+])
+def test_half_an_assurance_is_not_an_assurance(assurance):
+    """Both fields must be affirmatively right; absent is not satisfied."""
+    assert reuse.replay_reference_problems({"analysis_assurance": assurance})
+
+
+def test_both_fields_affirmative_is_accepted():
+    """The guard must still admit a genuinely sound reference."""
+    assert reuse.replay_reference_problems(
+        {"analysis_assurance": {"depth_satisfied": True, "status": "complete"}}
+    ) == []

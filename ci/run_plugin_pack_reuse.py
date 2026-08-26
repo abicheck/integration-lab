@@ -439,10 +439,24 @@ def replay_reference_problems(replay: dict[str, Any] | None) -> list[str]:
             "completeness is unproven, so agreeing with it proves nothing"
         )
         return problems
-    if assurance.get("depth_satisfied") is False:
-        problems.append("replay report reports depth_satisfied=False")
+    # Codex review, third pass on this validator, and the same mistake each
+    # time one level further in: requiring the block, then rejecting only
+    # EXPLICIT negatives. `analysis_assurance: {}` has depth_satisfied None
+    # (not False) and status None (not != "complete"), so it passed -- and
+    # with `level.depth: source` supplying effective_depth() by fallback,
+    # every agreement assertion succeeded on a reference proving nothing.
+    #
+    # The claim being made is affirmative -- "the replay reached complete
+    # source depth" -- so the check has to be affirmative too. Absent is not
+    # satisfied. Negative-checking a soundness gate is what let each earlier
+    # revision through.
+    depth_satisfied = assurance.get("depth_satisfied")
+    if depth_satisfied is not True:
+        problems.append(
+            f"replay analysis_assurance.depth_satisfied={depth_satisfied!r}, expected True"
+        )
     status = assurance.get("status")
-    if status is not None and status != "complete":
+    if status != "complete":
         notes = assurance.get("notes") or []
         problems.append(
             f"replay analysis_assurance.status={status!r}, expected 'complete'"
