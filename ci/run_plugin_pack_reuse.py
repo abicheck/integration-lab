@@ -436,6 +436,32 @@ def replay_reference_problems(replay: dict[str, Any] | None) -> list[str]:
     if replay is None:
         return ["no replay report was produced"]
     problems: list[str] = []
+    # Codex review, fourth pass, and the most basic version of the same
+    # mistake: every earlier revision asked how COMPLETE the replay's
+    # evidence was and never asked whether it produced a comparison at all.
+    # ADR-050 refuses a verdict on a scope/profile mismatch and writes
+    # `verdict: null` with a `reason`, and that is not hypothetical here --
+    # it is exactly what every l4-clang-plugin report carried until 9775ba0.
+    # Such a report has no findings and accounts for no targets, so the
+    # findings/depth/targets agreement checks downstream would all match a
+    # reuse run that produced nothing either: agreement between two silences.
+    #
+    # Checked FIRST, because "there is no comparison here" disqualifies a
+    # reference more fundamentally than any completeness field.
+    reason = replay.get("reason")
+    if isinstance(reason, dict) and reason.get("kind"):
+        problems.append(
+            f"replay report produced no comparison: reason.kind="
+            f"{reason['kind']!r} ({reason.get('message') or 'no message'})"
+        )
+    if replay.get("verdict") is None:
+        problems.append(
+            "replay report carries no verdict, so there is no comparison to "
+            "agree with -- empty findings and empty target accounting would "
+            "match a reuse run that produced nothing either"
+        )
+    if problems:
+        return problems
     operational = replay.get("operational_errors")
     if operational:
         problems.append(

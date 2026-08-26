@@ -438,13 +438,16 @@ def test_a_clean_replay_report_is_a_usable_reference():
 
 
 def test_a_replay_report_with_operational_errors_is_rejected():
-    problems = reuse.replay_reference_problems({"operational_errors": ["castxml exploded"]})
+    problems = reuse.replay_reference_problems(
+        {"verdict": "NO_CHANGE", "operational_errors": ["castxml exploded"]}
+    )
     assert problems and "operational error" in problems[0]
 
 
 def test_a_replay_report_with_partial_assurance_is_rejected():
     problems = reuse.replay_reference_problems(
-        {"analysis_assurance": {"depth_satisfied": True, "status": "partial",
+        {"verdict": "NO_CHANGE",
+         "analysis_assurance": {"depth_satisfied": True, "status": "partial",
                                 "notes": ["public surface unresolved"]}}
     )
     status_problem = next(p for p in problems if "status=" in p)
@@ -453,7 +456,9 @@ def test_a_replay_report_with_partial_assurance_is_rejected():
 
 
 def test_a_replay_report_denying_depth_is_rejected():
-    problems = reuse.replay_reference_problems({"analysis_assurance": {"depth_satisfied": False}})
+    problems = reuse.replay_reference_problems(
+        {"verdict": "NO_CHANGE", "analysis_assurance": {"depth_satisfied": False}}
+    )
     assert problems and "depth_satisfied=False" in problems[0]
 
 
@@ -562,7 +567,8 @@ def test_an_empty_assurance_block_is_rejected():
     proved nothing.
     """
     problems = reuse.replay_reference_problems(
-        {"analysis_assurance": {}, "level": {"depth": "source"}}
+        {"verdict": "NO_CHANGE", "analysis_assurance": {},
+         "level": {"depth": "source"}}
     )
     assert any("depth_satisfied=None" in p for p in problems)
     assert any("status=None" in p for p in problems)
@@ -576,13 +582,16 @@ def test_an_empty_assurance_block_is_rejected():
 ])
 def test_half_an_assurance_is_not_an_assurance(assurance):
     """Both fields must be affirmatively right; absent is not satisfied."""
-    assert reuse.replay_reference_problems({"analysis_assurance": assurance})
+    assert reuse.replay_reference_problems(
+        {"verdict": "NO_CHANGE", "analysis_assurance": assurance}
+    )
 
 
 def test_both_fields_affirmative_is_accepted():
     """The guard must still admit a genuinely sound reference."""
     assert reuse.replay_reference_problems(
-        {"analysis_assurance": {"depth_satisfied": True, "status": "complete"}}
+        {"verdict": "NO_CHANGE",
+         "analysis_assurance": {"depth_satisfied": True, "status": "complete"}}
     ) == []
 
 
@@ -708,3 +717,52 @@ def test_the_public_header_directory_is_declared_alongside_the_file(tmp_path, mo
     argv = seen[0]
     headers = [argv[i + 1] for i, a in enumerate(argv) if a == "--header"]
     assert headers == [f"new={header}", f"new={header.parent}"]
+
+
+# --- a reference with no verdict is not a reference (Codex review) --------
+#
+# Every earlier revision of replay_reference_problems() asked how COMPLETE
+# the replay's evidence was and never asked whether it produced a comparison
+# at all. Not hypothetical: `verdict: null` + `reason.kind: scope_mismatch`
+# is exactly what every l4-clang-plugin report carried until 9775ba0.
+
+
+def test_a_refused_replay_is_not_a_usable_reference():
+    """Affirmative assurance must not rescue a report that refused to compare."""
+    problems = reuse.replay_reference_problems({
+        "verdict": None,
+        "reason": {"kind": "scope_mismatch", "message": "declared surface differs"},
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete"},
+        "level": {"depth": "source"},
+    })
+    assert problems
+    assert any("scope_mismatch" in p for p in problems)
+    assert any("no verdict" in p for p in problems)
+
+
+def test_a_verdictless_replay_without_a_reason_is_still_rejected():
+    """The absence of a verdict is disqualifying on its own -- a shape that
+    drops `reason` must not slip through the reason check."""
+    problems = reuse.replay_reference_problems({
+        "verdict": None,
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete"},
+    })
+    assert problems and any("no verdict" in p for p in problems)
+
+
+def test_the_refusal_check_runs_before_the_completeness_checks():
+    """A refused report should be reported AS refused, not as an assurance
+    problem -- the diagnosis a reader needs is 'it never compared'."""
+    problems = reuse.replay_reference_problems({
+        "verdict": None,
+        "reason": {"kind": "profile_mismatch", "message": "differing fields: x"},
+    })
+    assert all("analysis_assurance" not in p for p in problems), problems
+
+
+def test_a_sound_replay_still_passes():
+    """A gate that never lets anything through is not a gate."""
+    assert reuse.replay_reference_problems({
+        "verdict": "NO_CHANGE",
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete"},
+    }) == []
