@@ -9,6 +9,7 @@ everything that decides whether a demonstration still demonstrates its claim.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -244,88 +245,174 @@ def test_body_says_none_rather_than_omitting_the_required_section():
 # whether the patch still applied to the local working tree. Neither is the
 # invariant: a branch rebuilt on today's base but carrying an extra commit or
 # a hand-edited diff answers "0 behind" and reports healthy. These tests pin
-# the tree-equality check that replaced it, using throwaway git indexes so
-# nothing touches the working tree.
+# the tree-equality check that replaced it.
+#
+# They build a throwaway repository rather than reading this one. An earlier
+# revision asserted against `origin/main` and the real test/* branches; that
+# passed locally, where those refs happen to be fetched, and failed in CI,
+# where a PR checkout has no `refs/remotes/origin/main` at all -- seven tests
+# depending on ambient state rather than on anything they set up. The real
+# branches' actual drift is reported by the demo_branch_drift job, which is
+# where a fact about the world belongs; a unit test asserting it would also
+# have to be rewritten the moment someone regenerated them.
 
 
-def _tree_of(base_ref: str, *, patch: Path | None = None, extra: tuple[str, str] | None = None) -> str:
-    """Build `base_ref + patch (+ extra file)` and return its tree hash."""
-    import os
+def _git(repo: Path, *args: str, **kw) -> str:
     import subprocess
-    import tempfile
 
-    with tempfile.TemporaryDirectory() as tmp:
-        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
-
-        def run(*args, **kw):
-            return subprocess.run(["git", *args], cwd=gen.REPO_ROOT, text=True,
-                                  capture_output=True, env=env, **kw)
-
-        run("read-tree", f"{base_ref}^{{tree}}")
-        if patch is not None:
-            run("apply", "--cached", str(patch))
-        if extra is not None:
-            name, content = extra
-            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"],
-                                  cwd=gen.REPO_ROOT, input=content, text=True,
-                                  capture_output=True).stdout.strip()
-            run("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
-        return run("write-tree").stdout.strip()
+    result = subprocess.run(["git", *args], cwd=repo, text=True,
+                            capture_output=True, **kw)
+    return result.stdout
 
 
-def test_expected_tree_is_base_plus_patch():
-    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
-    assert gen.expected_tree(demo, "origin/main") == _tree_of(
-        "origin/main", patch=REPO_ROOT / demo["patch"]
+def _repo_with_base(tmp_path: Path) -> tuple[Path, Path]:
+    """A repository with a `main`, an `origin/main` remote-tracking ref, and a
+    patch that applies to it. Returns (repo, patch)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / "f.txt").write_text("one\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    # A remote-tracking ref without a remote, so `origin/main` resolves the
+    # same way gen_demo_prs expects without any network.
+    _git(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+
+    patch = tmp_path / "p.patch"
+    patch.write_text(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+        "@@ -1 +1 @@\n-one\n+two\n"
     )
+    return repo, patch
 
 
-def test_expected_tree_differs_from_the_untouched_base():
+def _demo_entry(patch: Path, branch: str = "test/d") -> dict:
+    return {"id": "d", "branch": branch, "title": "t",
+            "patch": str(patch), "expect": {}}
+
+
+@contextlib.contextmanager
+def _rooted_at(repo: Path):
+    original = gen.REPO_ROOT
+    gen.REPO_ROOT = repo
+    try:
+        yield
+    finally:
+        gen.REPO_ROOT = original
+
+
+def test_expected_tree_is_base_plus_patch(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        want = gen.expected_tree(_demo_entry(patch), "origin/main")
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        got = gen.git("rev-parse", "test/d^{tree}").strip()
+    assert got == want
+
+
+def test_expected_tree_differs_from_the_untouched_base(tmp_path):
     """Guards against a patch that silently applies to nothing."""
-    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
-    assert gen.expected_tree(demo, "origin/main") != _tree_of("origin/main")
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        want = gen.expected_tree(_demo_entry(patch), "origin/main")
+        base = gen.git("rev-parse", "origin/main^{tree}").strip()
+    assert want != base
 
 
-def test_a_branch_with_an_extra_change_is_not_the_expected_tree():
+def test_a_branch_with_an_extra_change_is_not_the_expected_tree(tmp_path):
     """Codex's case: current base, patch applied, plus something else."""
-    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
-    drifted = _tree_of("origin/main", patch=REPO_ROOT / demo["patch"],
-                       extra=("EXTRA.txt", "an extra commit\n"))
-    assert drifted != gen.expected_tree(demo, "origin/main")
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        want = gen.expected_tree(_demo_entry(patch), "origin/main")
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        (repo / "EXTRA.txt").write_text("an extra commit\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        got = gen.git("rev-parse", "test/d^{tree}").strip()
+    assert got != want
 
 
-def test_a_branch_carrying_a_different_patch_is_not_the_expected_tree():
-    demos = gen.load_manifest(MANIFEST)
-    mine = next(d for d in demos if d["id"] == "binary-abi-break")
-    theirs = next(d for d in demos if d["id"] == "compatible-addition")
-    assert gen.expected_tree(mine, "origin/main") != gen.expected_tree(theirs, "origin/main")
+def test_a_branch_carrying_a_different_patch_is_not_the_expected_tree(tmp_path):
+    repo, mine = _repo_with_base(tmp_path)
+    theirs = tmp_path / "other.patch"
+    theirs.write_text(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+        "@@ -1 +1 @@\n-one\n+three\n"
+    )
+    with _rooted_at(repo):
+        assert gen.expected_tree(_demo_entry(mine), "origin/main") != gen.expected_tree(
+            _demo_entry(theirs), "origin/main"
+        )
 
 
-def test_expected_tree_leaves_the_working_tree_and_index_alone():
-    import subprocess
-
-    before = subprocess.run(["git", "status", "--porcelain"], cwd=gen.REPO_ROOT,
-                            text=True, capture_output=True).stdout
-    for demo in gen.load_manifest(MANIFEST):
-        gen.expected_tree(demo, "origin/main")
-    after = subprocess.run(["git", "status", "--porcelain"], cwd=gen.REPO_ROOT,
-                           text=True, capture_output=True).stdout
+def test_expected_tree_leaves_the_working_tree_and_index_alone(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        before = gen.git("status", "--porcelain")
+        gen.expected_tree(_demo_entry(patch), "origin/main")
+        after = gen.git("status", "--porcelain")
     assert before == after
+    assert (repo / "f.txt").read_text() == "one\n", "the file itself is untouched"
 
 
-def test_check_reports_the_real_branches_as_drifted():
-    """All five are stale today; the check must say so rather than pass."""
-    problems = gen.check(gen.load_manifest(MANIFEST), "origin/main")
-    assert problems
-    for demo in gen.load_manifest(MANIFEST):
-        assert any(demo["id"] in p for p in problems), demo["id"]
+def test_check_reports_a_drifted_branch(tmp_path):
+    """A branch on the current base but carrying an extra change."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        (repo / "EXTRA.txt").write_text("extra\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/d", "refs/heads/test/d")
+        gen.git("checkout", "-q", "main")
+        problems = gen.check([_demo_entry(patch)], "origin/main")
+    assert any("is not origin/main +" in p for p in problems), problems
 
 
-def test_check_distinguishes_behind_from_divergent():
-    """Two different problems deserve two different messages."""
-    problems = gen.check(gen.load_manifest(MANIFEST), "origin/main")
-    assert any("commit(s) behind" in p for p in problems)
-    assert any("is not origin/main +" in p for p in problems)
+def test_check_accepts_a_correctly_generated_branch(tmp_path):
+    """The other direction: a gate that never passes is not a gate."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/d", "refs/heads/test/d")
+        gen.git("checkout", "-q", "main")
+        problems = gen.check([_demo_entry(patch)], "origin/main")
+    assert problems == []
+
+
+def test_check_reports_a_branch_that_is_behind(tmp_path):
+    """"Behind" stays its own message -- far more actionable than a tree hash."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/d", "refs/heads/test/d")
+        gen.git("checkout", "-q", "main")
+        (repo / "moved-on.txt").write_text("main moved\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "main moves on")
+        gen.git("update-ref", "refs/remotes/origin/main", "refs/heads/main")
+        problems = gen.check([_demo_entry(patch)], "origin/main")
+    assert any("commit(s) behind" in p for p in problems), problems
+
+
+def test_check_reports_a_missing_branch(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        problems = gen.check([_demo_entry(patch, branch="test/absent")], "origin/main")
+    assert any("does not exist on origin" in p for p in problems), problems
 
 
 # --- detached HEAD (Codex review) ---------------------------------------
