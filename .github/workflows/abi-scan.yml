@@ -1823,41 +1823,60 @@ jobs:
       # whether a readable report file was actually written, not to
       # abicheck's gate-encoding exit code.
       # The public-header DIRECTORY is passed alongside the file because
-      # `scope_fingerprint` hashes `headers` and `public_header_dirs` as
-      # separate fields, a `-H` file feeds only the first, and the committed
-      # baseline was extracted with both. Without it this compare refused a
-      # verdict on a declared-surface mismatch before reading any ABI
-      # evidence -- see the `abicheck-l4-clang-plugin` report CI run
-      # 32954335654 uploaded: `"verdict": null`, `"kind": "scope_mismatch"`.
+      # This step used to invoke the bare CLI by hand, and it never once
+      # produced a verdict: every report it uploaded carried `"verdict":
+      # null`. The reason is now traced rather than guessed.
+      #
+      # `abi/math.abicheck.json` is produced by baseline.yml's "Collect
+      # source-aware ABI baseline" step through the upstream ACTION, with
+      # `public-header-dir: include` and `sources: .`. The `scan` job above
+      # compares against it with the SAME action and the SAME two inputs, and
+      # succeeds. This step reached for the CLI with `--header
+      # include/abicheck_lab/math.h --ast-frontend clang` instead, and the
+      # action supplies include roots the bare CLI does not -- so the two
+      # sides declared different surfaces and ADR-050 refused a verdict
+      # before any ABI evidence was read.
+      #
+      # Verified locally against the bundle CI run 32954335654 uploaded, with
+      # the pinned CastXML: mirroring the proven `scan` inputs takes the
+      # contract from a scope mismatch down to a single residual field
+      # (compiler_version, which is environmental and identical in CI where
+      # both sides come from the same pinned installer).
+      #
+      # The frontend switch costs this job NOTHING. Its claim is about the
+      # clang PLUGIN pack, which is `build-info` -- not about which frontend
+      # parses the headers. Verified locally that castxml + the clang plugin
+      # pack still resolves evidence depth `source`, so the L4 claim is
+      # preserved exactly; the only thing given up is a hand-rolled
+      # invocation that never worked.
+      #
+      # Two CLI flags are dropped because the action does not expose them,
+      # and neither is load-bearing here: `--require-complete-analysis` is
+      # what "Enforce source-depth plugin report contract" below already
+      # asserts from the report itself, and `--policy strict_abi` is replaced
+      # by the action's own fail-on-breaking/fail-on-api-break, exactly as on
+      # the `scan` job.
       - name: Compare candidate (plugin-collected facts) against committed baseline
         id: l4_clang_plugin_compare
         if: steps.install_abicheck.outcome == 'success'
         continue-on-error: true
-        run: |
-          set -euo pipefail
-          set +e
-          abicheck compare \
-            "$RUNNER_TEMP/math.base.abicheck.json" \
-            bazel-bin/libmath.so \
-            --header new=include/abicheck_lab/math.h \
-            --header new=include/abicheck_lab \
-            --ast-frontend clang \
-            --build-info new=bazel-bin/tools/abicheck/math_abicheck_inputs \
-            --depth source \
-            --require-complete-analysis \
-            --format json \
-            -o abicheck-l4-clang-plugin.json \
-            --policy strict_abi
-          compare_rc=$?
-          set -e
-          # Verdict-bearing exits are valid report production. Usage/input
-          # failures (notably 64) can also leave a non-empty JSON error
-          # envelope, which must not be mistaken for a compatibility report.
-          case "$compare_rc" in
-            0|1|2|4) ;;
-            *) echo "::error::abicheck compare failed with operational exit $compare_rc"; exit "$compare_rc" ;;
-          esac
-          test -s abicheck-l4-clang-plugin.json
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          public-header-dir: include
+          sources: .
+          # The one deliberate difference from `scan`: the evidence comes
+          # from the clang plugin's own facts pack, not the bazel pack. That
+          # substitution IS this job.
+          build-info: bazel-bin/tools/abicheck/math_abicheck_inputs
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          format: json
+          output-file: abicheck-l4-clang-plugin.json
+          fail-on-breaking: true
+          fail-on-api-break: true
 
       # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate
       # successful report production on the report's own requested/effective
