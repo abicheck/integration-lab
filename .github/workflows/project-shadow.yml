@@ -82,8 +82,21 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18 patchelf ninja-build bear
       - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
+      # `project validate` probes EVERY binding in ci/toolchain-bindings.yml,
+      # not just this profile's, and it does so with a 10-second budget it
+      # owns upstream. This PR added the `clang18` binding, and this job
+      # installed only GCC -- so `g++-14` was warm from the apt step above
+      # while `/usr/bin/clang++-18` (preinstalled in the runner image, never
+      # touched) had to be faulted in cold on first exec. That intermittently
+      # blew the budget: run 32965866477 failed the cmake-ninja leg while the
+      # bazel leg passed the identical command in ONE second, and run
+      # 32972209466 then failed the bazel leg instead. gcc14 never timed out.
+      #
+      # The apt line now installs clang-18 for the same reason it installs
+      # g++-14: a job that validates a toolchain binding should provision
+      # that toolchain rather than hope the image's copy responds in time.
       - name: Validate native project contract
         run: |
           abicheck project validate .abicheck.yml \
@@ -208,7 +221,7 @@ jobs:
           git worktree add --detach accepted-main-src "$SOURCE_COMMIT"
       - name: Install build toolchain
         if: steps.classify.outputs.usable != 'true'
-        run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+        run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18 patchelf ninja-build bear
       - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
         if: steps.classify.outputs.usable != 'true'
       - name: Rebuild the accepted-main build-output

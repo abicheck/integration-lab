@@ -28,7 +28,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18 patchelf ninja-build bear
       - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
       - name: Build and validate profile
         run: |
