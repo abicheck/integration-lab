@@ -50,25 +50,6 @@ expected_gaps:
   # because inventing the field without running the real plugin build would be
   # asserting a binding nothing verified -- the exact failure this assertion
   # exists to catch.
-  # The producer-compiler scenario compares each producer's findings by
-  # (kind, symbol) and not severity, so a reclassification that kept both --
-  # ABICheck downgrading typedef_base_changed while func_removed still
-  # carried the GCC verdict -- would pass. The runner is severity-aware and
-  # compares the full triple as soon as the declarations carry one; what is
-  # missing is the real severities.
-  #
-  # They are not invented here. This scenario needs g++-14 AND castxml to
-  # reproduce, and neither is available outside CI, so declaring severities
-  # from a local approximation would assert a classification nothing
-  # verified. run_producer_compiler_scenario.py now writes every observed
-  # severity into attribution.json on every run, so the values arrive as
-  # evidence from a real run; closing this gap is transcribing them.
-  - id: producer-finding-severity-declarations
-    status: expected_gap
-    upstream_issue: integration-lab#producer-severity-declarations
-    expected_failure:
-      phase: producer-compiler
-      reason: severities_not_yet_declared_from_a_real_run
   # The clean-job reuse compare cannot run at all yet. CI run 32954335654
   # reports exit 16: "'libmath.so' old='main' new='new' are not comparable:
   # old and new snapshots do not cover the same declared surface
@@ -171,10 +152,14 @@ producer_scenarios:
       producers:
         linux-x86_64-gcc14-cxx17-cmake-ninja:
           verdict: BREAKING
+          # Severities transcribed from the attribution.json that CI run
+          # 32954335596 (job 98132563801, commit 475c6ef) actually wrote --
+          # not from a local approximation. A reclassification that kept the
+          # BREAKING verdict but downgraded either breaking finding now fails.
           findings:
-            - {kind: typedef_base_changed, symbol: client_word}
-            - {kind: func_removed, symbol: _Z11lab_consumei}
-            - {kind: func_added, symbol: _Z11lab_consumex}
+            - {kind: typedef_base_changed, symbol: client_word, severity: breaking}
+            - {kind: func_removed, symbol: _Z11lab_consumei, severity: breaking}
+            - {kind: func_added, symbol: _Z11lab_consumex, severity: compatible}
         linux-x86_64-clang18-cxx17-cmake-ninja:
           verdict: NO_CHANGE
           findings: []

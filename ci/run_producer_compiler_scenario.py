@@ -138,18 +138,29 @@ def assert_producer_findings(
     # though the per-producer CLASSIFICATION had moved -- which is what this
     # scenario claims to pin.
     #
-    # Severity is compared only where the manifest declares one, and that is
-    # NOT the usual "absent reads as OK" hole: observed_findings() records
-    # every severity the run actually saw into attribution.json on every run,
-    # so the values needed to declare them are produced as evidence rather
-    # than guessed. They are not declared yet because this environment has
-    # neither g++-14 nor castxml, so the scenario cannot be reproduced
-    # faithfully here, and inventing severities would assert a classification
-    # nothing verified. A test pins that every declared finding either
-    # carries a severity or is listed as awaiting one, so this cannot be
-    # quietly forgotten.
+    # The manifest now declares a severity on every producer finding. They
+    # were not guessed: observed_findings() writes every severity the run
+    # actually saw into attribution.json, and the declared values are
+    # transcribed from the attribution.json CI run 32954335596 produced
+    # (job 98132563801, commit 475c6ef). This environment has neither
+    # g++-14 nor castxml, so a locally-invented severity would have asserted
+    # a classification nothing verified.
+    #
+    # The severity-blind branch below is kept for a declaration that carries
+    # no severity at all; a test pins that such a declaration must have the
+    # gap declared alongside it, so it cannot be quietly reintroduced.
     declared_findings = expected.get("findings", [])
     with_severity = [f for f in declared_findings if "severity" in f]
+    if with_severity and len(with_severity) != len(declared_findings):
+        # A half-declared set is a declaration bug, not a weaker assertion:
+        # the severity-aware comparison below reads every declared finding's
+        # severity, so the ones left bare would silently never match.
+        errors.append(
+            f"{profile_id}: findings declare severity inconsistently -- "
+            f"{len(with_severity)} of {len(declared_findings)} carry one; "
+            "declare a severity on all of them or on none"
+        )
+        return errors
     if with_severity:
         observed = {
             (change.get("kind"), change.get("symbol"), change.get("severity"))

@@ -257,6 +257,43 @@ def test_non_dict_changes_are_ignored_when_recording():
     assert scenario.observed_findings({"changes": ["junk", None]}) == []
 
 
+def test_half_declared_severities_are_a_declaration_error():
+    """Declaring severity on some findings and not others must not read as
+    a weaker assertion -- the bare ones would silently never match."""
+    report = {
+        "verdict": "BREAKING",
+        "changes": [
+            {"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"},
+            {"kind": "func_added", "symbol": "_Z1fi", "severity": "compatible"},
+        ],
+    }
+    expected = {
+        "verdict": "BREAKING",
+        "findings": [
+            {"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"},
+            {"kind": "func_added", "symbol": "_Z1fi"},
+        ],
+    }
+    errors = scenario.assert_producer_findings(report, expected, "p")
+    assert errors and "inconsistently" in errors[0]
+
+
+def test_the_declared_severities_are_the_ones_ci_observed():
+    """Pins the transcription itself. These are the values CI run 32954335596
+    (job 98132563801) wrote into attribution.json -- not a local guess."""
+    doc = yaml.safe_load(
+        (REPO_ROOT / "scenarios" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    producers = doc["producer_scenarios"][0]["expect"]["producers"]
+    gcc = producers["linux-x86_64-gcc14-cxx17-cmake-ninja"]["findings"]
+    assert {(f["kind"], f["symbol"], f["severity"]) for f in gcc} == {
+        ("func_added", "_Z11lab_consumex", "compatible"),
+        ("func_removed", "_Z11lab_consumei", "breaking"),
+        ("typedef_base_changed", "client_word", "breaking"),
+    }
+    assert producers["linux-x86_64-clang18-cxx17-cmake-ninja"]["findings"] == []
+
+
 def test_the_severity_gap_is_declared_while_severities_are_missing():
     """This must not be quietly forgotten: either every declared producer
     finding carries a severity, or the gap is declared."""
@@ -270,7 +307,15 @@ def test_the_severity_gap_is_declared_while_severities_are_missing():
     ]
     assert declared, "the producer scenario declares findings"
     if all("severity" in finding for finding in declared):
-        return  # gap closed; nothing to declare
+        # Gap closed. Guard the transcription itself: a severity is only
+        # meaningful if it is one ABICheck can actually emit, so a typo
+        # ("break", "compat") fails here rather than silently never matching.
+        assert {finding["severity"] for finding in declared} <= {
+            "compatible",
+            "risk",
+            "breaking",
+        }
+        return
     gap_ids = {gap["id"] for gap in doc.get("expected_gaps", [])}
     assert "producer-finding-severity-declarations" in gap_ids, (
         "producer findings still lack severities, so the gap must stay declared"
