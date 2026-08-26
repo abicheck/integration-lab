@@ -157,6 +157,22 @@ def base_commit(base_ref: str) -> str:
     return git("rev-parse", base_ref).strip()
 
 
+def _is_ancestor(ancestor: str, descendant: str) -> bool:
+    """True when *ancestor* is reachable from *descendant*.
+
+    `merge-base --is-ancestor` signals through its exit status and prints
+    nothing, so this is the one place `git()` is called for its status rather
+    than its output.
+    """
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def stale_base(base_ref: str) -> str | None:
     """Why *base_ref* cannot be trusted as "the current default branch".
 
@@ -191,15 +207,28 @@ def stale_base(base_ref: str) -> str | None:
         # that cannot be reached, which stays an error below because currency
         # genuinely cannot be confirmed.
         return None
-    listed = git("ls-remote", "--heads", remote, branch, check=False).strip()
-    if not listed:
+    # Codex review: `ls-remote --heads <remote> main` is a GLOB matched
+    # against the TAIL of ref names, so it also returns `refs/heads/team/main`
+    # -- reproduced locally: with both branches present the command prints two
+    # lines, and taking the first SHA can name an unrelated branch. Query the
+    # fully-qualified ref and then select the exact match, so an extra line
+    # can never be mistaken for the answer.
+    fully_qualified = f"refs/heads/{branch}"
+    listed = git("ls-remote", remote, fully_qualified, check=False).strip()
+    upstream = ""
+    for line in listed.splitlines():
+        sha, _, name = line.partition("\t")
+        if name.strip() == fully_qualified:
+            upstream = sha.strip()
+            break
+    if not upstream:
         return (
-            f"could not reach {remote} to confirm {base_ref} is current "
-            f"(`git ls-remote --heads {remote} {branch}` returned nothing). "
-            "Fetch and retry, or pass --base-ref explicitly if this is "
+            f"could not confirm {base_ref} is current: "
+            f"`git ls-remote {remote} {fully_qualified}` returned "
+            + (f"no {fully_qualified}" if listed else "nothing")
+            + ". Fetch and retry, or pass --base-ref explicitly if this is "
             "deliberate."
         )
-    upstream = listed.split()[0]
     if upstream != local:
         return (
             f"{base_ref} is stale: it points at {local[:12]} but {remote}/"
@@ -384,6 +413,22 @@ def local_drift(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
         if not head:
             problems.append(
                 f"{demo['id']}: no local {branch} to push -- run --write first"
+            )
+            continue
+        # Codex review: an identical TREE is not the same as a branch built
+        # on this base. An orphaned local branch, or one left on unrelated
+        # history after a default-branch rewrite, can carry exactly the right
+        # files -- and force-pushing it would replace an open demonstration
+        # PR with history that has no merge base with the target. The remote
+        # checker already tests the base relationship separately; the local
+        # one has to as well.
+        base = base_commit(base_ref)
+        if not _is_ancestor(base, head):
+            problems.append(
+                f"{demo['id']}: local {branch} does not descend from "
+                f"{base_ref} ({base[:12]}) -- pushing it would replace the "
+                "demonstration with unrelated history. Regenerate it with "
+                "--write."
             )
             continue
         actual = git("rev-parse", f"{head}^{{tree}}").strip()

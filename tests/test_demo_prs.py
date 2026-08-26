@@ -789,3 +789,66 @@ def test_check_reports_a_stale_base_rather_than_silently_using_it(tmp_path, monk
         problems = gen.check([_demo_entry(patch)], "origin/main")
     # Otherwise every branch would read as current against a base that moved.
     assert any("is stale" in p for p in problems), problems
+
+
+# --- two more from review, both verified by reproduction ------------------
+
+
+def test_stale_base_selects_the_exact_ref_not_a_glob_match(tmp_path):
+    """`ls-remote --heads <remote> main` is a GLOB matched against the TAIL of
+    ref names, so `refs/heads/team/main` matches too. Reproduced: with both
+    branches present the command prints two lines, and taking the first SHA
+    can name an unrelated branch."""
+    (tmp_path / "up").mkdir()
+    (tmp_path / "down").mkdir()
+    upstream, _ = _repo_with_base(tmp_path / "up")
+    repo, _ = _repo_with_base(tmp_path / "down")
+    with _rooted_at(upstream):
+        # The decoy must sort BEFORE `refs/heads/main`, or `split()[0]` picks
+        # main by luck and the bug hides -- which is exactly what happened on
+        # the first version of this test with `team/main`. `a/main` sorts
+        # first, so the buggy form genuinely reads the decoy's SHA.
+        gen.git("checkout", "-q", "-B", "a/main", "main")
+        (upstream / "decoy.txt").write_text("decoy\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "decoy moves ahead")
+        gen.git("checkout", "-q", "main")
+    with _rooted_at(repo):
+        _with_origin_remote(repo, upstream)
+        gen.git("fetch", "-q", "origin", "main")
+        gen.git("update-ref", "refs/remotes/origin/main", "FETCH_HEAD")
+        # main itself is current; only the decoy moved. A glob match would
+        # compare against the decoy's SHA and cry stale.
+        assert gen.stale_base("origin/main") is None
+
+
+def test_local_drift_rejects_a_branch_not_descended_from_the_base(tmp_path):
+    """An identical tree is not the same as being built on this base: an
+    orphaned branch carrying exactly the right files would replace an open
+    demonstration PR with history that has no merge base."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        # Build the correct content, then re-root it as an orphan so the tree
+        # matches while the ancestry does not.
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        tree = gen.git("rev-parse", "test/d^{tree}").strip()
+        orphan = gen.git("commit-tree", tree, "-m", "orphan").strip()
+        gen.git("update-ref", "refs/heads/test/d", orphan)
+        gen.git("checkout", "-q", "main")
+        problems = gen.local_drift([_demo_entry(patch)], "origin/main")
+    assert problems and "does not descend from" in problems[0], problems
+
+
+def test_local_drift_still_accepts_a_properly_based_branch(tmp_path):
+    """The ancestry check must not reject the good case."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("checkout", "-q", "main")
+        assert gen.local_drift([_demo_entry(patch)], "origin/main") == []
