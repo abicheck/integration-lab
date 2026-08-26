@@ -50,6 +50,25 @@ expected_gaps:
   # because inventing the field without running the real plugin build would be
   # asserting a binding nothing verified -- the exact failure this assertion
   # exists to catch.
+  # The producer-compiler scenario compares each producer's findings by
+  # (kind, symbol) and not severity, so a reclassification that kept both --
+  # ABICheck downgrading typedef_base_changed while func_removed still
+  # carried the GCC verdict -- would pass. The runner is severity-aware and
+  # compares the full triple as soon as the declarations carry one; what is
+  # missing is the real severities.
+  #
+  # They are not invented here. This scenario needs g++-14 AND castxml to
+  # reproduce, and neither is available outside CI, so declaring severities
+  # from a local approximation would assert a classification nothing
+  # verified. run_producer_compiler_scenario.py now writes every observed
+  # severity into attribution.json on every run, so the values arrive as
+  # evidence from a real run; closing this gap is transcribing them.
+  - id: producer-finding-severity-declarations
+    status: expected_gap
+    upstream_issue: integration-lab#producer-severity-declarations
+    expected_failure:
+      phase: producer-compiler
+      reason: severities_not_yet_declared_from_a_real_run
   - id: plugin-pack-producer-identity
     status: expected_gap
     upstream_issue: integration-lab#pack-producer-identity

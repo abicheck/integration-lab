@@ -132,16 +132,67 @@ def assert_producer_findings(
             f"{profile_id}: verdict={report.get('verdict')!r}, "
             f"expected {expected['verdict']!r}"
         )
+    # Codex review: severity belongs in this identity. ABICheck could
+    # downgrade `typedef_base_changed` while `func_removed` still carried the
+    # GCC verdict, and a (kind, symbol) comparison would stay green even
+    # though the per-producer CLASSIFICATION had moved -- which is what this
+    # scenario claims to pin.
+    #
+    # Severity is compared only where the manifest declares one, and that is
+    # NOT the usual "absent reads as OK" hole: observed_findings() records
+    # every severity the run actually saw into attribution.json on every run,
+    # so the values needed to declare them are produced as evidence rather
+    # than guessed. They are not declared yet because this environment has
+    # neither g++-14 nor castxml, so the scenario cannot be reproduced
+    # faithfully here, and inventing severities would assert a classification
+    # nothing verified. A test pins that every declared finding either
+    # carries a severity or is listed as awaiting one, so this cannot be
+    # quietly forgotten.
+    declared_findings = expected.get("findings", [])
+    with_severity = [f for f in declared_findings if "severity" in f]
+    if with_severity:
+        observed = {
+            (change.get("kind"), change.get("symbol"), change.get("severity"))
+            for change in (report.get("changes") or [])
+        }
+        wanted = {(f["kind"], f["symbol"], f["severity"]) for f in declared_findings}
+        if observed != wanted:
+            errors.append(
+                f"{profile_id}: findings={sorted(observed)!r}, expected {sorted(wanted)!r}"
+            )
+        return errors
     observed = {
         (change.get("kind"), change.get("symbol"))
         for change in (report.get("changes") or [])
     }
-    declared = {(f["kind"], f["symbol"]) for f in expected.get("findings", [])}
+    declared = {(f["kind"], f["symbol"]) for f in declared_findings}
     if observed != declared:
         errors.append(
             f"{profile_id}: findings={sorted(observed)!r}, expected {sorted(declared)!r}"
         )
     return errors
+
+
+def observed_findings(report: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every finding a producer reported, WITH its severity.
+
+    Written into attribution.json so the severities needed to tighten the
+    declarations are produced by a real run rather than guessed. The
+    scenario cannot be reproduced outside CI (it needs both g++-14 and
+    castxml), so this is how the evidence gets out.
+    """
+    return sorted(
+        (
+            {
+                "kind": change.get("kind"),
+                "symbol": change.get("symbol"),
+                "severity": change.get("severity"),
+            }
+            for change in (report.get("changes") or [])
+            if isinstance(change, dict)
+        ),
+        key=lambda f: (str(f["kind"]), str(f["symbol"])),
+    )
 
 
 def run_producer(
@@ -229,7 +280,21 @@ def run(manifest: Path, scenario_id: str, output: Path) -> List[str]:
         errors.extend(assert_producer_findings(report, declared, profile_id))
 
     (output / "attribution.json").write_text(
-        json.dumps({"verdicts": verdicts, **actual}, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                "verdicts": verdicts,
+                # Severities included so tightening the declarations uses real
+                # values from a real run rather than invented ones.
+                "observed_findings": {
+                    profile_id: observed_findings(report)
+                    for profile_id, report in sorted(reports.items())
+                },
+                **actual,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return errors

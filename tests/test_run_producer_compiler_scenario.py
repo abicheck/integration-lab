@@ -218,3 +218,60 @@ def test_project_path_attribution_is_declared_as_a_gap():
     )
     gaps = {gap["id"] for gap in manifest["expected_gaps"]}
     assert "producer-attribution-through-project-path" in gaps
+
+
+# --- severity belongs in the finding identity (Codex review) ------------
+
+
+def test_severity_is_compared_when_declared():
+    """A declared severity that does not match must fail."""
+    report = {"verdict": "BREAKING",
+              "changes": [{"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"}]}
+    expected = {"verdict": "BREAKING",
+                "findings": [{"kind": "func_removed", "symbol": "_Z1fv", "severity": "risk"}]}
+    assert scenario.assert_producer_findings(report, expected, "p")
+
+
+def test_matching_severity_passes():
+    report = {"verdict": "BREAKING",
+              "changes": [{"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"}]}
+    expected = {"verdict": "BREAKING",
+                "findings": [{"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"}]}
+    assert scenario.assert_producer_findings(report, expected, "p") == []
+
+
+def test_observed_severities_are_recorded_for_every_finding():
+    """The evidence channel: the scenario cannot be reproduced outside CI, so
+    the severities needed to tighten the declarations have to come out of a
+    real run rather than being guessed."""
+    report = {"changes": [
+        {"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"},
+        {"kind": "typedef_base_changed", "symbol": "client_word", "severity": "risk"},
+    ]}
+    observed = scenario.observed_findings(report)
+    assert [f["severity"] for f in observed] == ["breaking", "risk"]
+    assert all(set(f) == {"kind", "symbol", "severity"} for f in observed)
+
+
+def test_non_dict_changes_are_ignored_when_recording():
+    assert scenario.observed_findings({"changes": ["junk", None]}) == []
+
+
+def test_the_severity_gap_is_declared_while_severities_are_missing():
+    """This must not be quietly forgotten: either every declared producer
+    finding carries a severity, or the gap is declared."""
+    root = REPO_ROOT
+    doc = yaml.safe_load((root / "scenarios" / "manifest.yaml").read_text(encoding="utf-8"))
+    declared = [
+        finding
+        for entry in doc.get("producer_scenarios", [])
+        for producer in (entry.get("expect", {}).get("producers") or {}).values()
+        for finding in producer.get("findings", [])
+    ]
+    assert declared, "the producer scenario declares findings"
+    if all("severity" in finding for finding in declared):
+        return  # gap closed; nothing to declare
+    gap_ids = {gap["id"] for gap in doc.get("expected_gaps", [])}
+    assert "producer-finding-severity-declarations" in gap_ids, (
+        "producer findings still lack severities, so the gap must stay declared"
+    )
