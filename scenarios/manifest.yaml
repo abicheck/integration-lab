@@ -67,13 +67,41 @@ expected_gaps:
   # compares now pass the public-header directory alongside the file, which
   # reproduces the baseline's scope_fingerprint exactly.
   #
-  # What remains is the profile half, and it is not a flag to tweak: the
-  # committed abi/math.abicheck.json is a CASTXML/gnu extraction, while the
-  # whole L4 plugin path parses headers with clang. Two different frontends
-  # are genuinely not comparable under ADR-050 D2, so this cannot be closed
-  # by argument -- it needs a baseline extracted by the same frontend the
-  # plugin path uses, which means committing a second, clang-extracted
-  # snapshot for this path rather than reusing the castxml one.
+  # What remains is the profile half. A second local experiment against the
+  # same bundle decomposes it into four independent fields -- three of which
+  # ARE reachable, correcting the earlier note here that called the whole
+  # thing "not a flag to tweak":
+  #
+  #   1. compiler_family (castxml/gnu vs clang). Reachable. Parsing the
+  #      headers with castxml while still consuming the CLANG plugin pack via
+  #      --build-info is legal and, verified, still resolves evidence depth
+  #      `source` -- so pack reuse survives the frontend switch. This is the
+  #      important feasibility result: the job's whole point is preserved.
+  #   2. language_standard and 3. macro_ops. Reachable, and verified to match
+  #      the baseline EXACTLY by passing the flags the baseline extraction
+  #      used: --lang c++ --compiler-option -std=c++17, plus the four
+  #      determinism ops -D__DATE__/-D__TIMESTAMP__/-D__TIME__="redacted" and
+  #      -U_FORTIFY_SOURCE.
+  #   4. include_sequence. NOT yet reproduced. The baseline carries three
+  #      entries -- two header roots (`include/` and the repo root) and an
+  #      EMPTY external include dir (sha256:e3b0c442... is the hash of the
+  #      empty string) -- against two here. The baseline's exact --include
+  #      set has to be recovered before this closes.
+  #   5. compiler_version. Environmental, and not decidable from here: the
+  #      committed baseline was produced by castxml 0.7.0 bundling clang
+  #      20.1.8 (conda-forge) with g++ 14.3.0, while action/install-castxml.sh
+  #      pins castxml 0.6.20260105 bundling clang 21.1.8. Whether these agree
+  #      in CI depends on which environment actually produces the baseline on
+  #      the run -- restored vs rebuilt -- and that has to be read off a real
+  #      run rather than guessed.
+  #
+  # Reproduction (needs the bundle artifact and the pinned installer; no
+  # repo build): download `abicheck-plugin-pack-bundle`, run
+  # action/install-castxml.sh, then `abicheck dump bundle/lib/libmath.so
+  # --header <hdr> --header <hdr-dir> --ast-frontend castxml --lang c++
+  # --compiler-option -std=c++17 <determinism ops> --build-info
+  # bundle/abicheck_inputs --depth source` and diff `contract.profile_fields`
+  # against the bundle's own baseline.
   #
   # This is NOT specific to the clean job. The `abicheck-l4-clang-plugin`
   # report the l4 job itself uploaded in that run carries `"verdict": null`
