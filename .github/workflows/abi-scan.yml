@@ -2136,6 +2136,16 @@ jobs:
       # fail an otherwise valid PR. The demonstration branches live in THIS
       # repository, so the head repo has to match too -- and it is checked
       # first, so a fork PR never even reads the manifest.
+      # Codex review: this job read demos/manifest.yaml with `import yaml`
+      # and `scripts/check_demo_oracle.py` imports it again, but nothing
+      # installed PyYAML -- the only YAML-consuming job in the repository not
+      # to. Every other one installs it explicitly. On a runner image without
+      # it the detection step dies before writing `is_demo`, and since this
+      # job is GATING that would turn every same-repository PR red rather
+      # than only demonstration branches. Not a dependency to leave implicit.
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
       - name: Is this a demonstration branch?
         id: demo
         env:

@@ -15,6 +15,9 @@ concludes about source depth has to have come out of the pack.
 
 Nine assertions, in the order the review named them:
 
+0.  ``replay-reference-is-sound`` -- a precondition on the other three:
+    the replay report must itself be free of operational errors and degraded
+    assurance. Agreement with a broken reference is not agreement.
 1.  ``same-findings-as-replay``  -- the normalized finding multiset matches
     the portable-replay producer's, so reuse is not a different answer.
 2.  ``same-effective-depth``     -- both sides prove ``source``.
@@ -393,6 +396,44 @@ def run_negative_case(
     }
 
 
+def replay_reference_problems(replay: dict[str, Any] | None) -> list[str]:
+    """Why *replay* cannot serve as the reference, or [] if it can.
+
+    Codex review: the replay leg runs `continue-on-error` and uploads its
+    report unconditionally, so a report carrying operational errors or
+    degraded assurance still arrives here. Accepting any JSON object and then
+    comparing only findings, depth and targets let an INCOMPLETE replay
+    satisfy all three equality assertions -- the reuse path "agreeing" with a
+    reference that itself failed.
+
+    That is the same trap the target-accounting assertion already guards
+    (equal silence is not equal accounting), one level up: agreement is only
+    evidence when the thing agreed with is sound. Checked before the
+    comparisons rather than folded into them, so a broken reference is
+    reported as a broken reference instead of as a mismatch.
+    """
+    if replay is None:
+        return ["no replay report was produced"]
+    problems: list[str] = []
+    operational = replay.get("operational_errors")
+    if operational:
+        problems.append(
+            f"replay report carries {len(operational)} operational error(s): {operational!r}"
+        )
+    assurance = replay.get("analysis_assurance")
+    if isinstance(assurance, dict):
+        if assurance.get("depth_satisfied") is False:
+            problems.append("replay report reports depth_satisfied=False")
+        status = assurance.get("status")
+        if status is not None and status != "complete":
+            notes = assurance.get("notes") or []
+            problems.append(
+                f"replay analysis_assurance.status={status!r}, expected 'complete'"
+                + (f" ({'; '.join(str(n) for n in notes)})" if notes else "")
+            )
+    return problems
+
+
 @dataclass
 class Bundle:
     """The evidence this job is allowed to see, and nothing else."""
@@ -451,14 +492,24 @@ def run(bundle_root: Path, replay_report: Path, workdir: Path, workspace: Path) 
 
     replay: dict[str, Any] | None = None
     if replay_report.is_file() and replay_report.stat().st_size:
-        loaded = json.loads(replay_report.read_text(encoding="utf-8"))
+        try:
+            loaded = json.loads(replay_report.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            loaded = None
         replay = loaded if isinstance(loaded, dict) else None
 
-    if replay is None:
-        # Never a skip: with no replay report there is nothing to be equal
-        # to, and reporting "agrees" would be reporting silence as agreement.
+    # A reference has to be sound before agreeing with it means anything.
+    reference_problems = replay_reference_problems(replay)
+    record("replay-reference-is-sound", list(reference_problems))
+
+    if reference_problems:
+        # Never a skip, and never a silent pass: with no usable reference
+        # there is nothing to be equal to, and reporting "agrees" would be
+        # reporting silence as agreement. The message names the real reason
+        # rather than claiming a mismatch that was never measured.
+        detail = "; ".join(reference_problems)
         for name in ("same-findings-as-replay", "same-effective-depth", "same-target-accounting"):
-            record(name, [f"replay report {replay_report} is missing or unreadable"])
+            record(name, [f"replay reference unusable ({detail})"])
     else:
         mine = normalized_findings(reuse.report, replay)
         theirs = normalized_findings(replay, reuse.report)

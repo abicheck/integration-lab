@@ -404,3 +404,109 @@ def test_bundle_requires_a_pack(tmp_path):
     shutil.rmtree(root / "abicheck_inputs")
     with pytest.raises(reuse.ScenarioError):
         reuse.Bundle.load(root)
+
+
+# --- the reference must be sound (Codex review) --------------------------
+#
+# The replay leg runs `continue-on-error` and uploads its report
+# unconditionally, so a report carrying operational errors or degraded
+# assurance still reaches this harness. Accepting any JSON object let an
+# INCOMPLETE replay satisfy all three equality assertions -- the reuse path
+# "agreeing" with a reference that itself failed. Same trap as equal silence
+# reading as equal accounting, one level up.
+
+
+def test_a_clean_replay_report_is_a_usable_reference():
+    assert reuse.replay_reference_problems({"verdict": "COMPATIBLE"}) == []
+
+
+def test_a_replay_report_with_operational_errors_is_rejected():
+    problems = reuse.replay_reference_problems({"operational_errors": ["castxml exploded"]})
+    assert problems and "operational error" in problems[0]
+
+
+def test_a_replay_report_with_partial_assurance_is_rejected():
+    problems = reuse.replay_reference_problems(
+        {"analysis_assurance": {"status": "partial", "notes": ["public surface unresolved"]}}
+    )
+    assert problems and "expected 'complete'" in problems[0]
+    assert "public surface unresolved" in problems[0], "the note explains why"
+
+
+def test_a_replay_report_denying_depth_is_rejected():
+    problems = reuse.replay_reference_problems({"analysis_assurance": {"depth_satisfied": False}})
+    assert problems and "depth_satisfied=False" in problems[0]
+
+
+def test_a_scan_mode_report_without_an_assurance_block_is_still_usable():
+    """Scan-mode replay reports need not carry analysis_assurance at all;
+    absence is not degradation, and rejecting it would fail every real run."""
+    assert reuse.replay_reference_problems({"verdict": "COMPATIBLE", "diff": {"findings": []}}) == []
+
+
+def test_an_incomplete_replay_fails_the_three_agreement_assertions(tmp_path, monkeypatch):
+    """The whole point: identical findings must NOT read as agreement when the
+    reference itself errored."""
+    root = _bundle(tmp_path / "bundle")
+    replay = tmp_path / "replay.json"
+    replay.write_text(json.dumps({
+        "verdict": "BREAKING", "library": "libmath.so",
+        "operational_errors": ["header parse failed"],
+        "analysis_assurance": {"effective_depth": "source"},
+        "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]},
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        reuse, "run_compare",
+        lambda **kw: reuse.Outcome(2, {
+            "verdict": "BREAKING", "library": "libmath.so",
+            "analysis_assurance": {"effective_depth": "source"},
+            "changes": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}],
+        }, []),
+    )
+    receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
+    sound = next(a for a in receipt["assertions"] if a["assertion"] == "replay-reference-is-sound")
+    assert not sound["passed"]
+    for name in ("same-findings-as-replay", "same-effective-depth", "same-target-accounting"):
+        item = next(a for a in receipt["assertions"] if a["assertion"] == name)
+        assert not item["passed"], name
+        # The message must name the real reason, not claim a mismatch that
+        # was never measured.
+        assert "replay reference unusable" in item["errors"][0]
+        assert "operational error" in item["errors"][0]
+
+
+def test_a_sound_replay_still_lets_the_agreement_assertions_pass(tmp_path, monkeypatch):
+    """The guard must not reject every real reference."""
+    root = _bundle(tmp_path / "bundle")
+    replay = tmp_path / "replay.json"
+    replay.write_text(json.dumps({
+        "verdict": "BREAKING", "library": "libmath.so",
+        "analysis_assurance": {"effective_depth": "source", "status": "complete"},
+        "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]},
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        reuse, "run_compare",
+        lambda **kw: reuse.Outcome(2, {
+            "verdict": "BREAKING", "library": "libmath.so",
+            "analysis_assurance": {"effective_depth": "source", "status": "complete"},
+            "changes": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}],
+        }, []),
+    )
+    receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
+    for name in ("replay-reference-is-sound", "same-findings-as-replay",
+                 "same-effective-depth", "same-target-accounting"):
+        item = next(a for a in receipt["assertions"] if a["assertion"] == name)
+        assert item["passed"], (name, item["errors"])
+
+
+def test_a_corrupt_replay_file_is_reported_not_crashed_on(tmp_path, monkeypatch):
+    root = _bundle(tmp_path / "bundle")
+    replay = tmp_path / "replay.json"
+    replay.write_text("{ not json", encoding="utf-8")
+    monkeypatch.setattr(
+        reuse, "run_compare",
+        lambda **kw: reuse.Outcome(0, {"verdict": "NO_CHANGE", "changes": []}, []),
+    )
+    receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
+    sound = next(a for a in receipt["assertions"] if a["assertion"] == "replay-reference-is-sound")
+    assert not sound["passed"]

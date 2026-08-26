@@ -180,3 +180,31 @@ def test_every_job_reading_the_matrix_is_guarded():
         "these jobs consume `select` but do not guard on its result, so a "
         "cancelled select will fail them: " + ", ".join(sorted(unguarded))
     )
+
+
+def test_every_yaml_consuming_job_installs_pyyaml():
+    """Codex review: demo_oracle read demos/manifest.yaml with `import yaml`
+    but nothing installed PyYAML -- the only YAML-consuming job in the
+    repository not to. It is GATING, so on a runner image without the module
+    it would turn every same-repository PR red rather than only demonstration
+    branches. Pinned as a class: an undeclared interpreter dependency is
+    invisible until the image changes under you.
+    """
+    offenders = []
+    for workflow in WORKFLOWS:
+        document = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+        for job_id, job in (document.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            scripts = [
+                step["run"] for step in (job.get("steps") or [])
+                if isinstance(step, dict) and isinstance(step.get("run"), str)
+            ]
+            blob = "\n".join(scripts)
+            if "import yaml" not in blob and "yaml.safe_load" not in blob:
+                continue
+            if "pyyaml" not in blob.lower():
+                offenders.append(f"{workflow.name}:{job_id}")
+    assert not offenders, (
+        "these jobs import yaml without installing PyYAML: " + ", ".join(sorted(offenders))
+    )
