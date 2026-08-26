@@ -23,6 +23,18 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # `abicheck @ git+https://github.com/abicheck/abicheck.git@<ref>`
 PIP_REF_RE = re.compile(r"abicheck\.git@(?P<ref>[^\"'\s)]+)")
+# `https://raw.githubusercontent.com/abicheck/abicheck/<ref>/action/...`
+#
+# These are not documentation links: the workflows `curl` them and `bash`
+# the result, so the SHA in the URL selects ABICheck-controlled code that
+# runs on the runner -- exactly what the pin exists to review. The guard
+# did not look at them, and only appeared green because a pip spec
+# elsewhere in the same file happened to carry the same SHA; changing ONLY
+# an installer URL's SHA was invisible to every test here (Codex review,
+# PR #30, second hole of this class).
+RAW_URL_REF_RE = re.compile(
+    r"raw\.githubusercontent\.com/abicheck/abicheck/(?P<ref>[0-9a-zA-Z._-]+)/"
+)
 # Both `uses:` forms into abicheck/abicheck:
 #   the reusable workflow  `abicheck/abicheck/.github/workflows/x.yml@<ref>`
 #   the root composite action `abicheck/abicheck@<ref>`
@@ -45,9 +57,15 @@ def _workflows() -> list[Path]:
     return sorted(WORKFLOW_DIR.glob("*.yml"))
 
 
+#: Every way this repository names an ABICheck revision that then executes.
+_REF_PATTERNS = (PIP_REF_RE, USES_REF_RE, RAW_URL_REF_RE)
+
+
 def _refs(text: str) -> set[str]:
-    return {match.group("ref") for match in PIP_REF_RE.finditer(text)} | {
-        match.group("ref") for match in USES_REF_RE.finditer(text)
+    return {
+        match.group("ref")
+        for pattern in _REF_PATTERNS
+        for match in pattern.finditer(text)
     }
 
 
@@ -163,3 +181,54 @@ def test_every_root_action_ref_in_the_repo_is_seen_by_the_guard() -> None:
         assert literal, f"{name} has no root action refs to guard"
         # Every literal occurrence must resolve to a ref the guard collected.
         assert _refs(text), f"{name}: guard collected no refs at all"
+
+
+def test_raw_installer_urls_are_matched() -> None:
+    """These are curled and bashed, so their SHA selects executed code."""
+    url = (
+        "            \"https://raw.githubusercontent.com/abicheck/abicheck/"
+        + "c" * 40
+        + "/action/install-castxml.sh\"\n"
+    )
+    assert _refs(url) == {"c" * 40}
+
+
+def test_a_tampered_installer_sha_is_visible_to_the_guard() -> None:
+    """Regression guard for the exact blindness Codex found.
+
+    Before this, changing ONLY the installer URL's SHA produced no match,
+    so every pin test still passed while an unreviewed revision was curled
+    and executed on the runner.
+    """
+    text = (WORKFLOW_DIR / "integration-shadow.yml").read_text(encoding="utf-8")
+    assert "raw.githubusercontent.com/abicheck/abicheck/" in text, (
+        "this workflow no longer curls an ABICheck installer; retarget this test"
+    )
+    import yaml as _yaml
+
+    pin = _yaml.safe_load(PIN_FILE.read_text(encoding="utf-8"))
+    tampered = text.replace(
+        f"raw.githubusercontent.com/abicheck/abicheck/{pin['legacy_sha']}",
+        "raw.githubusercontent.com/abicheck/abicheck/" + "d" * 40,
+    )
+    assert tampered != text, "expected the legacy pin in an installer URL"
+    assert "d" * 40 in _refs(tampered)
+
+
+def test_every_installer_url_resolves_to_a_reviewed_pin(pin: dict) -> None:
+    """Count them explicitly: a file whose pip spec happens to share the SHA
+    would otherwise hide a tampered URL."""
+    reviewed = {pin["sha"], pin["legacy_sha"]}
+    unpinned = {Path(entry).name for entry in pin["unpinned_by_design"]}
+    seen = 0
+    for workflow in _workflows():
+        text = workflow.read_text(encoding="utf-8")
+        for match in RAW_URL_REF_RE.finditer(text):
+            seen += 1
+            if workflow.name in unpinned:
+                continue
+            assert match.group("ref") in reviewed, (
+                f"{workflow.name} curls an ABICheck installer at "
+                f"{match.group('ref')}, which is not a reviewed pin"
+            )
+    assert seen, "no installer URLs found at all; retarget this test"

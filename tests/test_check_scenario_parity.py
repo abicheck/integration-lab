@@ -243,3 +243,63 @@ def test_an_incomplete_scenario_still_counts_as_compared():
     broken["operational_errors"] = ["boom"]
     errors = parity.compare({"cmake": {"s": clean}, "make": {"s": broken}})
     assert not any("nothing was compared" in e for e in errors)
+
+
+# --------------------------------------------------------------------------
+# Codex review: coverage must not be able to shrink silently
+# --------------------------------------------------------------------------
+
+
+DECLARED = {"cmake": {"add_function", "remove_function"}, "make": {"add_function", "remove_function"}}
+
+
+def test_every_declared_scenario_must_report():
+    """run_scenario.py treats an absent mapping as a SKIP, so deleting one
+    would otherwise remove a scenario from parity while the gate stayed
+    green."""
+    results = {
+        "cmake": {"add_function.clang": _report(), "remove_function.clang": _report()},
+        "make": {"add_function.clang": _report()},
+    }
+    errors = parity.missing_declared_reports(results, DECLARED)
+    assert any("remove_function" in e and "make" in e for e in errors)
+    assert any("coverage shrank silently" in e for e in errors)
+
+
+def test_full_declared_coverage_passes():
+    results = {
+        bs: {f"{name}.clang": _report() for name in names}
+        for bs, names in DECLARED.items()
+    }
+    assert parity.missing_declared_reports(results, DECLARED) == []
+
+
+def test_profile_suffixes_are_stripped_when_matching():
+    """Reports are named `<scenario>.<profile>.json`."""
+    results = {"cmake": {"add_function.castxml": _report(), "remove_function.clang": _report()}}
+    assert parity.missing_declared_reports(results, {"cmake": DECLARED["cmake"]}) == []
+
+
+def test_a_build_system_not_run_at_all_is_not_a_shrink():
+    """A deliberate two-way local run is the caller's choice."""
+    results = {"cmake": {f"{n}.clang": _report() for n in DECLARED["cmake"]}}
+    assert parity.missing_declared_reports(results, DECLARED) == []
+
+
+def test_declared_matrix_is_loaded_from_the_real_file():
+    declared = parity.load_declared(REPO_ROOT / "scenarios" / "build-matrix.yaml")
+    assert set(declared) == {"cmake", "make"}
+    assert declared["cmake"] == declared["make"]
+    assert len(declared["cmake"]) >= 5
+
+
+def test_missing_build_matrix_is_an_error(tmp_path: Path):
+    with pytest.raises(parity.ParityError):
+        parity.load_declared(tmp_path / "nope.yaml")
+
+
+def test_empty_build_matrix_is_an_error(tmp_path: Path):
+    path = tmp_path / "m.yaml"
+    path.write_text("build_systems: {}\n", encoding="utf-8")
+    with pytest.raises(parity.ParityError, match="no build_systems"):
+        parity.load_declared(path)

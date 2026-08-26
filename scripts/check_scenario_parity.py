@@ -105,6 +105,54 @@ def load_results(directory: Path) -> Dict[str, Dict[str, Any]]:
     return reports
 
 
+def load_declared(path: Path) -> Dict[str, Set[str]]:
+    """{build system: declared scenario names} from scenarios/build-matrix.yaml."""
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - CI always has it
+        raise ParityError(f"PyYAML is required to read {path}: {exc}") from exc
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ParityError(f"{path}: unreadable build matrix: {exc}") from exc
+    systems = document.get("build_systems")
+    if not isinstance(systems, dict) or not systems:
+        raise ParityError(f"{path}: no build_systems declared")
+    return {name: set(mapping or {}) for name, mapping in systems.items()}
+
+
+def missing_declared_reports(
+    results: Dict[str, Dict[str, Dict[str, Any]]],
+    declared: Dict[str, Set[str]],
+) -> List[str]:
+    """Every declared (build system, scenario) pair must have reported.
+
+    run_scenario.py treats an absent mapping as a SKIP, not a failure, so
+    deleting a CMake or Make mapping silently removes that scenario from
+    the comparison. Comparing "whichever reports happen to exist" would
+    then stay green while coverage shrank underneath it (Codex review,
+    PR #30). Checking against the declaration makes shrinking coverage a
+    red gate rather than an invisible one.
+
+    Scenario report names carry a profile suffix (`name.clang`), so the
+    declared name is matched against the report's leading segment.
+    """
+    errors = []
+    for build_system, scenarios in sorted(declared.items()):
+        reports = results.get(build_system)
+        if reports is None:
+            # This build system was not run at all; that is the caller's
+            # choice (a two-way local run), not a shrinking matrix.
+            continue
+        reported = {name.split(".", 1)[0] for name in reports}
+        for scenario in sorted(scenarios - reported):
+            errors.append(
+                f"{scenario}: declared for {build_system} in the build matrix "
+                "but produced no report -- coverage shrank silently"
+            )
+    return errors
+
+
 def compare(results: Dict[str, Dict[str, Dict[str, Any]]]) -> List[str]:
     """Compare every scenario across the build systems that produced it."""
     errors: List[str] = []
@@ -191,16 +239,22 @@ def main(argv=None) -> int:
         "--results", nargs="+", required=True,
         help="build-system=results-dir pairs, e.g. bazel=out/bazel cmake=out/cmake",
     )
+    parser.add_argument(
+        "--build-matrix", type=Path, default=Path("scenarios/build-matrix.yaml"),
+        help="the declared matrix; every build system that DECLARES a scenario "
+             "must have produced a report for it",
+    )
     parser.add_argument("--out", type=Path, help="write a JSON parity receipt here")
     args = parser.parse_args(argv)
     try:
         directories = _parse_results(args.results)
         results = {name: load_results(path) for name, path in directories.items()}
+        declared = load_declared(args.build_matrix)
     except ParityError as exc:
         print(f"ERROR: {exc}")
         return 1
 
-    errors = compare(results)
+    errors = missing_declared_reports(results, declared) + compare(results)
     receipt = {
         "build_systems": sorted(results),
         "scenarios_per_build_system": {bs: sorted(r) for bs, r in sorted(results.items())},
