@@ -1,3 +1,4 @@
 schema: abicheck.toolchain-bindings/v1
 bindings:
   gcc14: /usr/bin/g++-14
+  clang18: /usr/bin/clang++-18

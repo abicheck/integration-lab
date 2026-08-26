@@ -42,6 +42,26 @@ jobs:
           path: depth-scenario-results/
           if-no-files-found: error
 
+  producer-compiler:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      # Both declared producers must be present: ci/run_producer_compiler_scenario.py
+      # fails closed on a missing one rather than skipping it, because an
+      # attribution aggregate computed from one producer proves nothing.
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove producer-compiler attribution
+        run: python3 ci/run_producer_compiler_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: producer-compiler-word-width
+          path: producer-compiler-results/
+          if-no-files-found: error
+
   runtime-floor:
     runs-on: ubuntu-24.04
     steps:

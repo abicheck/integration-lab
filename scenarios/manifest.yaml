@@ -46,6 +46,33 @@ expected_gaps:
     upstream_issue: "abicheck#run-plan-build-output-projection"
     expected_failure: {phase: check-project, reason: target_evidence_path_not_projected}
 
+# Producer-compiler attribution.  Every other profile in this lab is a GCC
+# 14 profile -- they vary by build system, not by the compiler that
+# produces the ABI -- so nothing yet proves a finding is attributed to the
+# producers it actually affects and withheld from the ones it does not.
+# One fixture, one build system, two producer compilers; the change lives
+# entirely in the fixture's non-Clang preprocessor branch.
+producer_scenarios:
+  - id: producer-compiler-word-width
+    runner: ci/run_producer_compiler_scenario.py
+    status: supported
+    fixture: fixtures/producer_compiler
+    producers:
+      linux-x86_64-gcc14-cxx17-cmake-ninja:
+        cxx: g++-14
+        standard: c++17
+      linux-x86_64-clang18-cxx17-cmake-ninja:
+        cxx: clang++-18
+        standard: c++17
+    expect:
+      # GCC sees int -> long long: _Z11lab_consumei is removed and
+      # _Z11lab_consumex added, a real L0 break with no headers needed.
+      affected_profiles:
+        - linux-x86_64-gcc14-cxx17-cmake-ninja
+      # Clang sees `long` on both sides: _Z11lab_consumel is unchanged.
+      unaffected_profiles:
+        - linux-x86_64-clang18-cxx17-cmake-ninja
+
 depth_scenarios:
   - id: l2-green-l4-macro-break
     runner: ci/run_depth_scenario.py
@@ -54,13 +81,30 @@ depth_scenarios:
     expect:
       headers:
         verdict: NO_CHANGE
+        # Dump-side. This is the half that detects a depth fallback.
         effective_depth: headers
         findings: []
+        # Compare-side. `status: partial` is honest, not a concession: for
+        # this fixture --scope-public-headers cannot resolve a public
+        # surface and falls back to the full export table. That channel is
+        # orthogonal to depth, and pinning the real value here means a
+        # change in it fails the scenario instead of being absorbed.
+        compare_assurance:
+          status: partial
+          fact_set_comparability: not_applicable
+          l3_context_status: not_evaluated
       source:
         verdict: API_BREAK
         effective_depth: source
         findings:
           - {kind: public_macro_value_changed, symbol: LAB_MAX_ITEMS}
+        # The source stage has no such excuse: `complete`, plus the two
+        # fields that prove L3/L4 evidence was actually used in the
+        # comparison rather than it quietly running on L0/L2 alone.
+        compare_assurance:
+          status: complete
+          fact_set_comparability: comparable
+          l3_context_status: clean
 
 runtime_scenarios:
   - id: runtime-floor-raised
