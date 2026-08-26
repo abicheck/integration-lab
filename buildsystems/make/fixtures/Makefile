@@ -41,14 +41,39 @@ endif
 
 SRC := $(FIXTURE_DIR)/lib.cc
 OUT := $(BUILD_DIR)/libimpl.so
+DEP := $(BUILD_DIR)/libimpl.d
 
 .PHONY: all clean
 all: $(OUT)
 
+# Codex review: lib.cc was this target's ONLY prerequisite, so a changed
+# lib.h left libimpl.so looking up to date and make skipped the rebuild.
+# That is reachable with the default arguments -- run_scenario.py's scratch
+# directory is `<results-dir>/make-scratch`, and --results-dir defaults to
+# the persistent `scenario-results`, so a second run after editing a
+# fixture header compared a STALE binary against the new header and
+# reported findings for the previous pair.
+#
+# Worse than a plain staleness bug: CMake and Bazel both track header
+# dependencies on their own, so only the Make leg would go stale, and
+# check_scenario_parity.py would report that as a cross-build-system
+# DISAGREEMENT -- a false positive in the gate whose entire job is telling
+# real disagreements from noise.
+#
+# -MMD -MP has the compiler emit the real prerequisite list, so this
+# tracks every header the translation unit actually includes rather than
+# just lib.h -- a fixture that grows a second header stays correct with no
+# change here. -MP adds phony targets for each header so a DELETED header
+# does not wedge make with "no rule to make target". The `-include` is
+# leading-dash on purpose: the .d file does not exist on the first build,
+# and that is not an error.
 $(OUT): $(SRC)
 	@test -f "$(SRC)" || { echo "FIXTURE_DIR=$(FIXTURE_DIR) has no lib.cc (expected the fixtures/<name>/{v1,v2} shape)" >&2; exit 1; }
 	@mkdir -p "$(BUILD_DIR)"
-	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -I"$(FIXTURE_DIR)" "$(SRC)" -o "$(OUT)"
+	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -I"$(FIXTURE_DIR)" \
+	    -MMD -MP -MF "$(DEP)" "$(SRC)" -o "$(OUT)"
+
+-include $(DEP)
 
 clean:
-	rm -f "$(OUT)"
+	rm -f "$(OUT)" "$(DEP)"
