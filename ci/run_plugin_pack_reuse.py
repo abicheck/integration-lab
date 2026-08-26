@@ -125,6 +125,15 @@ class Outcome:
     def rejection_channel(self) -> str | None:
         """How this run failed closed, or None if it produced a clean L4 result."""
         if self.exit_code not in VERDICT_EXIT_CODES:
+            # A bare "operational-exit:16" is the receipt telling us nothing:
+            # ADR-050 refuses a verdict for scope drift, profile drift, a
+            # broken pack and a missing input alike, all on exit 16. When
+            # every mutation "rejects" through the same opaque channel, the
+            # negatives prove nothing -- which is exactly what happened in CI
+            # run 32954335654. The report's own `reason.kind` separates them.
+            reason = (self.report or {}).get("reason")
+            if isinstance(reason, dict) and reason.get("kind"):
+                return f"incomparable:{reason['kind']}"
             return f"operational-exit:{self.exit_code}"
         if self.report is None:
             return "no-report"
@@ -149,11 +158,23 @@ def run_compare(
     No ``--sources``: the whole point is that this job has no source tree to
     offer. ``--ast-frontend clang`` matches the producer side, so a
     divergence here is a producer divergence and not a frontend one.
+
+    The public-header DIRECTORY is passed alongside the file. That is not
+    belt-and-braces: ``scope_fingerprint`` hashes ``headers`` and
+    ``public_header_dirs`` separately (abicheck's ``SCOPE_FIELD_KEYS``), a
+    ``-H`` file feeds only the first and a ``-H`` directory only the second,
+    and the committed baseline was extracted with both. Passing the file
+    alone left ``public_header_dirs`` empty against the baseline's
+    ``["<single-header-dir>"]`` -- a declared-surface mismatch that refused
+    a verdict before any ABI evidence was read. Verified against the bundle
+    CI run 32954335654 uploaded: file-only diverges on that one field,
+    file+directory reproduces the baseline's scope_fingerprint exactly.
     """
     out.unlink(missing_ok=True)
     argv = [
         "abicheck", "compare", str(baseline), str(binary),
         "--header", f"new={header}",
+        "--header", f"new={header.parent}",
         "--ast-frontend", "clang",
         "--depth", "source",
         "--require-complete-analysis",

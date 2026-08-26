@@ -299,7 +299,7 @@ _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 
 Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expected to fall short, with the upstream issue and the phase they fall short in, rather than being reported as covered:
 
-- **plugin-pack-reuse-scope-contract** (`expected_gap`): falls short at `plugin-pack-reuse` -- `baseline_and_reuse_dump_scope_fingerprints_differ` (upstream: `integration-lab#pack-reuse-scope-contract`)
+- **plugin-pack-reuse-scope-contract** (`expected_gap`): falls short at `plugin-pack-reuse` -- `baseline_is_castxml_extracted_but_the_l4_plugin_path_parses_with_clang` (upstream: `integration-lab#pack-reuse-scope-contract`)
 - **replay-report-assurance-block** (`expected_gap`): falls short at `plugin-pack-reuse` -- `replay_report_carries_no_analysis_assurance` (upstream: `abicheck#scan-report-analysis-assurance`)
 - **plugin-pack-producer-identity** (`expected_gap`): falls short at `plugin-pack-reuse` -- `pack_manifest_records_no_producer_identity` (upstream: `integration-lab#pack-producer-identity`)
 - **producer-attribution-through-project-path** (`expected_gap`): falls short at `check-project` -- `clang_profile_not_a_contract_profile` (upstream: `abicheck#per-profile-cell-attribution`)

@@ -1814,6 +1814,13 @@ jobs:
       # exists to surface. `|| true` keeps the step's outcome tied to
       # whether a readable report file was actually written, not to
       # abicheck's gate-encoding exit code.
+      # The public-header DIRECTORY is passed alongside the file because
+      # `scope_fingerprint` hashes `headers` and `public_header_dirs` as
+      # separate fields, a `-H` file feeds only the first, and the committed
+      # baseline was extracted with both. Without it this compare refused a
+      # verdict on a declared-surface mismatch before reading any ABI
+      # evidence -- see the `abicheck-l4-clang-plugin` report CI run
+      # 32954335654 uploaded: `"verdict": null`, `"kind": "scope_mismatch"`.
       - name: Compare candidate (plugin-collected facts) against committed baseline
         id: l4_clang_plugin_compare
         if: steps.install_abicheck.outcome == 'success'
@@ -1825,6 +1832,7 @@ jobs:
             "$RUNNER_TEMP/math.base.abicheck.json" \
             bazel-bin/libmath.so \
             --header new=include/abicheck_lab/math.h \
+            --header new=include/abicheck_lab \
             --ast-frontend clang \
             --build-info new=bazel-bin/tools/abicheck/math_abicheck_inputs \
             --depth source \

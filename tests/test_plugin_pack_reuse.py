@@ -651,3 +651,60 @@ def test_negative_cases_are_evaluated_when_the_positive_control_passes(tmp_path,
     rejects = [a for a in receipt["assertions"] if a["assertion"].startswith("rejects/")]
     assert all(a.get("evaluated") is not False for a in rejects)
     assert any(a["passed"] for a in rejects), "mutations must still be assertable"
+
+
+# --- the refusal must name itself, and the surface must actually match -----
+#
+# CI run 32954335654 is the reason both of these exist: every mutation
+# "rejected" through the same bare `operational-exit:16`, and the compare
+# that was supposed to prove the pack works never read any ABI evidence at
+# all because the two sides declared different surfaces.
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        ("scope_mismatch", "incomparable:scope_mismatch"),
+        ("profile_mismatch", "incomparable:profile_mismatch"),
+    ],
+)
+def test_an_incomparability_is_named_not_collapsed_to_an_exit_code(kind, expected):
+    """ADR-050 refuses scope drift, profile drift, a broken pack and a missing
+    input all on exit 16. A receipt that says only "16" cannot tell a detected
+    mutation from an unrelated refusal."""
+    outcome = reuse.Outcome(16, {"verdict": None, "reason": {"kind": kind}}, ["no verdict"])
+    assert outcome.rejection_channel() == expected
+
+
+def test_an_operational_exit_without_a_reason_still_reports_the_code():
+    assert reuse.Outcome(16, {}, ["x"]).rejection_channel() == "operational-exit:16"
+    assert reuse.Outcome(16, None, ["x"]).rejection_channel() == "operational-exit:16"
+
+
+def test_the_public_header_directory_is_declared_alongside_the_file(tmp_path, monkeypatch):
+    """scope_fingerprint hashes `headers` and `public_header_dirs` separately.
+    A `-H` file feeds only the first; the committed baseline carries both, so
+    passing the file alone declares a different surface and no verdict is
+    produced. Reproduced against the real bundle: file-only diverges on
+    public_header_dirs, file+directory matches the baseline exactly."""
+    seen: list[list[str]] = []
+
+    class _Result:
+        returncode = 0
+
+    monkeypatch.setattr(
+        reuse.subprocess, "run", lambda argv, *a, **kw: (seen.append(argv), _Result())[1]
+    )
+    header = tmp_path / "include" / "abicheck_lab" / "math.h"
+    header.parent.mkdir(parents=True)
+    header.write_text("", encoding="utf-8")
+    reuse.run_compare(
+        baseline=tmp_path / "base.json",
+        binary=tmp_path / "libmath.so",
+        header=header,
+        pack=None,
+        out=tmp_path / "out.json",
+    )
+    argv = seen[0]
+    headers = [argv[i + 1] for i, a in enumerate(argv) if a == "--header"]
+    assert headers == [f"new={header}", f"new={header.parent}"]

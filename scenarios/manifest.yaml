@@ -50,31 +50,49 @@ expected_gaps:
   # because inventing the field without running the real plugin build would be
   # asserting a binding nothing verified -- the exact failure this assertion
   # exists to catch.
-  # The clean-job reuse compare cannot run at all yet. CI run 32954335654
-  # reports exit 16: "'libmath.so' old='main' new='new' are not comparable:
-  # old and new snapshots do not cover the same declared surface
-  # (scope_fingerprint mismatch)". The bundle ships the committed
-  # abi/math.abicheck.json baseline, extracted under the scan job's scope
-  # contract, and the clean job re-dumps the shipped binary under a
-  # different one -- so the two snapshots are not comparable regardless of
-  # the pack.
+  # The L4 clang-plugin compare produces no verdict, and the reuse job
+  # inherits that. This was reproduced locally against the exact bundle CI
+  # run 32954335654 uploaded, and attributed to specific contract fields
+  # rather than left as "exit 16":
+  #
+  #   scope_fields   public_header_dirs  baseline ["<single-header-dir>"]
+  #                                      reuse    []
+  #   profile_fields compiler_family     baseline gnu      reuse clang
+  #                  compiler_version    baseline castxml  reuse clang 18
+  #                  include_sequence, language_standard, macro_ops
+  #
+  # The scope half is the lab's own bug and is FIXED here: scope_fingerprint
+  # hashes `headers` and `public_header_dirs` separately, a `-H` file feeds
+  # only the first, and the committed baseline was extracted with both. Both
+  # compares now pass the public-header directory alongside the file, which
+  # reproduces the baseline's scope_fingerprint exactly.
+  #
+  # What remains is the profile half, and it is not a flag to tweak: the
+  # committed abi/math.abicheck.json is a CASTXML/gnu extraction, while the
+  # whole L4 plugin path parses headers with clang. Two different frontends
+  # are genuinely not comparable under ADR-050 D2, so this cannot be closed
+  # by argument -- it needs a baseline extracted by the same frontend the
+  # plugin path uses, which means committing a second, clang-extracted
+  # snapshot for this path rather than reusing the castxml one.
+  #
+  # This is NOT specific to the clean job. The `abicheck-l4-clang-plugin`
+  # report the l4 job itself uploaded in that run carries `"verdict": null`
+  # and `"kind": "scope_mismatch"`: the in-tree L4 plugin compare has never
+  # produced a verdict either.
   #
   # This is why the receipt matters. With the positive control failing,
   # every mutation "rejected" with the SAME exit 16, so five assertions went
   # green while proving nothing about whether any mutation was detected. The
   # harness now treats the positive control as a precondition and reports
-  # those cases as not evaluated instead.
-  #
-  # Closing it means shipping a baseline snapshot extracted under the same
-  # scope contract the clean job dumps with -- either staging a snapshot the
-  # reuse job compares snapshot-to-snapshot, or passing the scan's scope
-  # flags through to the reuse compare.
+  # those cases as not evaluated instead, and names the refusal by its
+  # `reason.kind` so scope drift, profile drift and a broken pack stop
+  # collapsing into one indistinguishable channel.
   - id: plugin-pack-reuse-scope-contract
     status: expected_gap
     upstream_issue: integration-lab#pack-reuse-scope-contract
     expected_failure:
       phase: plugin-pack-reuse
-      reason: baseline_and_reuse_dump_scope_fingerprints_differ
+      reason: baseline_is_castxml_extracted_but_the_l4_plugin_path_parses_with_clang
 
   # The l4-clang-replay report carries no analysis_assurance block at all
   # (CI run 32954335654), so it cannot serve as the reuse scenario's
