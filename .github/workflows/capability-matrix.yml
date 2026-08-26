@@ -51,6 +51,16 @@ on:
       - 'demos/manifest.yaml'
       - 'scenarios/manifest.yaml'
       - 'scenarios/build-matrix.yaml'
+      # Fixture RECIPES, not data files. tests/test_make_fixture_recipe.py
+      # guards the Makefile's incremental header-dependency tracking, and
+      # this is the repository's only workflow that runs pytest at all -- so
+      # a Makefile-only PR skipped that guard entirely. The parity workflow
+      # cannot substitute: it always starts from clean build directories, so
+      # it structurally cannot expose a stale incremental rebuild.
+      # (Codex review; the CMakeLists entry was found by the derivation
+      # rather than reported, once its suffix allowlist was removed.)
+      - 'buildsystems/make/fixtures/Makefile'
+      - 'buildsystems/cmake/fixtures/CMakeLists.txt'
   workflow_dispatch:
 
 permissions:

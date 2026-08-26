@@ -23,13 +23,27 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "capability-matrix.yml"
 
-#: `REPO_ROOT / "a" / "b.yaml"` and `REPO_ROOT / "a.yaml"`, the two forms the
+#: `REPO_ROOT / "a" / "b.yaml"` and `REPO_ROOT / "a.yaml"` -- the forms the
 #: checked scripts use to name a repo-relative input.
+#:
+#: The bound was {1,3} and silently truncated
+#: `REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile"` to its
+#: first three segments, which is not a file, so the input vanished from the
+#: derivation instead of failing. A cap that quietly drops what it cannot
+#: parse is the same blind spot as the suffix allowlist above, so this is
+#: bounded well past any real path and the truncation case is tested.
 _ROOTED = re.compile(
-    r'REPO_ROOT\s*(?:/\s*"([A-Za-z0-9_.-]+)"\s*){1,3}'
+    r'REPO_ROOT\s*(?:/\s*"([A-Za-z0-9_.-]+)"\s*){1,8}'
 )
 _SEGMENT = re.compile(r'"([A-Za-z0-9_.-]+)"')
-DATA_SUFFIXES = {".yaml", ".yml", ".json"}
+#: Python sources are already covered by the workflow's scripts/*.py and
+#: tests/** globs, so they are not what this derivation is about. Everything
+#: else a check opens IS -- Codex review, third recurrence: restricting this
+#: to YAML/JSON was itself a hole, because tests/test_make_fixture_recipe.py
+#: reads buildsystems/make/fixtures/Makefile, and a Makefile-only PR skipped
+#: the only workflow that runs pytest at all. A derivation with a suffix
+#: allowlist is a derivation with a blind spot.
+EXCLUDED_SUFFIXES = {".py"}
 
 
 def _declared_paths() -> list[str]:
@@ -62,7 +76,7 @@ def _data_inputs() -> set[str]:
         for match in _ROOTED.finditer(text):
             segments = _SEGMENT.findall(match.group(0))
             candidate = "/".join(segments)
-            if Path(candidate).suffix not in DATA_SUFFIXES:
+            if Path(candidate).suffix in EXCLUDED_SUFFIXES:
                 continue
             if (REPO_ROOT / candidate).is_file():
                 found.add(candidate)
@@ -76,6 +90,8 @@ def test_the_derivation_finds_the_known_inputs():
         "capabilities.yaml",
         "ci/abicheck-version.yaml",
         "scenarios/manifest.yaml",
+        # Not YAML, and the reason the suffix allowlist had to go.
+        "buildsystems/make/fixtures/Makefile",
     } <= inputs, sorted(inputs)
 
 
@@ -102,3 +118,21 @@ def test_the_matcher_respects_path_boundaries():
     assert _matches("tests/**", "tests/a/b/c.py")
     assert _matches("capabilities.yaml", "capabilities.yaml")
     assert not _matches("capabilities.yaml", "other/capabilities.yaml")
+
+
+def test_the_derivation_reads_paths_deeper_than_three_segments():
+    """The segment bound silently TRUNCATED rather than failing, which is how
+    `buildsystems/make/fixtures/Makefile` disappeared from the derivation
+    instead of being reported as unmatched."""
+    deep = 'REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile"'
+    match = _ROOTED.search(deep)
+    assert match and match.group(0).strip().endswith('"Makefile"'), match
+
+
+def test_a_non_yaml_input_is_still_an_input():
+    """A suffix allowlist is a blind spot: the fixture recipes are not data
+    files, and they are exactly what the pytest-only workflow must re-run
+    for."""
+    inputs = _data_inputs()
+    assert "buildsystems/make/fixtures/Makefile" in inputs
+    assert not any(path.endswith(".py") for path in inputs), sorted(inputs)
