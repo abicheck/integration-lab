@@ -709,3 +709,83 @@ def test_push_proceeds_when_the_local_branch_is_the_generated_tree(tmp_path, mon
         monkeypatch.setattr(gen, "git", _spy)
         assert gen.push([_demo_entry(patch)], None, "origin/main") == ["test/d"]
     assert len(pushes) == 1
+
+
+# --- the base ref itself must be current (Codex review) -------------------
+#
+# --base-ref defaults to origin/main, a LOCAL CACHE of what origin looked like
+# at the last fetch. Generating or pushing from a stale one produces demos
+# that are behind by construction; --force-with-lease protects the demo refs,
+# not the base they were built on.
+
+
+def _with_origin_remote(repo: Path, upstream: Path):
+    gen.git("remote", "remove", "origin", check=False)
+    gen.git("remote", "add", "origin", str(upstream))
+
+
+def test_stale_base_is_silent_when_no_such_remote_is_configured(tmp_path):
+    """`refs/remotes/origin/main` can exist with no remote `origin` (this
+    suite builds exactly that). Nothing to be stale against."""
+    repo, _ = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        assert gen.stale_base("origin/main") is None
+
+
+def test_stale_base_is_silent_for_a_non_tracking_ref(tmp_path):
+    repo, _ = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        assert gen.stale_base("HEAD") is None
+        assert gen.stale_base("main") is None
+
+
+def test_stale_base_detects_a_moved_upstream(tmp_path):
+    (tmp_path / "up").mkdir()
+    (tmp_path / "down").mkdir()
+    upstream, _ = _repo_with_base(tmp_path / "up")
+    repo, _ = _repo_with_base(tmp_path / "down")
+    with _rooted_at(upstream):
+        (upstream / "moved-on.txt").write_text("upstream moved\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "upstream moves on")
+    with _rooted_at(repo):
+        _with_origin_remote(repo, upstream)
+        problem = gen.stale_base("origin/main")
+    assert problem and "is stale" in problem and "git fetch origin main" in problem
+
+
+def test_stale_base_accepts_a_current_tracking_ref(tmp_path):
+    (tmp_path / "up").mkdir()
+    (tmp_path / "down").mkdir()
+    upstream, _ = _repo_with_base(tmp_path / "up")
+    repo, _ = _repo_with_base(tmp_path / "down")
+    with _rooted_at(repo):
+        _with_origin_remote(repo, upstream)
+        gen.git("fetch", "-q", "origin", "main")
+        gen.git("update-ref", "refs/remotes/origin/main", "FETCH_HEAD")
+        assert gen.stale_base("origin/main") is None
+
+
+def test_write_and_push_refuse_a_stale_base(tmp_path, monkeypatch):
+    repo, patch = _repo_with_base(tmp_path)
+    monkeypatch.setattr(gen, "stale_base", lambda ref: "origin/main is stale: ...")
+    with _rooted_at(repo):
+        with pytest.raises(gen.DemoError, match="refusing to generate"):
+            gen.write([_demo_entry(patch)], "origin/main", None)
+        with pytest.raises(gen.DemoError, match="refusing to force-push"):
+            gen.push([_demo_entry(patch)], None, "origin/main")
+
+
+def test_check_reports_a_stale_base_rather_than_silently_using_it(tmp_path, monkeypatch):
+    repo, patch = _repo_with_base(tmp_path)
+    monkeypatch.setattr(gen, "stale_base", lambda ref: "origin/main is stale: ...")
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/d", "refs/heads/test/d")
+        gen.git("checkout", "-q", "main")
+        problems = gen.check([_demo_entry(patch)], "origin/main")
+    # Otherwise every branch would read as current against a base that moved.
+    assert any("is stale" in p for p in problems), problems

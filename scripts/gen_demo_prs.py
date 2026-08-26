@@ -157,6 +157,59 @@ def base_commit(base_ref: str) -> str:
     return git("rev-parse", base_ref).strip()
 
 
+def stale_base(base_ref: str) -> str | None:
+    """Why *base_ref* cannot be trusted as "the current default branch".
+
+    Codex review: `--base-ref` defaults to `origin/main`, which is a
+    remote-TRACKING ref -- a local cache of what origin looked like the last
+    time this checkout fetched. From a checkout that has not fetched recently,
+    both generation and tree validation succeed against a base that is already
+    behind, and `--force-with-lease` does not help: it protects the
+    demonstration branch refs, not the base they were built on. The result is
+    a force-push of demos that are stale by construction, which is the exact
+    invariant this script exists to hold.
+
+    Asked with `ls-remote` rather than by fetching: reporting is not allowed to
+    mutate the caller's refs, and an operator who is told precisely which
+    fetch to run is better served than one whose repository changed under
+    them. A base_ref that is not a remote-tracking ref (a SHA, a tag, a local
+    branch) has no remote counterpart to compare, so it is left alone.
+    """
+    parts = base_ref.split("/", 1)
+    if len(parts) != 2:
+        return None
+    remote, branch = parts
+    tracking = f"refs/remotes/{remote}/{branch}"
+    local = git("rev-parse", "--verify", "--quiet", tracking, check=False).strip()
+    if not local:
+        return None  # not a remote-tracking ref; nothing to compare against
+    configured = git("remote", check=False).split()
+    if remote not in configured:
+        # `refs/remotes/<x>/...` can exist with no remote `<x>` configured
+        # (hermetic tests build exactly that with `update-ref`). There is then
+        # no upstream to be stale against -- distinct from a CONFIGURED remote
+        # that cannot be reached, which stays an error below because currency
+        # genuinely cannot be confirmed.
+        return None
+    listed = git("ls-remote", "--heads", remote, branch, check=False).strip()
+    if not listed:
+        return (
+            f"could not reach {remote} to confirm {base_ref} is current "
+            f"(`git ls-remote --heads {remote} {branch}` returned nothing). "
+            "Fetch and retry, or pass --base-ref explicitly if this is "
+            "deliberate."
+        )
+    upstream = listed.split()[0]
+    if upstream != local:
+        return (
+            f"{base_ref} is stale: it points at {local[:12]} but {remote}/"
+            f"{branch} is now {upstream[:12]}. Generating or pushing from here "
+            f"would produce demonstrations that are already behind. Run "
+            f"`git fetch {remote} {branch}` first."
+        )
+    return None
+
+
 def expected_tree(demo: dict[str, Any], base_ref: str) -> str:
     """The tree a correctly generated branch would have: base + this patch.
 
@@ -191,6 +244,11 @@ def check(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
     catches an extra commit, an edited patch and a stale base alike.
     """
     problems: list[str] = []
+    # A stale base makes every verdict below wrong in the same direction:
+    # branches would read as current against a base that has moved on.
+    outdated = stale_base(base_ref)
+    if outdated:
+        problems.append(outdated)
     base = base_commit(base_ref)
     for demo in demos:
         branch = demo["branch"]
@@ -231,6 +289,9 @@ def check(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
 
 def write(demos: list[dict[str, Any]], base_ref: str, only: str | None) -> list[str]:
     """Recreate each demonstration branch locally as base + its one patch."""
+    outdated = stale_base(base_ref)
+    if outdated:
+        raise DemoError(f"refusing to generate against a stale base: {outdated}")
     written = []
     # Codex review: `rev-parse --abbrev-ref HEAD` returns the literal string
     # "HEAD" on a detached checkout, so restoring it with `git checkout HEAD`
@@ -340,6 +401,9 @@ def push(demos: list[dict[str, Any]], only: str | None, base_ref: str) -> list[s
     # Validate before the FIRST push, not per branch: a force-push is not
     # undoable, so pushing two valid branches and then refusing on the third
     # would leave the set half-replaced.
+    outdated = stale_base(base_ref)
+    if outdated:
+        raise DemoError(f"refusing to force-push from a stale base: {outdated}")
     problems = local_drift(
         [demo for demo in demos if not only or demo["id"] == only], base_ref
     )
