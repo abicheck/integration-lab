@@ -1849,6 +1849,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # Stage 2 of the plugin-pack scenario: ship the pack as an artifact,
+      # not just as a local path this job happens to still have. Everything
+      # a consumer needs and nothing it doesn't -- the pack, the binary it
+      # describes, the public header, and the baseline to compare against.
+      # No sources, no build outputs beyond the library itself: if the
+      # downstream clean job can reach source depth from this bundle, the
+      # pack is genuinely portable evidence; if it can only do so with the
+      # tree next to it, it is a cache with extra steps.
+      - name: Stage the reusable evidence bundle
+        id: stage_reuse_bundle
+        if: steps.verify_facts.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/plugin-pack-bundle"
+          rm -rf "$bundle"
+          mkdir -p "$bundle/lib" "$bundle/include/abicheck_lab" "$bundle/baseline"
+          cp -R bazel-bin/tools/abicheck/math_abicheck_inputs "$bundle/abicheck_inputs"
+          cp bazel-bin/libmath.so "$bundle/lib/"
+          cp include/abicheck_lab/math.h "$bundle/include/abicheck_lab/"
+          cp "$RUNNER_TEMP/math.base.abicheck.json" "$bundle/baseline/"
+          find "$bundle" -type f | sort
+
+      - name: Upload plugin-pack reuse bundle
+        if: steps.stage_reuse_bundle.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-plugin-pack-bundle
+          path: ${{ runner.temp }}/plugin-pack-bundle
+          if-no-files-found: ignore
+          retention-days: 30
+
       # Never fails the job (no `if:` gating on outcome, unconditional
       # exit 0) -- reports whichever stage first didn't succeed, since
       # each upstream step's continue-on-error means a failure two stages
@@ -1943,3 +1975,125 @@ jobs:
           path: ${{ runner.temp }}/conformance-l4.md
           if-no-files-found: ignore
           retention-days: 30
+
+  # Stage 3 of the plugin-pack scenario (item 9): consume the pack somewhere
+  # it could not possibly have been produced.
+  #
+  # The `l4_clang_plugin` job above proves a facts pack can be BUILT. It
+  # cannot prove the pack is portable, because that job also has the source
+  # tree, the Bazel outputs and a working Clang -- any of which an implicit
+  # fallback could quietly re-derive source facts from while the report still
+  # said "source depth, complete". This job has the harness and nothing else:
+  # a non-cone sparse checkout of `ci/` and `scripts/` only, so `include/`,
+  # `src/`, `MODULE.bazel` and the Bazel output tree are all absent (the
+  # harness asserts that itself rather than trusting the checkout config),
+  # and no build of any kind runs. clang-18 is installed because the compare
+  # still parses the shipped PUBLIC HEADER -- that is header AST work on an
+  # artifact we downloaded, not a rebuild of the library.
+  #
+  # `needs: [scan, l4_clang_plugin]` + `if: always()`: the plugin job is
+  # documented best-effort and skips whole stages on an apt hiccup or an LLVM
+  # bump, and `scan` can legitimately fail its own gate on a real ABI break.
+  # The harness step is `continue-on-error` for the same reason every other
+  # stage of this profile is -- but the SCRIPT fails closed on every one of
+  # its nine assertions, and the receipt it uploads records which channel
+  # each rejection actually came through, so a silent loosening upstream is
+  # visible in the artifact even while the job stays non-blocking.
+  plugin_pack_reuse:
+    needs: [scan, l4_clang_plugin]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+          # Non-cone: cone mode would also materialize every ROOT file,
+          # including MODULE.bazel and CMakeLists.txt, which is exactly the
+          # source-tree presence this job exists to be without.
+          sparse-checkout: |
+            /ci/
+            /scripts/
+          sparse-checkout-cone-mode: false
+
+      - name: Download plugin-pack reuse bundle
+        id: download_bundle
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-plugin-pack-bundle
+          path: ${{ runner.temp }}/bundle
+
+      - name: Download l4-clang-replay artifact
+        id: download_replay
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-l4-clang-replay
+          path: ${{ runner.temp }}/replay
+
+      - name: Install Clang (header AST frontend only -- nothing is built here)
+        id: install_clang
+        if: steps.download_bundle.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 libclang-18-dev
+
+      - name: Install abicheck
+        id: install_abicheck
+        if: steps.install_clang.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Reuse the facts pack in this clean job
+        id: reuse
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 ci/run_plugin_pack_reuse.py \
+            --bundle "$RUNNER_TEMP/bundle" \
+            --replay-report "$RUNNER_TEMP/replay/abicheck-l4-clang-replay.json" \
+            --workdir "$RUNNER_TEMP/reuse-work" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --out plugin-pack-reuse-receipt.json \
+            --summary plugin-pack-reuse-summary.md
+
+      - name: Upload plugin-pack reuse receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-plugin-pack-reuse-receipt
+          path: |
+            plugin-pack-reuse-receipt.json
+            plugin-pack-reuse-summary.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Same discipline as the plugin job's own status step: report which
+      # stage first didn't succeed, and render the per-assertion result
+      # rather than a single pass/fail, so a partially working reuse path is
+      # legible instead of collapsing to "red". The table itself is rendered
+      # by the harness (`--summary`) so this step stays a plain `cat`.
+      - name: Report plugin-pack reuse status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -s plugin-pack-reuse-summary.md ]; then
+            cat plugin-pack-reuse-summary.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### Plugin-pack reuse in a clean job (best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.download_bundle.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: the `l4_clang_plugin` job produced no reusable evidence bundle.'
+            elif [ "${{ steps.install_clang.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install clang-18 for the header AST frontend.'
+            elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install abicheck.'
+            else
+              echo '⚠️ The reuse harness produced no summary -- see the job log above.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

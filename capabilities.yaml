@@ -72,6 +72,7 @@ dimensions:
   - loader_runtime
   - python_extension
   - run_plan_semantics
+  - evidence_portability
   - n/a
   target_shape:
   - cc_binary_linkshared
@@ -317,6 +318,28 @@ capabilities:
   note: 'Clang-plugin evidence collection remains availability-advisory because the plugin
     is ABI-locked to the runner''s LLVM major, but any produced report must prove complete
     source depth or the job fails.
+
+    '
+- id: plugin-pack-reuse-clean-job
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: plugin_pack_reuse
+  dimensions:
+    evidence_depth: source
+    header_frontend: clang
+    toolchain: n/a
+    scope: evidence_portability
+    target_shape: cc_binary_linkshared
+  note: 'Consumes the l4_clang_plugin facts pack in a job with no source tree and no build
+    (non-cone sparse checkout of ci/ and scripts/ only), so source depth reached here can
+    only have come from the shipped evidence. Nine assertions: agreement with the replay
+    producer on findings, effective depth and target accounting, plus five mutations
+    (pack removed, stale header, missing TU, wrong LLVM major, empty public roots, corrupted
+    JSONL) that must each fail closed. Non-gating for the same availability reason as
+    l4_clang_plugin -- the plugin may not build on a given runner image -- but the harness
+    itself fails closed and the uploaded receipt records which channel each rejection came
+    through, so an upstream loosening stays visible.
 
     '
 - id: producer-agreement-report

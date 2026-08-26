@@ -171,15 +171,43 @@ can join the matrix; they are covered elsewhere (cross-DSO by
 `project-cross-dso`, SONAME by the loader-feature suite) but not yet as
 three-build-system parity cases.
 
-**Item 9 — plugin-pack reuse in a clean job.** The plugin scenario should
-run three distinct stages: build with the plugin; verify and upload the
-facts pack; then a *new clean job* that downloads binary, headers and pack
-and performs a source-depth compare with no source checkout and no build.
-Required assertions: the same normalized finding set as replay, the same
-effective depth, the same target accounting, no hidden replay fallback, a
-stale source-tree digest rejected, a missing TU rejected, a wrong plugin
-LLVM major rejected, empty public roots rejected, and a corrupted pack
-reported as an operational error.
+**Item 9 — plugin-pack reuse in a clean job.** Done. The plugin scenario now
+runs three distinct stages. `l4_clang_plugin` builds with the plugin and
+verifies the pack is non-empty (stages 1 and 2), then stages the pack, the
+binary it describes, the public header and the baseline as one
+`abicheck-plugin-pack-bundle` artifact. Stage 3 is a separate
+`plugin_pack_reuse` job that downloads that bundle and compares at source
+depth with **no source checkout and no build**: a non-cone sparse checkout of
+`ci/` and `scripts/` only, so `include/`, `src/`, `MODULE.bazel` and the Bazel
+output tree are all absent. Clang is installed there, but only to parse the
+shipped public header — nothing is compiled.
+
+`ci/run_plugin_pack_reuse.py` makes the nine required assertions. Three are
+agreement with the portable-replay producer on the normalized finding
+multiset, on effective depth, and on target accounting — the last of which
+fails closed when *neither* side names a target, since two silent reports
+agreeing is not agreement (the same trap `render_conformance_report.py`
+already documents for verdicts). The other six are mutations that must each
+be rejected: the pack removed entirely (the assertion that rules out a hidden
+replay fallback — in a job with no sources, a still-green L4 result means the
+depth came from somewhere other than the evidence we shipped), a header
+edited after collection, a deleted translation unit, a bumped plugin LLVM
+major, emptied public roots, and corrupted JSONL.
+
+"Rejected" deliberately admits four channels — an operational exit status, a
+non-empty `operational_errors`, a failed source-depth contract, or no report
+at all. Pinning each case to one exact channel would fail the scenario on an
+upstream change that merely moved *where* a real rejection is reported, which
+is not the property under test; the receipt records which channel each case
+actually used, so a change in that shape stays visible. Two of the mutations
+need a field the pack itself must carry (a recorded plugin/LLVM version, a
+declared public-header root); a pack carrying neither is reported as a
+failure rather than skipped, because a pack with no producer identity cannot
+be rejected for having the wrong one — that is the interchangeability hazard
+itself. The job is non-gating for the same availability reason as
+`l4_clang_plugin` (the plugin is ABI-locked to the runner's LLVM major and
+may simply not build), but the harness fails closed and uploads its receipt
+either way.
 
 **Item 14 — generated demonstration PRs.** The long-lived test PRs have
 drifted: the default-argument PR still describes adding a default argument
