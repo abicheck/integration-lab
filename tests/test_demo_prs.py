@@ -621,3 +621,91 @@ def test_a_detached_original_restores_by_detaching(tmp_path):
         assert gen._restore_head(sha) is None
         assert gen.git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip() == ""
         assert gen.git("rev-parse", "HEAD").strip() == sha
+
+
+# --- --push must validate what it is about to overwrite (Codex review) ----
+#
+# --force-with-lease detects a concurrent REMOTE update; it says nothing about
+# whether the LOCAL content is the generated tree. check() cannot cover this:
+# it inspects refs/remotes/origin/*, which is the state being replaced.
+
+
+def test_local_drift_accepts_a_correctly_generated_branch(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("checkout", "-q", "main")
+        assert gen.local_drift([_demo_entry(patch)], "origin/main") == []
+
+
+def test_local_drift_catches_a_hand_edited_branch(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        (repo / "EXTRA.txt").write_text("hand edit\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("checkout", "-q", "main")
+        problems = gen.local_drift([_demo_entry(patch)], "origin/main")
+    assert any("is not origin/main plus" in p for p in problems), problems
+
+
+def test_local_drift_reports_a_branch_that_was_never_written(tmp_path):
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        problems = gen.local_drift([_demo_entry(patch)], "origin/main")
+    assert any("run --write first" in p for p in problems), problems
+
+
+def test_push_refuses_before_pushing_anything(tmp_path, monkeypatch):
+    """The refusal must come before the FIRST push: a force-push is not
+    undoable, so validating per branch would leave the set half-replaced."""
+    repo, patch = _repo_with_base(tmp_path)
+    pushes: list[tuple] = []
+    real_git = gen.git
+
+    def _spy(*args, **kwargs):
+        if args and args[0] == "push":
+            pushes.append(args)
+            return ""
+        return real_git(*args, **kwargs)
+
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        (repo / "EXTRA.txt").write_text("hand edit\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("checkout", "-q", "main")
+        monkeypatch.setattr(gen, "git", _spy)
+        with pytest.raises(gen.DemoError) as excinfo:
+            gen.push([_demo_entry(patch)], None, "origin/main")
+    assert "refusing to force-push" in str(excinfo.value)
+    assert pushes == []
+
+
+def test_push_proceeds_when_the_local_branch_is_the_generated_tree(tmp_path, monkeypatch):
+    """A guard that never lets anything through is not a guard."""
+    repo, patch = _repo_with_base(tmp_path)
+    pushes: list[tuple] = []
+    real_git = gen.git
+
+    def _spy(*args, **kwargs):
+        if args and args[0] == "push":
+            pushes.append(args)
+            return ""
+        return real_git(*args, **kwargs)
+
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-B", "test/d", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("checkout", "-q", "main")
+        monkeypatch.setattr(gen, "git", _spy)
+        assert gen.push([_demo_entry(patch)], None, "origin/main") == ["test/d"]
+    assert len(pushes) == 1

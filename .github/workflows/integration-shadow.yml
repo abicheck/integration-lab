@@ -395,7 +395,19 @@ jobs:
     # job with no matrix, and it failed with "select job produced no matrix"
     # -- a routine supersession reading exactly like a real cross-build
     # disagreement.
-    if: always() && needs.select.result != 'cancelled'
+    #
+    # `build` needs the same guard, and not guarding it was the same bug one
+    # job further down. `select` finishes in seconds, so a supersession
+    # almost always cancels `build` while `select` has already SUCCEEDED --
+    # exactly what happened on run 32958900378, where all three build legs
+    # were cancelled and this job went on to fail with "fewer than two of the
+    # 3 expected profiles produced staged output -- nothing to compare".
+    # That is the artifact-producing upstream: if it did not run, there is
+    # nothing here to compare and nothing to report.
+    if: >-
+      always()
+      && needs.select.result != 'cancelled'
+      && needs.build.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -559,7 +571,18 @@ jobs:
     # and a *skipped* required check can leave a PR looking mergeable while
     # `select` is broken. On a real failure the gate stays red, and its "no
     # matrix" message is then accurate rather than misleading.
-    if: always() && needs.select.result != 'cancelled'
+    #
+    # Same treatment for the two upstreams whose OUTPUT this gate renders: a
+    # cancelled `build` leaves no receipts to summarize (run 32958900378: all
+    # three legs cancelled, this gate red on "Render integration gate
+    # summary"), and a cancelled `cross_build_equivalence` leaves no
+    # equivalence result to note. A genuine FAILURE in either still gets a
+    # red gate -- only cancellation is stepped aside for.
+    if: >-
+      always()
+      && needs.select.result != 'cancelled'
+      && needs.build.result != 'cancelled'
+      && needs.cross_build_equivalence.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1

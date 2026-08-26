@@ -969,7 +969,15 @@ jobs:
   # actually finished before `aggregate` looks for its artifact.
   aggregate:
     needs: [scan, scan_strings, scan_math_shared]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.scan_strings.result != 'cancelled'
+      && needs.scan_math_shared.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -1957,7 +1965,14 @@ jobs:
   # own scan steps and upload nothing).
   conformance:
     needs: [scan, l4_clang_plugin]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.l4_clang_plugin.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -2024,7 +2039,14 @@ jobs:
   # visible in the artifact even while the job stays non-blocking.
   plugin_pack_reuse:
     needs: [scan, l4_clang_plugin]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.l4_clang_plugin.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1

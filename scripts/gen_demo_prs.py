@@ -303,7 +303,51 @@ def _restore_head(original: str) -> str | None:
     return None
 
 
-def push(demos: list[dict[str, Any]], only: str | None) -> list[str]:
+def local_drift(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
+    """Why the LOCAL branches are not exactly base + their declared patch.
+
+    Codex review: `--push` force-pushed whatever each local `test/*` ref
+    happened to contain. `--force-with-lease` only detects a concurrent
+    REMOTE update; it says nothing about whether the local content is valid,
+    so a stale branch from an earlier generation, or one edited by hand, could
+    overwrite a long-lived demonstration and break the generated-branch
+    invariant the oracle depends on. `check()` cannot cover this: it inspects
+    `refs/remotes/origin/*`, which is the state being replaced, not the state
+    being pushed.
+    """
+    problems: list[str] = []
+    for demo in demos:
+        branch = demo["branch"]
+        ref = f"refs/heads/{branch.removeprefix('refs/heads/')}"
+        head = git("rev-parse", "--verify", "--quiet", ref, check=False).strip()
+        if not head:
+            problems.append(
+                f"{demo['id']}: no local {branch} to push -- run --write first"
+            )
+            continue
+        actual = git("rev-parse", f"{head}^{{tree}}").strip()
+        wanted = expected_tree(demo, base_ref)
+        if actual != wanted:
+            problems.append(
+                f"{demo['id']}: local {branch} is not {base_ref} plus "
+                f"{demo['patch']} (tree {actual[:12]}, expected {wanted[:12]}) "
+                "-- regenerate it with --write instead of pushing it"
+            )
+    return problems
+
+
+def push(demos: list[dict[str, Any]], only: str | None, base_ref: str) -> list[str]:
+    # Validate before the FIRST push, not per branch: a force-push is not
+    # undoable, so pushing two valid branches and then refusing on the third
+    # would leave the set half-replaced.
+    problems = local_drift(
+        [demo for demo in demos if not only or demo["id"] == only], base_ref
+    )
+    if problems:
+        raise DemoError(
+            "refusing to force-push: the local branches are not the generated "
+            "trees:\n  " + "\n  ".join(problems)
+        )
     pushed = []
     for demo in demos:
         if only and demo["id"] != only:
@@ -366,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
             for line in write(demos, args.base_ref, None):
                 print(f"wrote {line}")
         if args.push:
-            for branch in push(demos, None):
+            for branch in push(demos, None, args.base_ref):
                 print(f"pushed {branch}")
     except DemoError as exc:
         print(f"gen_demo_prs: {exc}", file=sys.stderr)

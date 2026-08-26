@@ -261,8 +261,18 @@ def test_demo_oracle_tolerates_an_empty_demonstrations_list():
 
 
 def _always_jobs_consuming_artifacts_hard():
-    """Jobs that run on `always()` and download an upstream artifact WITHOUT
-    continue-on-error -- i.e. that fail hard when the artifact is absent."""
+    """Jobs that run on `always()`, download an upstream artifact, and then
+    have at least one step that fails hard when the artifact is absent.
+
+    `continue-on-error` on the DOWNLOAD does not make absence a handled
+    outcome -- it only postpones the failure to whatever reads the files. The
+    earlier version of this helper excluded soft downloads outright, which is
+    precisely why `cross_build_equivalence` and `integration_gate` were never
+    matched: both download softly and then fail in the very next step ("fewer
+    than two of the 3 expected profiles produced staged output", "Render
+    integration gate summary"). A job is only genuinely degrading if every
+    step after the download tolerates failure.
+    """
     out = []
     for workflow in WORKFLOWS:
         document = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
@@ -272,14 +282,22 @@ def _always_jobs_consuming_artifacts_hard():
             condition = str(job.get("if") or "")
             if "always()" not in condition:
                 continue
-            hard = [
-                step for step in (job.get("steps") or [])
-                if isinstance(step, dict)
-                and "actions/download-artifact" in str(step.get("uses", ""))
-                and not step.get("continue-on-error")
+            steps = [s for s in (job.get("steps") or []) if isinstance(s, dict)]
+            downloads = [
+                i for i, step in enumerate(steps)
+                if "actions/download-artifact" in str(step.get("uses", ""))
             ]
+            hard = downloads and any(
+                not step.get("continue-on-error")
+                for step in steps[min(downloads):]
+                if "actions/download-artifact" not in str(step.get("uses", ""))
+                or not step.get("continue-on-error")
+            )
             if hard:
-                out.append((workflow.name, job_id, condition))
+                needs = job.get("needs") or []
+                if isinstance(needs, str):
+                    needs = [needs]
+                out.append((workflow.name, job_id, condition, list(needs)))
     return out
 
 
@@ -301,23 +319,38 @@ def test_every_always_job_consuming_an_artifact_guards_against_cancellation():
     A job that downloads with continue-on-error is deliberately degrading and
     is not covered: absence there is a handled outcome, not a hard failure.
     """
-    unguarded = [
-        f"{workflow}:{job_id}"
-        for workflow, job_id, condition in _always_jobs_consuming_artifacts_hard()
-        if "result !=" not in condition and "result ==" not in condition
-    ]
+    unguarded = []
+    for workflow, job_id, condition, needs in _always_jobs_consuming_artifacts_hard():
+        # EVERY upstream, not just one. The earlier version of this test asked
+        # only whether the condition mentioned some `needs.<x>.result`, and
+        # `cross_build_equivalence` satisfied it by guarding `select` alone --
+        # while the artifacts it consumes come from `build`. `select` finishes
+        # in seconds, so a supersession cancels `build` with `select` already
+        # SUCCEEDED: run 32958900378 had all three build legs cancelled and
+        # this job red on "nothing to compare". Guarding one upstream out of
+        # two is not guarding the job.
+        missing = [
+            need for need in needs if f"needs.{need}.result" not in condition
+        ]
+        if missing:
+            unguarded.append(f"{workflow}:{job_id} (unguarded: {', '.join(missing)})")
     assert not unguarded, (
         "these jobs run on always() and download an upstream artifact without "
         "continue-on-error, so a CANCELLED upstream fails them: "
         + ", ".join(sorted(unguarded))
-        + " -- add `&& needs.<upstream>.result != 'cancelled'`"
+        + " -- add `&& needs.<upstream>.result != 'cancelled'` for each"
     )
 
 
 def test_the_rule_actually_matches_the_known_jobs():
     """A rule that matches nothing would pass vacuously forever."""
-    matched = {job_id for _, job_id, _ in _always_jobs_consuming_artifacts_hard()}
-    assert {"verify_capability_receipts", "demo_oracle"} <= matched, matched
+    matched = {job_id for _, job_id, _, _ in _always_jobs_consuming_artifacts_hard()}
+    assert {
+        "verify_capability_receipts",
+        "demo_oracle",
+        "cross_build_equivalence",
+        "integration_gate",
+    } <= matched, matched
 
 
 def test_piped_run_steps_set_pipefail():
