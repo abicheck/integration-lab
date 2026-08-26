@@ -521,3 +521,51 @@ def test_the_workflow_supplies_the_reference_leg():
         if isinstance(s.get("run"), str) and "check_scenario_parity.py" in s["run"]
     )
     assert f"{parity.REFERENCE_BUILD_SYSTEM}=" in step["run"]
+
+
+# --- the reference must cover every compared CELL, not just exist ---------
+#
+# Codex review, third pass (PR #30). `compare()` picks its per-cell reference
+# with `sorted(present)[0]`, which promotes `cmake` the instant a Bazel cell
+# is absent -- so "a bazel key is present" was never the property that
+# mattered.
+
+
+def test_an_empty_reference_directory_is_not_a_reference():
+    problems = parity.missing_reference_leg(
+        {"bazel": {}, "cmake": {"add_function": {}}, "make": {"add_function": {}}},
+        {"cmake": {"add_function"}, "make": {"add_function"}},
+        {"add_function": set()},
+    )
+    assert len(problems) == 1
+    assert "add_function" in problems[0]
+    assert "two imitations" in problems[0]
+
+
+def test_one_missing_reference_cell_is_caught():
+    """The exact case named in review: add_function.clang absent on Bazel
+    while castxml is present, so that cell is compared cmake-vs-make."""
+    declared = {"cmake": {"add_function"}, "make": {"add_function"}}
+    profiles = {"add_function": {"castxml", "clang"}}
+    results = {
+        "bazel": {"add_function.castxml": {}},
+        "cmake": {"add_function.castxml": {}, "add_function.clang": {}},
+        "make": {"add_function.castxml": {}, "add_function.clang": {}},
+    }
+    problems = parity.missing_reference_leg(results, declared, profiles)
+    assert [p.split(":")[0] for p in problems] == ["add_function.clang"]
+
+
+def test_a_complete_reference_passes():
+    declared = {"cmake": {"add_function"}, "make": {"add_function"}}
+    profiles = {"add_function": {"castxml", "clang"}}
+    full = {"add_function.castxml": {}, "add_function.clang": {}}
+    assert parity.missing_reference_leg(
+        {"bazel": full, "cmake": full, "make": full}, declared, profiles
+    ) == []
+
+
+def test_partial_runs_still_opt_out_by_name():
+    assert parity.missing_reference_leg(
+        {"cmake": {}}, {"cmake": {"add_function"}}, {}, allow_partial=True
+    ) == []

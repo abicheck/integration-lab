@@ -64,12 +64,20 @@ WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 # here turns UNDOCUMENTED_JOB into the thing that keeps the inventory
 # honest: a new job in any of these workflows now fails CI until an entry
 # names it.
+# Codex review (PR #30): integration-shadow.yml was still missing after the
+# widening above, and it is not a bystander -- it carries the multi-build
+# integration gate and, since this branch, the `scenarios_make` and
+# `scenario_parity` jobs that ARE the cross-build coverage README presents as
+# validated. With the workflow out of scope, deleting or renaming either job
+# left this checker green while that coverage silently vanished, which is the
+# exact drift UNDOCUMENTED_JOB exists to catch.
 IN_SCOPE_WORKFLOWS = frozenset({
     "abi-scan.yml",
     "scenarios.yml",
     "scenarios-canary.yml",
     "project-shadow.yml",
     "depth-scenarios.yml",
+    "integration-shadow.yml",
 })
 
 ALLOWED_STATUSES = frozenset({"covered", "non_gating_watch", "gap", "planned"})

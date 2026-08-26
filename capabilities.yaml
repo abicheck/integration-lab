@@ -697,3 +697,102 @@ capabilities:
     inside the package, Python API findings, bundled native library discovery, package-level
     added/removed extensions, and wheel tags/CPython ABI metadata. Post-repair (auditwheel/delocate/delvewheel)
     behaviour is a declared follow-up, not covered here.'
+
+# --- integration-shadow.yml: the cross-build (producer-agreement) legs -------
+#
+# Codex review (PR #30): this workflow was outside IN_SCOPE_WORKFLOWS, so none
+# of its jobs had to be declared -- including scenarios_make and scenario_parity,
+# which are the cross-build coverage README presents as validated. Deleting or
+# renaming either left check_capability_matrix.py green.
+- id: cross-build-profile-selection
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: select
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: producer_agreement
+    target_shape: n/a
+  note: Resolves which build-system profiles this event runs. An empty matrix here silently empties every
+    downstream leg, so it is declared rather than treated as plumbing.
+- id: cross-build-profile-scan
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: build
+  dimensions:
+    evidence_depth: binary
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: producer_agreement
+    target_shape: elf_dso
+  note: Builds, stages and scans libmath/libstrings once per build-system profile (bazel/cmake+ninja/make+bear)
+    against the resolved base baseline, and emits the per-profile receipt the gate below consumes.
+- id: cross-build-output-equivalence
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: cross_build_equivalence
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: multi-producer
+    scope: producer_agreement
+    target_shape: elf_dso
+  note: Compares the staged build outputs pairwise across profiles. This is the claim that three build
+    systems describe the SAME artifact, not merely that each one scanned green.
+- id: cross-build-integration-gate
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: integration_gate
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: multi-producer
+    scope: producer_agreement
+    target_shape: n/a
+  note: Renders the per-profile receipts and the equivalence result into one gate summary. Runs on always()
+    with a non-cancelled `select`, so a dropped leg reads as a missing receipt rather than as a pass.
+- id: detection-scenarios-cmake
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenarios_cmake
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: Runs the detection-correctness suite against CMake+Ninja-built fixtures.
+- id: detection-scenarios-make
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenarios_make
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: Runs the detection-correctness suite against Make+Bear-built fixtures, so a finding that depends
+    on a compile_commands.json produced by Bear rather than by CMake is exercised rather than assumed.
+- id: detection-scenario-cross-build-parity
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenario_parity
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: multi-producer
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: 'Asserts the same fixture mutation yields the same verdict, findings and suppressions under every
+    build system, cell by cell. check_scenario_parity.py requires the Bazel reference to have reported
+    every declared cell: these fixtures are shaped to match Bazel, so a cell missing there would be ''parity''
+    between two imitations.'

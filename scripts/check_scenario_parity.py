@@ -149,17 +149,49 @@ REFERENCE_BUILD_SYSTEM = "bazel"
 
 def missing_reference_leg(
     results: Dict[str, Dict[str, Dict[str, Any]]],
+    declared: Dict[str, Set[str]] | None = None,
+    profiles: Dict[str, Set[str]] | None = None,
     *,
     allow_partial: bool = False,
 ) -> List[str]:
-    """The reference build system must be among the supplied results."""
-    if allow_partial or REFERENCE_BUILD_SYSTEM in results:
+    """The reference build system must cover every cell that gets compared.
+
+    Codex review, third pass (PR #30): the previous version accepted the mere
+    PRESENCE of a `bazel` key. That is the same "green but proves nothing"
+    shape one level down. `missing_declared_reports` derives its cells from
+    build-matrix.yaml, which declares only cmake and make, so it never
+    required a single Bazel report; and `compare()` picks its per-cell
+    reference with `sorted(present)[0]`, which silently promotes `cmake` the
+    moment a Bazel cell is absent. A `bazel` results directory that was empty
+    -- or merely missing `add_function.clang` -- therefore satisfied this
+    check while that cell went on being "parity-checked" between two
+    imitations of the very build system that was not there.
+
+    So the requirement is per-CELL, not per-directory: every cell any build
+    system declares must also have been reported by the reference.
+    """
+    if allow_partial:
         return []
+    reference = results.get(REFERENCE_BUILD_SYSTEM)
+    if reference is None:
+        return [
+            f"{REFERENCE_BUILD_SYSTEM}: the reference build system supplied no results "
+            f"-- got {sorted(results)}. These fixtures are shaped to match it, so a "
+            "comparison without it compares two imitations with each other "
+            "(pass --allow-partial for a deliberate partial run)"
+        ]
+    if declared is None:
+        return []
+    profiles = profiles or {}
+    required: Set[str] = set()
+    for scenarios in declared.values():
+        for scenario in scenarios:
+            required |= expected_stems(scenario, profiles.get(scenario, set()))
     return [
-        f"{REFERENCE_BUILD_SYSTEM}: the reference build system supplied no results "
-        f"-- got {sorted(results)}. These fixtures are shaped to match it, so a "
-        "comparison without it compares two imitations with each other "
-        "(pass --allow-partial for a deliberate partial run)"
+        f"{stem}: declared as a cross-build cell but the reference build system "
+        f"({REFERENCE_BUILD_SYSTEM}) produced no report for it -- that cell would be "
+        "compared between two imitations with no reference evidence"
+        for stem in sorted(required - set(reference))
     ]
 
 
@@ -378,7 +410,9 @@ def main(argv=None) -> int:
         missing_declared_reports(
             results, declared, profiles, allow_partial=args.allow_partial
         )
-        + missing_reference_leg(results, allow_partial=args.allow_partial)
+        + missing_reference_leg(
+            results, declared, profiles, allow_partial=args.allow_partial
+        )
         + compare(results)
     )
     receipt = {
