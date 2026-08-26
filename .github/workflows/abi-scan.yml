@@ -2117,9 +2117,27 @@ jobs:
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
+      # Codex review: the BASE commit, not the PR head.
+      #
+      # This job exists to detect drift in a generated demonstration branch,
+      # and it was reading the manifest out of the branch it is judging. A
+      # branch that dropped its own entry from demos/manifest.yaml would set
+      # `is_demo=false` and skip the oracle entirely; one that rewrote its
+      # `expect` block would be checked against its own rewritten
+      # expectation. Either way the thing under test supplied the test.
+      #
+      # Checking out the base pins the manifest AND the oracle script to the
+      # trusted side. The script matters as much as the manifest: a branch
+      # that could rewrite check_demo_oracle.py to return 0 defeats this
+      # just as completely, and Codex named only the manifest.
+      #
+      # Nothing here needs the head. The verdict under test arrives as the
+      # `scan` job's uploaded report artifact, and the branch identity comes
+      # from the event context -- neither is read from the checkout.
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
 
       # Codex review (P1): `${{ github.head_ref }}` must never be interpolated
       # into a `run:` block. GitHub substitutes it BEFORE the shell or Python
@@ -2158,10 +2176,19 @@ jobs:
             echo "is_demo=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # A base that declares no demonstrations cannot have one proposed
+          # against it -- true during the transition, before this manifest
+          # reaches the default branch. Absence is "not a demonstration",
+          # never a crash in a gating job.
+          if [ ! -f demos/manifest.yaml ]; then
+            echo "the base commit declares no demonstrations -- nothing to assert"
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if python3 -c "
           import os, sys, yaml
-          doc = yaml.safe_load(open('demos/manifest.yaml'))
-          branches = {d['branch'] for d in doc['demonstrations']}
+          doc = yaml.safe_load(open('demos/manifest.yaml')) or {}
+          branches = {d['branch'] for d in (doc.get('demonstrations') or [])}
           sys.exit(0 if os.environ['HEAD_REF'] in branches else 1)
           "; then
             echo "is_demo=true" >> "$GITHUB_OUTPUT"

@@ -357,7 +357,9 @@ capabilities:
   note: 'Reads the report the ordinary gate already produced -- not a second abicheck
     invocation, which could drift from the gate and assert a result it never produced --
     and passes only when the natural result is the one demos/manifest.yaml declares for
-    that branch. Gating, because two of the five demonstration branches are SUPPOSED to
+    that branch. Manifest and oracle script are both read from the PR BASE, never the
+    head: this job detects drift in a generated branch, so the branch it judges must not
+    supply its own expectations (or its own checker). Gating, because two of the five demonstration branches are SUPPOSED to
     turn the gate red: a red gate there carries no information on its own, and this is the
     check that distinguishes "the demonstration worked" from "the branch drifted". Exits 0
     without asserting anything on any PR that is not a demonstration branch.

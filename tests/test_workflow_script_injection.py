@@ -208,3 +208,50 @@ def test_every_yaml_consuming_job_installs_pyyaml():
     assert not offenders, (
         "these jobs import yaml without installing PyYAML: " + ", ".join(sorted(offenders))
     )
+
+
+# --- the judged branch must not supply the judgement (Codex review) ------
+
+
+def test_demo_oracle_reads_the_manifest_and_script_from_the_base():
+    """This job detects drift in a generated demonstration branch, so it must
+    not read its expectations out of the branch it is judging.
+
+    A branch that dropped its own entry from demos/manifest.yaml would set
+    is_demo=false and skip the oracle; one that rewrote its `expect` block
+    would be checked against its own rewritten expectation. Pinning the
+    checkout to the base covers the oracle SCRIPT too -- a branch that could
+    rewrite check_demo_oracle.py to return 0 defeats this just as completely.
+    """
+    document = yaml.safe_load((WORKFLOWS[0].parent / "abi-scan.yml").read_text(encoding="utf-8"))
+    steps = document["jobs"]["demo_oracle"]["steps"]
+    checkouts = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert len(checkouts) == 1, "one checkout, so there is no head copy to read by accident"
+    ref = (checkouts[0].get("with") or {}).get("ref")
+    assert ref == "${{ github.event.pull_request.base.sha }}", (
+        "demo_oracle must check out the PR BASE, not the head -- otherwise the "
+        f"branch being judged supplies its own expectations (ref={ref!r})"
+    )
+
+
+def test_demo_oracle_survives_a_base_with_no_manifest():
+    """True during the transition, before the manifest reaches the default
+    branch. A gating job must not crash on that."""
+    document = yaml.safe_load((WORKFLOWS[0].parent / "abi-scan.yml").read_text(encoding="utf-8"))
+    step = next(
+        s for s in document["jobs"]["demo_oracle"]["steps"]
+        if s.get("name") == "Is this a demonstration branch?"
+    )
+    script = step["run"]
+    assert "[ ! -f demos/manifest.yaml ]" in script
+    # The guard must precede the read, or it guards nothing.
+    assert script.index("! -f demos/manifest.yaml") < script.index("yaml.safe_load")
+
+
+def test_demo_oracle_tolerates_an_empty_demonstrations_list():
+    document = yaml.safe_load((WORKFLOWS[0].parent / "abi-scan.yml").read_text(encoding="utf-8"))
+    step = next(
+        s for s in document["jobs"]["demo_oracle"]["steps"]
+        if s.get("name") == "Is this a demonstration branch?"
+    )
+    assert "doc.get('demonstrations') or []" in step["run"]

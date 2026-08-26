@@ -247,7 +247,13 @@ item 6's promotion criteria name.
 The oracle is the `demo_oracle` job in `abi-scan.yml`. It reads the report
 `scan` already uploaded — not a second abicheck invocation, which could drift
 from the gate and assert a result the gate never produced — and is green only
-when the natural result is the declared one. It is gating, because two of the
+when the natural result is the declared one. Both the manifest and the oracle
+script come from the PR **base**, never the head: a job whose purpose is
+detecting drift in a generated branch must not let that branch supply its own
+expectations, and a branch able to rewrite `check_demo_oracle.py` would defeat
+it just as completely as one rewriting its `expect` block. A base declaring no
+demonstrations means "not a demonstration", not a crash — which is the state
+today, before this manifest reaches the default branch. It is gating, because two of the
 five branches are *supposed* to make the gate red, and a red gate there
 carries no information by itself. Verdict is matched exactly; findings are
 required/forbidden rather than exact set equality, so a scanner that grows a
