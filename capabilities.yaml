@@ -559,9 +559,11 @@ capabilities:
     toolchain: multi-producer
     scope: producer_agreement
     target_shape: elf_dso
-  note: One fixture, one build system, two producer compilers. Asserts the affected/unaffected
-    profile split so a finding is attributed to the producers it affects and withheld from
-    the ones it does not.
+  note: 'One fixture, one build system, two producer compilers. Asserts each producer''s own
+    findings (not just its verdict) and the affected/unaffected split, so ABICheck''s output
+    is the subject rather than the runner''s labelling. ABICheck is not handed a profile id
+    here: routing a per-profile cell''s findings through the native project path is the `producer-attribution-through-project-path`
+    expected gap, and needs the Clang profile to become a contract profile first.'
 - id: loader-feature-drift
   status: non_gating_watch
   gating: false

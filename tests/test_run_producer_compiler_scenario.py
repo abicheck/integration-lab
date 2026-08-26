@@ -160,3 +160,61 @@ def test_fixture_sources_are_identical(declared: dict) -> None:
     assert (fixture / "v1" / "api.cc").read_text(encoding="utf-8") == (
         fixture / "v2" / "api.cc"
     ).read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# Codex review: assert ABICheck's own findings, and scope the claim honestly
+# --------------------------------------------------------------------------
+
+
+def test_per_producer_findings_are_asserted_not_just_verdicts():
+    """A verdict alone would pass on the right answer for the wrong reason."""
+    expected = {
+        "verdict": "BREAKING",
+        "findings": [
+            {"kind": "typedef_base_changed", "symbol": "client_word"},
+            {"kind": "func_removed", "symbol": "_Z11lab_consumei"},
+            {"kind": "func_added", "symbol": "_Z11lab_consumex"},
+        ],
+    }
+    exact = {"verdict": "BREAKING", "changes": expected["findings"]}
+    assert scenario.assert_producer_findings(exact, expected, GCC) == []
+
+    right_verdict_wrong_reason = {
+        "verdict": "BREAKING",
+        "changes": [{"kind": "func_removed", "symbol": "something_else"}],
+    }
+    assert scenario.assert_producer_findings(right_verdict_wrong_reason, expected, GCC)
+
+
+def test_clang_side_must_report_nothing():
+    expected = {"verdict": "NO_CHANGE", "findings": []}
+    assert scenario.assert_producer_findings({"verdict": "NO_CHANGE", "changes": []},
+                                             expected, CLANG) == []
+    stray = {"verdict": "NO_CHANGE", "changes": [{"kind": "func_added", "symbol": "x"}]}
+    assert scenario.assert_producer_findings(stray, expected, CLANG)
+
+
+def test_declaration_covers_every_producer_with_findings(declared: dict):
+    per_producer = declared["expect"]["producers"]
+    assert set(per_producer) == set(declared["producers"])
+    for profile_id, expectation in per_producer.items():
+        assert "verdict" in expectation
+        assert "findings" in expectation
+
+
+def test_the_breaking_producer_declares_the_mangled_symbol_pair(declared: dict):
+    """The width change must be asserted through the symbols it produces."""
+    gcc = declared["expect"]["producers"][GCC]
+    symbols = {f["symbol"] for f in gcc["findings"]}
+    assert "_Z11lab_consumei" in symbols
+    assert "_Z11lab_consumex" in symbols
+
+
+def test_project_path_attribution_is_declared_as_a_gap():
+    """This scenario must not be read as proving per-profile routing."""
+    manifest = yaml.safe_load(
+        (REPO_ROOT / "scenarios" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    gaps = {gap["id"] for gap in manifest["expected_gaps"]}
+    assert "producer-attribution-through-project-path" in gaps

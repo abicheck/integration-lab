@@ -29,6 +29,18 @@
 #                                        would be a real cross-backend bug
 #                                        worth catching here.
 expected_gaps:
+  # The producer-compiler scenario proves ABICheck's findings diverge by
+  # producer, but never hands ABICheck a profile id: it compares each
+  # producer's pair standalone. Routing a per-profile cell's findings to the
+  # right profile is the native project path's job, and exercising it needs
+  # the Clang profile to be a contract profile with its own accepted-main
+  # baseline. Declared here rather than implied by the scenario's name.
+  - id: producer-attribution-through-project-path
+    status: expected_gap
+    upstream_issue: abicheck#per-profile-cell-attribution
+    expected_failure:
+      phase: check-project
+      reason: clang_profile_not_a_contract_profile
   - id: same-binary-clang-client-only-break
     status: expected_gap
     upstream_issue: "abicheck#consumer-compile-execution"
@@ -72,6 +84,20 @@ producer_scenarios:
       # Clang sees `long` on both sides: _Z11lab_consumel is unchanged.
       unaffected_profiles:
         - linux-x86_64-clang18-cxx17-cmake-ninja
+      # Per-producer findings, not just verdicts. Asserting the verdict
+      # alone would leave the runner doing most of the work: it would pass
+      # if ABICheck reported the right verdict for the wrong reason. Each
+      # producer must name exactly what its own toolchain emitted.
+      producers:
+        linux-x86_64-gcc14-cxx17-cmake-ninja:
+          verdict: BREAKING
+          findings:
+            - {kind: typedef_base_changed, symbol: client_word}
+            - {kind: func_removed, symbol: _Z11lab_consumei}
+            - {kind: func_added, symbol: _Z11lab_consumex}
+        linux-x86_64-clang18-cxx17-cmake-ninja:
+          verdict: NO_CHANGE
+          findings: []
 
 # Emitted loader/runtime feature drift. One source (fixtures/loader_features/
 # lib.c), linked twice per case with only linker/codegen flags differing, so

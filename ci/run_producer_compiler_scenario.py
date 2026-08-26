@@ -26,8 +26,21 @@ binary break at L0, no headers needed) while under Clang it stays
     unaffected_profiles: [the clang profile]
 
 A run that reports the same verdict for both producers has lost the
-attribution, whichever verdict it is -- so both halves are asserted, not
+distinction, whichever verdict it is -- so both halves are asserted, not
 just the breaking one.
+
+Scope, stated precisely (Codex review, PR #30). ABICheck is never told
+which profile it is looking at here: each producer's pair is dumped and
+compared on its own, and this runner attaches the profile id. So what is
+proved is that ABICheck's own findings diverge by producer -- the GCC side
+must report the exact symbol pair the width change produces, and the Clang
+side must report nothing -- which is why the per-producer FINDINGS are
+asserted from the manifest, not merely the verdicts. What is NOT proved is
+that the native project path routes a per-profile cell's findings to the
+right profile: that needs the Clang profile to be a contract profile with
+its own accepted-main baseline, which it is not yet, and it is recorded as
+the `producer-attribution-through-project-path` expected gap rather than
+implied by this scenario's name.
 """
 from __future__ import annotations
 
@@ -103,13 +116,41 @@ def _resolve_compiler(producer: Dict[str, Any], profile_id: str) -> str:
     return resolved
 
 
+def assert_producer_findings(
+    report: Dict[str, Any], expected: Dict[str, Any], profile_id: str
+) -> List[str]:
+    """Assert one producer's own findings, not just its verdict.
+
+    A verdict string alone leaves this runner doing most of the work: it
+    would still pass if ABICheck reported the right verdict for the wrong
+    reason. The GCC side must actually name the symbol pair the width change
+    produces, and the Clang side must name nothing.
+    """
+    errors = []
+    if report.get("verdict") != expected["verdict"]:
+        errors.append(
+            f"{profile_id}: verdict={report.get('verdict')!r}, "
+            f"expected {expected['verdict']!r}"
+        )
+    observed = {
+        (change.get("kind"), change.get("symbol"))
+        for change in (report.get("changes") or [])
+    }
+    declared = {(f["kind"], f["symbol"]) for f in expected.get("findings", [])}
+    if observed != declared:
+        errors.append(
+            f"{profile_id}: findings={sorted(observed)!r}, expected {sorted(declared)!r}"
+        )
+    return errors
+
+
 def run_producer(
     profile_id: str,
     producer: Dict[str, Any],
     fixture: Path,
     output: Path,
-) -> str:
-    """Build both fixture sides with one producer and return the verdict."""
+) -> Dict[str, Any]:
+    """Build both fixture sides with one producer and return its report."""
     cxx = _resolve_compiler(producer, profile_id)
     standard = producer.get("standard", "c++17")
     snapshots = []
@@ -143,7 +184,7 @@ def run_producer(
     verdict = report.get("verdict")
     if not isinstance(verdict, str) or not verdict:
         raise ScenarioError(f"{profile_id}: report carries no verdict")
-    return verdict
+    return report
 
 
 def run(manifest: Path, scenario_id: str, output: Path) -> List[str]:
@@ -163,16 +204,35 @@ def run(manifest: Path, scenario_id: str, output: Path) -> List[str]:
         )
     output.mkdir(parents=True, exist_ok=True)
 
-    verdicts = {
+    reports = {
         profile_id: run_producer(profile_id, producer, fixture, output)
         for profile_id, producer in sorted(producers.items())
     }
+    verdicts = {pid: report.get("verdict") for pid, report in reports.items()}
     actual = classify_profiles(verdicts)
+
+    expect = scenario.get("expect", {})
+    errors = assert_expectation(actual, expect)
+    # Per-producer findings, where declared -- this is the half that makes
+    # ABICheck's own output the subject rather than this runner's labelling.
+    per_producer = expect.get("producers", {})
+    if set(per_producer) != set(producers):
+        errors.append(
+            f"expect.producers covers {sorted(per_producer)!r}, but the scenario "
+            f"declares producers {sorted(producers)!r}; every producer must "
+            "declare the findings it is expected to produce"
+        )
+    for profile_id, declared in sorted(per_producer.items()):
+        report = reports.get(profile_id)
+        if report is None:
+            continue
+        errors.extend(assert_producer_findings(report, declared, profile_id))
+
     (output / "attribution.json").write_text(
         json.dumps({"verdicts": verdicts, **actual}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return assert_expectation(actual, scenario.get("expect", {}))
+    return errors
 
 
 def main(argv=None) -> int:

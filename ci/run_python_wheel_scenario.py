@@ -92,6 +92,39 @@ def read_wheel_metadata(wheel: Path) -> Dict[str, Any]:
     }
 
 
+def assert_internal_tags_match_filename(wheel: Path, meta: Dict[str, Any]) -> List[str]:
+    """The `.dist-info/WHEEL` Tag lines must agree with the filename.
+
+    Reading the tags and never checking them is not "identity read from both
+    the filename and the packaged metadata", which is what this scenario
+    claims to do: a wheel whose filename says cp311 while its WHEEL metadata
+    says something else would have sailed through (Codex review, PR #30).
+    Installers consult the metadata, so a disagreement means the file that
+    gets installed is not the one the filename advertises.
+    """
+    tags = meta.get("tags") or []
+    if not tags:
+        return [f"{wheel.name}: .dist-info/WHEEL declares no Tag"]
+    name = parse_wheel_tags(wheel)
+    expected_tag = f"{name['python']}-{name['abi']}-{name['platform']}"
+    errors = []
+    for tag in tags:
+        # A compressed tag set (`cp311.cp312-abi3-linux_x86_64`) expands to
+        # several concrete tags; the filename's must be among them.
+        pythons, _, rest = tag.partition("-")
+        abi, _, platform = rest.partition("-")
+        concrete = {
+            f"{one}-{abi}-{platform}" for one in pythons.split(".")
+        }
+        if expected_tag in concrete:
+            return []
+        errors.append(
+            f"{wheel.name}: .dist-info/WHEEL Tag {tag!r} does not cover the "
+            f"filename's own tag {expected_tag!r}"
+        )
+    return errors
+
+
 def assert_wheel_identity(
     old: Path, new: Path, expected: Dict[str, Any]
 ) -> List[str]:
@@ -109,6 +142,7 @@ def assert_wheel_identity(
     # not packaged as one -- the exact packaging failure a standalone .so
     # comparison cannot see.
     for wheel, meta in ((old, read_wheel_metadata(old)), (new, read_wheel_metadata(new))):
+        errors.extend(assert_internal_tags_match_filename(wheel, meta))
         if not meta["extensions"]:
             errors.append(f"{wheel.name}: no extension module packaged inside the wheel")
         if expected.get("require_stubs") and not meta["stubs"]:
@@ -166,8 +200,30 @@ def _findings(report: Dict[str, Any]) -> set:
 BUNDLE_ACCOUNTING_KINDS = ("bundle_library_added", "bundle_library_removed")
 
 
+def operational_errors(report: Dict[str, Any]) -> List[Any]:
+    """Every operational-error channel a release report can carry.
+
+    `run_command` accepts ABICheck's report-producing exit codes and only
+    requires that a report exists, so a partial extraction or comparison can
+    still produce the expected verdict. Without this the wheel scenario
+    would go green on incomplete evidence, unlike every other runner here
+    (Codex review, PR #30). Both levels are read: the release report's own,
+    and each per-library entry's.
+    """
+    found = list(report.get("operational_errors") or [])
+    for library in report.get("libraries") or []:
+        if not isinstance(library, dict):
+            continue
+        for error in library.get("operational_errors") or []:
+            found.append({"library": library.get("library"), "error": error})
+    return found
+
+
 def assert_report(report: Dict[str, Any], expected: Dict[str, Any]) -> List[str]:
     errors = []
+    problems = operational_errors(report)
+    if problems:
+        errors.append(f"report contains {len(problems)} operational error(s): {problems!r}")
     # `verdict` is asserted only where the case declares one. The
     # added-extension case deliberately does not: see
     # BUNDLE_ACCOUNTING_KINDS above.

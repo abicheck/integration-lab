@@ -313,3 +313,79 @@ def test_no_expectation_pins_an_interpreter_version(scenario: dict):
     text = yaml.safe_dump(scenario)
     assert "cpython-311" not in text
     assert "cp311" not in text
+
+
+# --------------------------------------------------------------------------
+# Codex review: operational errors and internal WHEEL tags
+# --------------------------------------------------------------------------
+
+
+def test_operational_errors_fail_the_case(scenario: dict):
+    """run_command accepts report-producing exit codes, so a partial
+    extraction can still yield the expected verdict with incomplete
+    evidence."""
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    report = _api_break_report()
+    report["operational_errors"] = [{"code": "wheel_extract_failed"}]
+    errors = wheel.assert_report(report, case["expect"])
+    assert any("operational error" in e for e in errors)
+    assert any("wheel_extract_failed" in e for e in errors)
+
+
+def test_per_library_operational_errors_are_also_gated(scenario: dict):
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    report = _api_break_report()
+    report["libraries"][0]["operational_errors"] = ["dwarf missing"]
+    errors = wheel.assert_report(report, case["expect"])
+    assert any("operational error" in e for e in errors)
+
+
+def test_operational_errors_collects_both_levels():
+    report = {
+        "operational_errors": ["top"],
+        "libraries": [{"library": "_core.so", "operational_errors": ["nested"]}],
+    }
+    collected = wheel.operational_errors(report)
+    assert len(collected) == 2
+    assert "top" in collected
+
+
+def test_internal_wheel_tag_must_cover_the_filename_tag(tmp_path: Path):
+    """Installers read the metadata; a disagreement means the installed
+    file is not the one the filename advertises."""
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-linux_x86_64\n"},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {})
+    assert any("does not cover the filename's own tag" in e for e in errors)
+
+
+def test_matching_internal_tag_passes(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp311-cp311-linux_x86_64\n"},
+    )
+    assert wheel.assert_wheel_identity(path, path, {}) == []
+
+
+def test_compressed_tag_set_covering_the_filename_passes(tmp_path: Path):
+    """`cp311.cp312-abi3-linux_x86_64` legitimately covers cp311."""
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-abi3-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp311.cp312-abi3-linux_x86_64\n"},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {})
+    assert not any("does not cover" in e for e in errors), errors
+
+
+def test_wheel_without_any_tag_is_rejected(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL": "Wheel-Version: 1.0\n"},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {})
+    assert any("declares no Tag" in e for e in errors)

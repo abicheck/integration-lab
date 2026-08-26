@@ -253,9 +253,13 @@ pybind cross-module internals identity remains an explicit expected gap.
   well-typed fails the profile before comparison rather than degrading to a
   binary-only green result.
 - **The producer-compiler axis is exercised by scenario, not yet by
-  profile.** `depth-scenarios.yml`'s `producer-compiler` job proves a
-  finding is attributed to the producers it affects and withheld from the
-  ones it does not, building one fixture under gcc-14 and clang-18. The
+  profile.** `depth-scenarios.yml`'s `producer-compiler` job builds one
+  fixture under gcc-14 and clang-18 and asserts each producer's own
+  findings: the GCC side must name the exact symbol pair the width change
+  produces, the Clang side must name nothing. It does **not** hand ABICheck
+  a profile id, so it does not prove the native project path routes a
+  per-profile cell's findings to the right profile — that is the
+  `producer-attribution-through-project-path` expected gap. The
   `linux-x86_64-clang18-cxx17-cmake-ninja` profile is declared but is
   `contract: false` and not yet scheduled by `ci/event-policy.yaml`: a
   profile earns scheduling once `profile-baseline.yml` has published
@@ -289,6 +293,7 @@ _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 
 Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expected to fall short, with the upstream issue and the phase they fall short in, rather than being reported as covered:
 
+- **producer-attribution-through-project-path** (`expected_gap`): falls short at `check-project` -- `clang_profile_not_a_contract_profile` (upstream: `abicheck#per-profile-cell-attribution`)
 - **same-binary-clang-client-only-break** (`expected_gap`): falls short at `check-project` -- `consumer_compile_not_applied` (upstream: `abicheck#consumer-compile-execution`)
 - **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)
 - **pybind-cross-module-internals** (`expected_gap`): falls short at `compare` -- `binding_internals_identity_not_collected` (upstream: `abicheck#binding-abi-provider`)
