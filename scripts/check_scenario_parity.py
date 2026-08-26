@@ -53,8 +53,8 @@ def normalized_findings(report: Dict[str, Any]) -> Set[Finding]:
     return findings
 
 
-def normalized_suppressed(report: Dict[str, Any]) -> Set[str]:
-    """Symbols a suppression rule accepted -- also semantic, not provenance.
+def normalized_suppressed(report: Dict[str, Any]) -> Set[Tuple[str, str, str]]:
+    """Findings a suppression rule accepted -- also semantic, not provenance.
 
     ABICheck nests these under `report["suppression"]["suppressed_changes"]`,
     which is where scripts/run_scenario.py's own oracle reads them. A
@@ -69,7 +69,19 @@ def normalized_suppressed(report: Dict[str, Any]) -> Set[str]:
         changes = block.get("suppressed_changes")
     if changes is None:
         changes = report.get("suppressed_changes")
-    return {str(change.get("symbol")) for change in changes or []}
+    # Codex review: this projected to the SYMBOL alone, while unsuppressed
+    # findings are compared on (kind, symbol, severity). Two build systems
+    # suppressing different kinds -- or the same kind at different severity --
+    # on the same symbol therefore produced equal suppression sets, and the
+    # per-run oracle checks only count and symbols, so a real semantic
+    # disagreement about WHAT was suppressed passed both gates. Suppressed and
+    # unsuppressed findings are the same objects on either side of one rule;
+    # comparing them by different identities was the bug.
+    return {
+        (str(change.get("kind")), str(change.get("symbol")), str(change.get("severity")))
+        for change in changes or []
+        if isinstance(change, dict)
+    }
 
 
 def operational_errors(report: Dict[str, Any]) -> List[Any]:
@@ -119,6 +131,36 @@ def load_declared(path: Path) -> Dict[str, Set[str]]:
     if not isinstance(systems, dict) or not systems:
         raise ParityError(f"{path}: no build_systems declared")
     return {name: set(mapping or {}) for name, mapping in systems.items()}
+
+
+#: The build system these fixtures are shaped to MATCH. buildsystems/*/fixtures
+#: exist to reproduce the Bazel path's artifact shape -- the Makefile and the
+#: CMakeLists both suppress a SONAME for exactly that reason -- so a parity run
+#: without Bazel is not comparing against the reference, it is comparing two
+#: imitations with each other.
+#:
+#: Codex review: build-matrix.yaml declares only cmake and make (Bazel's recipe
+#: lives in the semantic manifest, deliberately), so `missing_declared_reports`
+#: could never require Bazel, and dropping or mistyping `bazel=parity/bazel` in
+#: the workflow left cmake+make satisfying both that check and compare()'s
+#: two-system minimum. The job stayed green having lost its reference leg.
+REFERENCE_BUILD_SYSTEM = "bazel"
+
+
+def missing_reference_leg(
+    results: Dict[str, Dict[str, Dict[str, Any]]],
+    *,
+    allow_partial: bool = False,
+) -> List[str]:
+    """The reference build system must be among the supplied results."""
+    if allow_partial or REFERENCE_BUILD_SYSTEM in results:
+        return []
+    return [
+        f"{REFERENCE_BUILD_SYSTEM}: the reference build system supplied no results "
+        f"-- got {sorted(results)}. These fixtures are shaped to match it, so a "
+        "comparison without it compares two imitations with each other "
+        "(pass --allow-partial for a deliberate partial run)"
+    ]
 
 
 def scenario_profiles(path: Path) -> Dict[str, Set[str]]:
@@ -336,6 +378,7 @@ def main(argv=None) -> int:
         missing_declared_reports(
             results, declared, profiles, allow_partial=args.allow_partial
         )
+        + missing_reference_leg(results, allow_partial=args.allow_partial)
         + compare(results)
     )
     receipt = {

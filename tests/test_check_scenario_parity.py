@@ -28,7 +28,14 @@ def _report(verdict="BREAKING", changes=(), suppressed=()) -> dict:
         "suppression": {
             "file_provided": True,
             "suppressed_count": len(suppressed),
-            "suppressed_changes": [{"symbol": s} for s in suppressed],
+            # Full finding identity, as ABICheck emits and as
+            # normalized_suppressed now compares (Codex review): a
+            # symbol-only fixture cannot exercise a kind/severity
+            # disagreement, so it could not have caught that bug.
+            "suppressed_changes": [
+                {"kind": "func_removed", "symbol": s, "severity": "breaking"}
+                for s in suppressed
+            ],
         },
         # Provenance that legitimately differs per build system and must
         # never make parity fail.
@@ -210,7 +217,9 @@ def test_suppressed_symbols_are_read_from_the_real_report_shape():
     dead code wearing the shape of a check.
     """
     report = _report(changes=BREAK, suppressed=("_ZN8scenario13legacy_metricEi",))
-    assert parity.normalized_suppressed(report) == {"_ZN8scenario13legacy_metricEi"}
+    assert parity.normalized_suppressed(report) == {
+        ("func_removed", "_ZN8scenario13legacy_metricEi", "breaking")
+    }
     assert "suppressed_changes" not in report, "the real shape nests this"
 
 
@@ -225,8 +234,11 @@ def test_suppression_parity_is_not_vacuous():
 
 def test_top_level_suppression_shape_still_works_for_fixtures():
     """A hand-written fixture using the flat shape is still understood."""
-    report = {"verdict": "BREAKING", "suppressed_changes": [{"symbol": "_Z3foov"}]}
-    assert parity.normalized_suppressed(report) == {"_Z3foov"}
+    report = {"verdict": "BREAKING", "suppressed_changes": [
+        {"kind": "func_removed", "symbol": "_Z3foov", "severity": "breaking"}]}
+    assert parity.normalized_suppressed(report) == {
+        ("func_removed", "_Z3foov", "breaking")
+    }
 
 
 def test_report_with_operational_errors_is_rejected():
@@ -430,3 +442,82 @@ def test_empty_build_matrix_is_an_error(tmp_path: Path):
     path.write_text("build_systems: {}\n", encoding="utf-8")
     with pytest.raises(parity.ParityError, match="no build_systems"):
         parity.load_declared(path)
+
+
+# --- suppressed findings keep full identity (Codex review) --------------
+
+
+def _suppressing(kind: str, symbol: str, severity: str) -> dict:
+    return {"suppression": {"suppressed_changes": [
+        {"kind": kind, "symbol": symbol, "severity": severity}]}}
+
+
+def test_same_symbol_different_suppressed_kind_is_a_disagreement():
+    """The bug: projecting to the symbol alone made these equal, while
+    unsuppressed findings are compared on (kind, symbol, severity)."""
+    left = parity.normalized_suppressed(_suppressing("func_removed", "_Z1fv", "breaking"))
+    right = parity.normalized_suppressed(_suppressing("param_type_changed", "_Z1fv", "breaking"))
+    assert left != right
+
+
+def test_same_symbol_different_suppressed_severity_is_a_disagreement():
+    left = parity.normalized_suppressed(_suppressing("func_removed", "_Z1fv", "breaking"))
+    right = parity.normalized_suppressed(_suppressing("func_removed", "_Z1fv", "risk"))
+    assert left != right
+
+
+def test_identical_suppressions_still_agree():
+    """A tighter identity must not make every pair disagree."""
+    left = parity.normalized_suppressed(_suppressing("func_removed", "_Z1fv", "breaking"))
+    right = parity.normalized_suppressed(_suppressing("func_removed", "_Z1fv", "breaking"))
+    assert left == right and left
+
+
+def test_suppressed_identity_matches_the_unsuppressed_one():
+    """Both sides of one suppression rule are the same objects; comparing
+    them by different identities was the defect."""
+    report = {
+        "changes": [{"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"}],
+        "suppression": {"suppressed_changes": [
+            {"kind": "func_removed", "symbol": "_Z1fv", "severity": "breaking"}]},
+    }
+    assert parity.normalized_findings(report) == parity.normalized_suppressed(report)
+
+
+def test_non_dict_suppressed_entries_are_ignored():
+    report = {"suppression": {"suppressed_changes": ["junk", None]}}
+    assert parity.normalized_suppressed(report) == set()
+
+
+# --- the Bazel reference leg (Codex review) -----------------------------
+
+
+def test_dropping_the_reference_leg_is_caught():
+    """build-matrix.yaml declares only cmake and make, so the declared-systems
+    check could never require Bazel -- yet the fixtures are shaped to match
+    it."""
+    problems = parity.missing_reference_leg({"cmake": {}, "make": {}})
+    assert problems and "reference build system" in problems[0]
+
+
+def test_the_reference_leg_present_is_accepted():
+    assert parity.missing_reference_leg({"bazel": {}, "cmake": {}, "make": {}}) == []
+
+
+def test_allow_partial_exempts_the_reference_leg():
+    assert parity.missing_reference_leg({"cmake": {}}, allow_partial=True) == []
+
+
+def test_the_workflow_supplies_the_reference_leg():
+    """The gate is only meaningful if CI actually passes Bazel."""
+    import yaml as _yaml
+
+    root = Path(__file__).resolve().parent.parent
+    document = _yaml.safe_load(
+        (root / ".github/workflows/integration-shadow.yml").read_text(encoding="utf-8")
+    )
+    step = next(
+        s for s in document["jobs"]["scenario_parity"]["steps"]
+        if isinstance(s.get("run"), str) and "check_scenario_parity.py" in s["run"]
+    )
+    assert f"{parity.REFERENCE_BUILD_SYSTEM}=" in step["run"]
