@@ -302,6 +302,21 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         demos = load_manifest(args.manifest)
+        if args.only:
+            # Codex review: --check used the full list while --write and
+            # --push filtered, so `--check --only <id>` failed on drift in a
+            # branch the operator had not asked about -- contradicting both
+            # the flag's help text and its behaviour for the other two modes.
+            # Filtering once here makes every mode honour it, and an unknown
+            # id is now an error rather than a silent no-op that reports
+            # success for having checked nothing.
+            selected = [demo for demo in demos if demo["id"] == args.only]
+            if not selected:
+                raise DemoError(
+                    f"no demonstration {args.only!r}; known ids: "
+                    + ", ".join(sorted(demo["id"] for demo in demos))
+                )
+            demos = selected
         if args.body:
             match = next((d for d in demos if d["id"] == args.body), None)
             if match is None:
@@ -316,10 +331,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(f"gen_demo_prs: OK -- {len(demos)} demonstration(s) current against {args.base_ref}")
         if args.write:
-            for line in write(demos, args.base_ref, args.only):
+            for line in write(demos, args.base_ref, None):
                 print(f"wrote {line}")
         if args.push:
-            for branch in push(demos, args.only):
+            for branch in push(demos, None):
                 print(f"pushed {branch}")
     except DemoError as exc:
         print(f"gen_demo_prs: {exc}", file=sys.stderr)

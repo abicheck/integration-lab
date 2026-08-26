@@ -496,3 +496,62 @@ def test_write_restores_a_named_branch(tmp_path):
         gen.REPO_ROOT = original_root
 
     assert run("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == "my-work"
+
+
+# --- --only applies to every mode (Codex review) ------------------------
+
+
+def _two_demo_repo(tmp_path):
+    """A repo where one demonstration is clean and another has drifted."""
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        # clean: base + patch, exactly
+        gen.git("checkout", "-q", "-B", "test/clean", "origin/main")
+        gen.git("apply", str(patch))
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/clean", "refs/heads/test/clean")
+        # drifted: base + patch + something else
+        gen.git("checkout", "-q", "-B", "test/drifted", "origin/main")
+        gen.git("apply", str(patch))
+        (repo / "EXTRA.txt").write_text("extra\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "t")
+        gen.git("update-ref", "refs/remotes/origin/test/drifted", "refs/heads/test/drifted")
+        gen.git("checkout", "-q", "main")
+    clean = {"id": "clean", "branch": "test/clean", "title": "t",
+             "patch": str(patch), "expect": {}}
+    drifted = {"id": "drifted", "branch": "test/drifted", "title": "t",
+               "patch": str(patch), "expect": {}}
+    return repo, [clean, drifted]
+
+
+def test_check_on_one_demo_ignores_another_demos_drift(tmp_path):
+    """`--check --only clean` must not fail because `drifted` drifted."""
+    repo, demos = _two_demo_repo(tmp_path)
+    with _rooted_at(repo):
+        assert gen.check([d for d in demos if d["id"] == "clean"], "origin/main") == []
+        # ...and the unfiltered call still sees the drift, so the filter is
+        # what changed the answer rather than the check having gone blind.
+        assert gen.check(demos, "origin/main")
+
+
+def test_check_on_the_drifted_demo_still_reports_it(tmp_path):
+    repo, demos = _two_demo_repo(tmp_path)
+    with _rooted_at(repo):
+        problems = gen.check([d for d in demos if d["id"] == "drifted"], "origin/main")
+    assert any("drifted" in p for p in problems)
+
+
+def test_only_with_an_unknown_id_is_an_error(tmp_path, capsys):
+    """Previously a silent no-op that reported success for checking nothing."""
+    code = gen.main(["--check", "--only", "no-such-demo", "--manifest", str(MANIFEST)])
+    assert code == 2
+    assert "no demonstration 'no-such-demo'" in capsys.readouterr().err
+
+
+def test_only_names_the_known_ids_when_it_fails(tmp_path, capsys):
+    gen.main(["--check", "--only", "typo", "--manifest", str(MANIFEST)])
+    err = capsys.readouterr().err
+    for demo in gen.load_manifest(MANIFEST):
+        assert demo["id"] in err
