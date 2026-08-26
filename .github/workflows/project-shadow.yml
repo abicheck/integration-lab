@@ -176,6 +176,7 @@ jobs:
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
             --expected-generation 1 \
+            --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
             --walk "$WALK" \
@@ -287,6 +288,7 @@ jobs:
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
             --expected-generation 1 \
+            --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
             --walk "$WALK" \

@@ -100,3 +100,41 @@ def test_the_guard_would_actually_catch_the_original_bug():
 ])
 def test_the_guard_does_not_fire_on_values_a_contributor_cannot_set(safe: str):
     assert not ATTACKER_CONTROLLED.search(safe)
+
+
+# --- identity, not just name (Codex review) -----------------------------
+
+
+def test_demo_oracle_requires_the_head_repo_to_be_this_repository():
+    """A branch NAME does not identify a demonstration.
+
+    A fork PR whose contributor happens to name their branch
+    `test/compatible-addition` would match the manifest, and this gating
+    oracle would then hold their unrelated change to that demo's declared
+    verdict. The demonstration branches live in this repository, so the head
+    repo has to match too.
+    """
+    document = yaml.safe_load((WORKFLOWS[0].parent / "abi-scan.yml").read_text(encoding="utf-8"))
+    step = next(
+        s for s in document["jobs"]["demo_oracle"]["steps"]
+        if s.get("name") == "Is this a demonstration branch?"
+    )
+    assert step["env"]["HEAD_REPO"] == "${{ github.event.pull_request.head.repo.full_name }}"
+    script = step["run"]
+    assert "$HEAD_REPO" in script and "github.repository" in script
+    # The repo check must come before the manifest lookup, so a fork PR never
+    # even reads the demonstration set.
+    assert script.index("HEAD_REPO") < script.index("demos/manifest.yaml")
+
+
+def test_a_cancelled_select_does_not_produce_a_red_equivalence_gate():
+    """`always()` alone ran cross_build_equivalence when `select` was
+    CANCELLED -- which is what happens to every superseded run -- and it then
+    failed with "select job produced no matrix". A routine supersession was
+    indistinguishable from a real cross-build disagreement.
+    """
+    document = yaml.safe_load(
+        (WORKFLOWS[0].parent / "integration-shadow.yml").read_text(encoding="utf-8")
+    )
+    condition = document["jobs"]["cross_build_equivalence"]["if"]
+    assert "needs.select.result == 'success'" in condition, condition

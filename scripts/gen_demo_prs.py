@@ -227,7 +227,18 @@ def check(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
 def write(demos: list[dict[str, Any]], base_ref: str, only: str | None) -> list[str]:
     """Recreate each demonstration branch locally as base + its one patch."""
     written = []
-    original = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    # Codex review: `rev-parse --abbrev-ref HEAD` returns the literal string
+    # "HEAD" on a detached checkout, so restoring it with `git checkout HEAD`
+    # is a no-op and leaves the caller sitting on the last generated branch --
+    # a scoped regeneration silently moving someone's checkout, and most
+    # likely exactly where it happens: automation and temporary worktrees.
+    # Record what HEAD actually was: a branch name if symbolic, otherwise the
+    # commit to detach back onto.
+    original = git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip()
+    if not original:
+        original = git("rev-parse", "HEAD").strip()
+    if not original:
+        raise DemoError("cannot determine the current HEAD to restore afterwards")
     if git("status", "--porcelain").strip():
         raise DemoError(
             "the working tree is dirty; regenerating demonstration branches "
@@ -244,7 +255,14 @@ def write(demos: list[dict[str, Any]], base_ref: str, only: str | None) -> list[
             git("commit", "-q", "-m", demo["title"])
             written.append(f"{branch} = {base_ref} + {demo['patch']}")
     finally:
-        git("checkout", "-q", original, check=False)
+        # `--detach` is harmless for a branch name and is what makes the
+        # detached case actually restore, rather than creating a checkout of
+        # a branch that was never checked out.
+        if git("rev-parse", "--verify", "--quiet", f"refs/heads/{original}",
+               check=False).strip():
+            git("checkout", "-q", original, check=False)
+        else:
+            git("checkout", "-q", "--detach", original, check=False)
     return written
 
 

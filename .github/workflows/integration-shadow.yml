@@ -390,7 +390,16 @@ jobs:
   # intentionally aligned and stable."
   cross_build_equivalence:
     needs: [select, build]
-    if: always()
+    # `always()` alone ran this job even when `select` was CANCELLED -- which
+    # is what happens to every superseded run when a new commit is pushed.
+    # With no matrix to read, the job then failed with "select job produced no
+    # matrix", and a routine supersession was indistinguishable from a real
+    # cross-build disagreement. That misread three times in one day.
+    #
+    # `select` failing is still reported -- by `select` itself going red. It
+    # does not need a second red job repeating it, and `build` already guards
+    # on the same thing (`needs.select.outputs.matrix != ''`).
+    if: always() && needs.select.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1

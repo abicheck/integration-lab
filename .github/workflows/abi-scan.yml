@@ -2129,12 +2129,25 @@ jobs:
       # Python string literal is no protection: the same substitution can
       # close that literal too. It goes through the environment instead, where
       # it is data at every layer.
+      # Codex review: the branch NAME alone does not identify a demonstration.
+      # A fork PR whose contributor happens to call their branch
+      # `test/compatible-addition` would match, and this gating oracle would
+      # then hold their unrelated change to that demo's declared verdict and
+      # fail an otherwise valid PR. The demonstration branches live in THIS
+      # repository, so the head repo has to match too -- and it is checked
+      # first, so a fork PR never even reads the manifest.
       - name: Is this a demonstration branch?
         id: demo
         env:
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            echo "head repo $HEAD_REPO is not ${{ github.repository }} -- not a demonstration branch"
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if python3 -c "
           import os, sys, yaml
           doc = yaml.safe_load(open('demos/manifest.yaml'))

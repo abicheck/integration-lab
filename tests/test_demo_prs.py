@@ -326,3 +326,86 @@ def test_check_distinguishes_behind_from_divergent():
     problems = gen.check(gen.load_manifest(MANIFEST), "origin/main")
     assert any("commit(s) behind" in p for p in problems)
     assert any("is not origin/main +" in p for p in problems)
+
+
+# --- detached HEAD (Codex review) ---------------------------------------
+
+
+def test_write_restores_a_detached_head_to_its_original_commit(tmp_path):
+    """`rev-parse --abbrev-ref HEAD` says "HEAD" when detached, so restoring
+    with `git checkout HEAD` was a no-op that left the caller on the last
+    generated branch. Exercised against a real throwaway repository."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run(*args, **kw):
+        return subprocess.run(["git", *args], cwd=repo, text=True,
+                              capture_output=True, check=False, **kw)
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    (repo / "f.txt").write_text("one\n")
+    run("add", "-A")
+    run("commit", "-q", "-m", "one")
+    detached_at = run("rev-parse", "HEAD").stdout.strip()
+    run("checkout", "-q", "--detach", detached_at)
+    assert run("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == ""
+
+    patch = tmp_path / "p.patch"
+    patch.write_text(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+        "@@ -1 +1 @@\n-one\n+two\n"
+    )
+    demo = {"id": "d", "branch": "test/d", "title": "t",
+            "patch": str(patch), "expect": {}}
+
+    original_root = gen.REPO_ROOT
+    gen.REPO_ROOT = repo
+    try:
+        gen.write([demo], "main", None)
+    finally:
+        gen.REPO_ROOT = original_root
+
+    assert run("rev-parse", "--verify", "test/d").returncode == 0, "branch was created"
+    assert run("rev-parse", "HEAD").stdout.strip() == detached_at
+    assert run("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == "", \
+        "HEAD must still be detached, not sitting on the generated branch"
+
+
+def test_write_restores_a_named_branch(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run(*args):
+        return subprocess.run(["git", *args], cwd=repo, text=True,
+                              capture_output=True, check=False)
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    (repo / "f.txt").write_text("one\n")
+    run("add", "-A")
+    run("commit", "-q", "-m", "one")
+    run("checkout", "-q", "-b", "my-work")
+
+    patch = tmp_path / "p.patch"
+    patch.write_text(
+        "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+        "@@ -1 +1 @@\n-one\n+two\n"
+    )
+    demo = {"id": "d", "branch": "test/d", "title": "t",
+            "patch": str(patch), "expect": {}}
+
+    original_root = gen.REPO_ROOT
+    gen.REPO_ROOT = repo
+    try:
+        gen.write([demo], "main", None)
+    finally:
+        gen.REPO_ROOT = original_root
+
+    assert run("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == "my-work"
