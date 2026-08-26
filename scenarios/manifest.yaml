@@ -73,6 +73,283 @@ producer_scenarios:
       unaffected_profiles:
         - linux-x86_64-clang18-cxx17-cmake-ninja
 
+# Emitted loader/runtime feature drift. One source (fixtures/loader_features/
+# lib.c), linked twice per case with only linker/codegen flags differing, so
+# a finding can only come from the feature the toolchain emitted.
+#
+# Deliberately NOT modelled as a minimum binutils version: binutils is a
+# producer tool, and which binutils built an artifact is not what a loader
+# sees. Each case names the ELF feature it emits, and every side declares
+# what readelf must show before any comparison runs -- so a flag the
+# toolchain silently ignored fails the scenario instead of producing two
+# identical binaries, no findings, and a green result that tested nothing.
+loader_scenarios:
+- id: dt-relr-introduced
+  description: Relative relocations folded into DT_RELR. A loader that does not understand DT_RELR cannot
+    apply them at all.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-z,nopack-relative-relocs
+    emits:
+      absent:
+      - (RELR)
+  new:
+    link:
+    - -Wl,-z,pack-relative-relocs
+    emits:
+      present:
+      - (RELR)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: dt_relr_introduced
+      symbol: DT_RELR
+      severity: risk
+- id: dt-relr-removed
+  description: 'DT_RELR dropped again: readable by strictly more loaders, so a compatible direction --
+    asserted so the pair cannot both read as risk.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-z,pack-relative-relocs
+    emits:
+      present:
+      - (RELR)
+  new:
+    link:
+    - -Wl,-z,nopack-relative-relocs
+    emits:
+      absent:
+      - (RELR)
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: dt_relr_removed
+      symbol: DT_RELR
+      severity: compatible
+- id: runpath-to-rpath
+  description: 'DT_RUNPATH downgraded to DT_RPATH: RPATH is searched BEFORE LD_LIBRARY_PATH and is not
+    overridable, so a consumer that relied on overriding the search path silently stops being able to.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--enable-new-dtags
+    emits:
+      present:
+      - (RUNPATH)
+      absent:
+      - (RPATH)
+  new:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--disable-new-dtags
+    emits:
+      present:
+      - (RPATH)
+      absent:
+      - (RUNPATH)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: rpath_type_changed
+      symbol: DT_RPATH
+      severity: risk
+- id: rpath-to-runpath
+  description: The reverse direction, which changes lookup order for every dependency and is therefore
+    also a runtime risk, not a free upgrade.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--disable-new-dtags
+    emits:
+      present:
+      - (RPATH)
+  new:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--enable-new-dtags
+    emits:
+      present:
+      - (RUNPATH)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: rpath_type_changed
+      symbol: DT_RUNPATH
+      severity: risk
+- id: sysv-hash-removed
+  description: The SysV .hash table dropped, leaving only .gnu.hash. Loaders and tools that read only
+    the SysV table can no longer resolve symbols.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--hash-style=both
+    emits:
+      present:
+      - (HASH)
+      - (GNU_HASH)
+  new:
+    link:
+    - -Wl,--hash-style=gnu
+    emits:
+      present:
+      - (GNU_HASH)
+      absent:
+      - '(HASH)  '
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: hash_style_removed
+      symbol: .hash
+      severity: risk
+- id: soname-major-change
+  description: 'SONAME major bump with no actual ABI change: every existing consumer must relink, and
+    the bump is not justified by the surface.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-soname,liblab.so.1
+    emits:
+      present:
+      - liblab.so.1
+  new:
+    link:
+    - -Wl,-soname,liblab.so.2
+    emits:
+      present:
+      - liblab.so.2
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: soname_changed
+      symbol: DT_SONAME
+      severity: risk
+    - kind: soname_bump_unnecessary
+      symbol: DT_SONAME
+      severity: compatible
+- id: symbol-version-node-added
+  description: 'A new version node appears alongside the existing one: additive, so already-linked consumers
+    keep resolving against the old node.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--version-script={fixture}/one-node.map
+    emits:
+      present:
+      - 'Name: LAB_1.0'
+      absent:
+      - 'Name: LAB_2.0'
+  new:
+    link:
+    - -Wl,--version-script={fixture}/two-nodes.map
+    emits:
+      present:
+      - 'Name: LAB_1.0'
+      - 'Name: LAB_2.0'
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: symbol_version_defined_added
+      symbol: LAB_2.0
+      severity: compatible
+- id: symbol-version-node-removed
+  description: 'A version node disappears: every consumer that bound to it fails to resolve at load time.
+    The breaking direction of the pair above.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--version-script={fixture}/two-nodes.map
+    emits:
+      present:
+      - 'Name: LAB_2.0'
+  new:
+    link:
+    - -Wl,--version-script={fixture}/one-node.map
+    emits:
+      absent:
+      - 'Name: LAB_2.0'
+  expect:
+    verdict: BREAKING
+    findings:
+    - kind: symbol_version_node_removed
+      symbol: LAB_2.0
+      severity: breaking
+- id: cet-protection-weakened
+  description: IBT/SHSTK dropped from .note.gnu.property. A process that enforces CET loses that enforcement
+    as soon as this object is mapped in.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -fcf-protection=full
+    - -Wl,-z,ibt
+    - -Wl,-z,shstk
+    emits:
+      present:
+      - IBT
+      - SHSTK
+  new:
+    link:
+    - -fcf-protection=none
+    emits:
+      absent:
+      - 'x86 feature: IBT'
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: cet_protection_weakened
+      symbol: .note.gnu.property
+      severity: risk
+- id: cet-protection-improved
+  description: The strengthening direction, asserted so a scanner that reported the same severity in both
+    directions would fail here.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -fcf-protection=none
+    emits:
+      absent:
+      - 'x86 feature: IBT'
+  new:
+    link:
+    - -fcf-protection=full
+    - -Wl,-z,ibt
+    - -Wl,-z,shstk
+    emits:
+      present:
+      - IBT
+      - SHSTK
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: cet_protection_improved
+      symbol: .note.gnu.property
+      severity: compatible
+- id: static-tls-introduced
+  description: 'DF_STATIC_TLS appears: the object now demands a static TLS block, so it can fail to dlopen
+    once the process''s surplus static TLS is spent.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -ftls-model=global-dynamic
+    emits:
+      absent:
+      - STATIC_TLS
+  new:
+    link:
+    - -ftls-model=initial-exec
+    emits:
+      present:
+      - STATIC_TLS
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: static_tls_introduced
+      symbol: DF_STATIC_TLS
+      severity: risk
+
 depth_scenarios:
   - id: l2-green-l4-macro-break
     runner: ci/run_depth_scenario.py

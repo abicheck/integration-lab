@@ -62,6 +62,22 @@ jobs:
           path: producer-compiler-results/
           if-no-files-found: error
 
+  loader-features:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove emitted loader/runtime feature drift is detected
+        run: python3 ci/run_loader_feature_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: loader-feature-drift
+          path: loader-feature-results/
+          if-no-files-found: error
+
   runtime-floor:
     runs-on: ubuntu-24.04
     steps:
