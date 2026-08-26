@@ -309,3 +309,97 @@ def test_extract_printed_labels_no_false_positive_for_unprinted_label():
     printed = _extract_printed_labels(output)
     assert printed == {"//:math_shared"}
     assert "//:math" not in printed
+
+
+# --------------------------------------------------------------------------
+# Bazel toolchain parity: every invocation must share the build's configuration
+# --------------------------------------------------------------------------
+
+
+def _bazel_backend(tmp_path):
+    from bazel import BazelBackend
+
+    return BazelBackend(
+        {
+            "id": "linux-x86_64-gcc14-cxx17-bazel",
+            "root": ".",
+            "targets": {"math": "//:math", "strings": "//strings_lib:strings"},
+            "compiler": {"cc": "gcc-14", "cxx": "g++-14"},
+        },
+        tmp_path,
+    )
+
+
+def test_bazel_command_carries_the_toolchain(tmp_path):
+    backend = _bazel_backend(tmp_path)
+    argv = backend._bazel_command("cquery", "--output=files", "//:math")
+    assert "--repo_env=CC=gcc-14" in argv
+    assert "--repo_env=CXX=g++-14" in argv
+    # Subcommand stays immediately after the executable; flags follow it.
+    assert argv[1] == "cquery"
+    assert argv[-2:] == ["--output=files", "//:math"]
+
+
+def _captured_argvs(backend, monkeypatch):
+    calls = []
+
+    class _Proc:
+        returncode = 0
+        stdout = ""
+
+    def _fake_run(argv, **kwargs):
+        calls.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+    return calls
+
+
+def test_cquery_evidence_runs_under_the_build_toolchain(tmp_path, monkeypatch):
+    """A cquery without --repo_env analyses a different configured graph."""
+    backend = _bazel_backend(tmp_path)
+    calls = _captured_argvs(backend, monkeypatch)
+    result = BuildResult(
+        profile_id="bazel", backend="bazel", success=True, started_at=0, ended_at=1
+    )
+    evidence = backend.collect_evidence(result)
+    assert calls, "cquery was never invoked"
+    for argv in calls:
+        assert "--repo_env=CC=gcc-14" in argv, argv
+        assert "--repo_env=CXX=g++-14" in argv, argv
+    # The receipt records the configuration it was collected under.
+    assert evidence["toolchain_args"] == ["--repo_env=CC=gcc-14", "--repo_env=CXX=g++-14"]
+
+
+def test_output_path_resolution_runs_under_the_build_toolchain(tmp_path, monkeypatch):
+    backend = _bazel_backend(tmp_path)
+    calls = _captured_argvs(backend, monkeypatch)
+    with pytest.raises(BackendError):
+        # No real bazel here, so resolution fails -- the argv is the subject.
+        backend._resolve_output_path("//:math")
+    assert calls and "--repo_env=CC=gcc-14" in calls[0]
+
+
+def test_no_bazel_argv_is_assembled_outside_the_helper():
+    """Guard against a new call site reintroducing the configuration split.
+
+    `bazel build` and `bazel cquery` disagreeing on CC/CXX is invisible in a
+    green run -- the binary is usually still the expected one -- so only a
+    structural check catches it.
+    """
+    import inspect
+
+    import bazel
+
+    source = inspect.getsource(bazel.BazelBackend)
+    # _bazel_executable() may only be referenced by the helper itself,
+    # verify_environment(), and describe() (neither of which configures a
+    # target graph).
+    for line in source.splitlines():
+        if "_bazel_executable()" not in line:
+            continue
+        assert (
+            "return shutil.which" in line
+            or "exe = self._bazel_executable()" in line
+            or "return [self._bazel_executable(), subcommand" in line
+        ), f"raw bazel argv assembled outside _bazel_command(): {line.strip()}"
