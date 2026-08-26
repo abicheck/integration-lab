@@ -350,6 +350,58 @@ loader_scenarios:
       symbol: DF_STATIC_TLS
       severity: risk
 
+# Wheel-level comparison: old.whl against new.whl, not a standalone .so.
+# python_scenarios (below) recompiles a bare _core.so and compares adjacent
+# .pyi files -- a sound unit-level acceptance case that stays as one, but it
+# never exercises the packaging layer, so it would not notice a missing
+# extension, an unpackaged stub, an added/removed extension, or wheel tags
+# that stopped matching the interpreter. This does.
+wheel_scenarios:
+- id: wheel-package-level
+  runner: ci/run_python_wheel_scenario.py
+  status: supported
+  package: bindings/python
+  stubs: bindings/python/scenarios/keyword-renamed
+  old_stub: v1.pyi
+  new_stub: v2.pyi
+  identity:
+    require_stubs: true
+    packaged_under:
+    - abicheck_lab_py/
+  cases:
+  - id: stub-api-break-inside-the-package
+    old: old
+    new: new
+    expect:
+      verdict: API_BREAK
+      findings:
+      - kind: python_api_parameter_renamed
+        symbol: python:_core.transform
+      - kind: python_api_default_removed
+        symbol: python:_core.transform
+      unmatched_old: []
+      unmatched_new: []
+      bundle_verdict: NO_CHANGE
+      bundle_findings: []
+  - id: extension-added-to-the-package
+    old: old
+    new: old_plus_extension
+    added_module: _extra
+    expect:
+      verdict: COMPATIBLE
+      findings: []
+      changed_libraries: []
+      unmatched_old: []
+      # Declared by module stem, not filename: the ABI tag in an extension
+      # filename is whatever interpreter the runner has, and a filename-level
+      # expectation would pin this scenario to one Python version.
+      unmatched_new:
+      - _extra
+      bundle_verdict: COMPATIBLE
+      bundle_findings:
+      - kind: bundle_library_added
+        symbol: _extra
+
 depth_scenarios:
   - id: l2-green-l4-macro-break
     runner: ci/run_depth_scenario.py

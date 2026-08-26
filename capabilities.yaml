@@ -603,3 +603,18 @@ capabilities:
     target_shape: python_extension_module
   note: A pybind11 keyword rename visible only in the .pyi stub. Builds a real scikit-build-core
     wheel; wheel-level comparison itself is still a declared follow-up (docs/roadmap.md).
+- id: python-wheel-package-level
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: python-wheel
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: pinned-default
+    scope: python_extension
+    target_shape: python_extension_module
+  note: 'Compares the actual built wheels (old.whl vs new.whl): extension and .pyi discovery
+    inside the package, Python API findings, bundled native library discovery, package-level
+    added/removed extensions, and wheel tags/CPython ABI metadata. Post-repair (auditwheel/delocate/delvewheel)
+    behaviour is a declared follow-up, not covered here.'

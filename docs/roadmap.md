@@ -132,16 +132,18 @@ workflow at a time.
 These are named from the README rather than left as prose, so what is not
 yet done is as legible as what is.
 
-**Item 10 — compare the actual wheel.** `depth-scenarios.yml`'s
-`python-extension` job builds a real scikit-build-core wheel, then compares
-a standalone `_core` extension and adjacent `.pyi` stubs. That is a sound
-unit-level acceptance case and the README describes it as one; it is not
-wheel integration. The scenario should compare `old.whl` against `new.whl`
-and validate extension discovery inside the package, `.pyi` discovery
-inside the package, Python API findings, bundled native library discovery,
-package-level added/removed extensions, wheel tags and CPython ABI
-metadata, and post-repair behaviour where auditwheel/delocate/delvewheel
-applies. The standalone `.so` case stays as the fast unit-level check.
+**Item 10 — compare the actual wheel: done, except post-repair.**
+`depth-scenarios.yml`'s `python-wheel` job now builds both wheels and runs
+`abicheck compare old.whl new.whl`, asserting extension discovery inside
+the package, `.pyi` discovery inside the package, the Python API findings,
+bundled native library discovery, package-level added/removed extensions,
+and wheel tags/CPython ABI metadata (including that an extension wheel is
+not `Root-Is-Purelib`). Expectations are declared by module stem so the
+scenario is not pinned to one interpreter. The standalone `.so` scenario
+stays as the fast unit-level acceptance case and is described as one.
+What remains: post-repair wheel behaviour where auditwheel/delocate/
+delvewheel applies — the repaired wheel's vendored library directory,
+its rewritten RPATHs, and the dependency closure those imply.
 
 **Item 12 — build-system scenario parity.** The repository builds through
 Bazel, CMake and Make, but the scenario oracle runs its full suite only

@@ -262,13 +262,17 @@ pybind cross-module internals identity remains an explicit expected gap.
   `abi/profiles/<id>/` for it, and until then adding it to an event set
   would make the fan-in gate red for a missing baseline rather than a real
   finding.
-- **The Python scenario compares extension modules, not wheels.** It builds
-  a real scikit-build-core wheel, then compares a standalone `_core`
-  extension and adjacent `.pyi` stubs rather than `old.whl` against
-  `new.whl`. It is a sound unit-level acceptance case and is described as
-  one; wheel-level integration (extension and stub discovery inside the
-  package, bundled native libraries, wheel tags and CPython ABI metadata,
-  post-`auditwheel` behaviour) is [roadmap item 10](docs/roadmap.md).
+- **Wheel comparison covers everything except post-repair.**
+  `depth-scenarios.yml`'s `python-wheel` job builds both wheels and runs
+  `abicheck compare old.whl new.whl`, asserting extension and `.pyi`
+  discovery inside the package, the Python API findings, bundled native
+  library discovery, package-level added/removed extensions, and wheel
+  tags/CPython ABI metadata. The separate `python-extension` job compares a
+  standalone `_core` extension against adjacent stubs — a fast unit-level
+  acceptance case, not wheel integration, and described as such.
+  Post-repair behaviour, where auditwheel/delocate/delvewheel rewrites
+  RPATHs and vendors libraries, is still
+  [roadmap item 10](docs/roadmap.md#declared-follow-ups).
 
 See [docs/roadmap.md](docs/roadmap.md) for what closes these gaps, and in
 what order.

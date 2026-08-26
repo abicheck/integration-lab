@@ -1,0 +1,235 @@
+"""Oracle tests for the wheel-level (old.whl vs new.whl) scenario."""
+import io
+import zipfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+import run_python_wheel_scenario as wheel
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+EXT = "abicheck_lab_py/_core.cpython-311-x86_64-linux-gnu.so"
+
+
+@pytest.fixture(scope="module")
+def scenario() -> dict:
+    manifest = yaml.safe_load(
+        (REPO_ROOT / "scenarios" / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    return next(
+        item for item in manifest["wheel_scenarios"] if item["id"] == "wheel-package-level"
+    )
+
+
+def _case(scenario: dict, case_id: str) -> dict:
+    return next(case for case in scenario["cases"] if case["id"] == case_id)
+
+
+# --------------------------------------------------------------------------
+# Wheel identity
+# --------------------------------------------------------------------------
+
+
+def test_wheel_tags_are_parsed():
+    tags = wheel.parse_wheel_tags(
+        Path("abicheck_lab_py-0.1.0-cp311-cp311-linux_x86_64.whl")
+    )
+    assert tags["python"] == "cp311"
+    assert tags["abi"] == "cp311"
+    assert tags["platform"] == "linux_x86_64"
+
+
+def test_non_wheel_filename_is_rejected():
+    with pytest.raises(wheel.ScenarioError, match="PEP 427"):
+        wheel.parse_wheel_tags(Path("not-a-wheel.tar.gz"))
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("abicheck_lab_py/_extra.cpython-311-x86_64-linux-gnu.so", "_extra"),
+        ("_core.cpython-312-x86_64-linux-gnu.so", "_core"),
+        ("pkg/_core.cp39-win_amd64.pyd", "_core"),
+        ("", ""),
+    ],
+)
+def test_module_stem_is_interpreter_agnostic(name, expected):
+    """A filename expectation would pin the scenario to one Python version."""
+    assert wheel.module_stem(name) == expected
+
+
+def _make_wheel(tmp_path: Path, name: str, files: dict) -> Path:
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w") as archive:
+        for member, content in files.items():
+            archive.writestr(member, content)
+    return path
+
+
+def _wheel_metadata(tags="cp311-cp311-linux_x86_64", purelib="false") -> str:
+    return f"Wheel-Version: 1.0\nRoot-Is-Purelib: {purelib}\nTag: {tags.replace('-', '-')}\n"
+
+
+def test_metadata_lists_packaged_extensions_and_stubs(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path,
+        "p-1-cp311-cp311-linux_x86_64.whl",
+        {
+            EXT: b"\x7fELF",
+            "abicheck_lab_py/_core.pyi": "def f() -> None: ...",
+            "p-1.dist-info/WHEEL": _wheel_metadata(),
+        },
+    )
+    meta = wheel.read_wheel_metadata(path)
+    assert meta["extensions"] == [EXT]
+    assert meta["stubs"] == ["abicheck_lab_py/_core.pyi"]
+    assert meta["root_is_purelib"] is False
+
+
+def test_wheel_without_dist_info_is_rejected(tmp_path: Path):
+    path = _make_wheel(tmp_path, "p-1-cp311-cp311-linux_x86_64.whl", {"a.txt": "x"})
+    with pytest.raises(wheel.ScenarioError, match="no .dist-info/WHEEL"):
+        wheel.read_wheel_metadata(path)
+
+
+def test_missing_extension_in_the_package_is_caught(tmp_path: Path):
+    """The packaging failure a standalone .so comparison cannot see."""
+    good = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "abicheck_lab_py/_core.pyi": "x",
+         "p-1.dist-info/WHEEL": _wheel_metadata()},
+    )
+    empty = _make_wheel(
+        tmp_path, "q-1-cp311-cp311-linux_x86_64.whl",
+        {"abicheck_lab_py/__init__.py": "", "q-1.dist-info/WHEEL": _wheel_metadata()},
+    )
+    errors = wheel.assert_wheel_identity(good, empty, {})
+    assert any("no extension module packaged" in error for error in errors)
+
+
+def test_missing_stub_in_the_package_is_caught(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL": _wheel_metadata()},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {"require_stubs": True})
+    assert any("no .pyi stub packaged" in error for error in errors)
+
+
+def test_mismatched_tags_between_sides_are_caught(tmp_path: Path):
+    old = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL": _wheel_metadata()},
+    )
+    new = _make_wheel(
+        tmp_path, "p-2-cp312-cp312-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-2.dist-info/WHEEL": _wheel_metadata()},
+    )
+    errors = wheel.assert_wheel_identity(old, new, {})
+    assert any("two different build targets" in error for error in errors)
+
+
+def test_purelib_tagged_extension_wheel_is_caught(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL": _wheel_metadata(purelib="true")},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {})
+    assert any("Root-Is-Purelib" in error for error in errors)
+
+
+def test_extension_outside_the_declared_package_is_caught(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {"elsewhere/_core.cpython-311-x86_64-linux-gnu.so": b"\x7fELF",
+         "p-1.dist-info/WHEEL": _wheel_metadata()},
+    )
+    errors = wheel.assert_wheel_identity(path, path, {"packaged_under": ["abicheck_lab_py/"]})
+    assert any("no extension packaged under" in error for error in errors)
+
+
+# --------------------------------------------------------------------------
+# Report assertions
+# --------------------------------------------------------------------------
+
+
+def _api_break_report() -> dict:
+    return {
+        "verdict": "API_BREAK",
+        "libraries": [{
+            "library": "_core.cpython-311-x86_64-linux-gnu.so",
+            "findings": [
+                {"kind": "python_api_parameter_renamed", "symbol": "python:_core.transform"},
+                {"kind": "python_api_default_removed", "symbol": "python:_core.transform"},
+            ],
+        }],
+        "unmatched_old": [], "unmatched_new": [],
+        "bundle_verdict": "NO_CHANGE", "bundle_findings": [],
+    }
+
+
+def test_declared_api_break_case_passes(scenario: dict):
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    assert wheel.assert_report(_api_break_report(), case["expect"]) == []
+
+
+def test_missing_python_api_finding_fails(scenario: dict):
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    report = _api_break_report()
+    report["libraries"][0]["findings"].pop()
+    assert any("findings" in e for e in wheel.assert_report(report, case["expect"]))
+
+
+def test_added_extension_is_detected_regardless_of_abi_tag(scenario: dict):
+    """The same case must pass on cp311 and cp312 runners alike."""
+    case = _case(scenario, "extension-added-to-the-package")
+    for abi in ("cp311", "cp312", "cp313"):
+        report = {
+            "verdict": "COMPATIBLE", "libraries": [], "changed_libraries": [],
+            "unmatched_old": [],
+            "unmatched_new": [f"_extra.{abi}-x86_64-linux-gnu.so"],
+            "bundle_verdict": "COMPATIBLE",
+            "bundle_findings": [{
+                "kind": "bundle_library_added",
+                "symbol": f"_extra.{abi}-x86_64-linux-gnu.so",
+            }],
+        }
+        assert wheel.assert_report(report, case["expect"]) == [], abi
+
+
+def test_unnoticed_package_level_extension_removal_fails(scenario: dict):
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    report = _api_break_report()
+    report["unmatched_old"] = ["_core.cpython-311-x86_64-linux-gnu.so"]
+    assert any("unmatched_old" in e for e in wheel.assert_report(report, case["expect"]))
+
+
+def test_wrong_bundle_verdict_fails(scenario: dict):
+    case = _case(scenario, "stub-api-break-inside-the-package")
+    report = _api_break_report()
+    report["bundle_verdict"] = "BREAKING"
+    assert any("bundle_verdict" in e for e in wheel.assert_report(report, case["expect"]))
+
+
+# --------------------------------------------------------------------------
+# The declaration
+# --------------------------------------------------------------------------
+
+
+def test_scenario_compares_wheels_not_a_standalone_so(scenario: dict):
+    assert scenario["package"] == "bindings/python"
+    assert scenario["old_stub"] != scenario["new_stub"]
+    assert scenario["identity"]["require_stubs"] is True
+
+
+def test_both_package_level_cases_are_declared(scenario: dict):
+    ids = {case["id"] for case in scenario["cases"]}
+    assert ids == {"stub-api-break-inside-the-package", "extension-added-to-the-package"}
+
+
+def test_no_expectation_pins_an_interpreter_version(scenario: dict):
+    """Every module expectation must be a stem, never an ABI-tagged filename."""
+    text = yaml.safe_dump(scenario)
+    assert "cpython-311" not in text
+    assert "cp311" not in text
