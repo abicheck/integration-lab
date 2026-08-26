@@ -365,6 +365,27 @@ capabilities:
     without asserting anything on any PR that is not a demonstration branch.
 
     '
+- id: demonstration-branch-drift
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: demo_branch_drift
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: demonstration_oracle
+    target_shape: cc_binary_linkshared
+  note: 'Runs scripts/gen_demo_prs.py --check on every PR: each demonstration branch must
+    be the current base plus its one declared patch, compared by TREE so an extra commit
+    or an edited patch is caught, not just a stale base. demo_oracle asserts the ABI
+    verdict; this asserts the branch is still the generated artifact it claims to be, and
+    a branch can drift without changing its findings. Non-gating because the only way to
+    clear real drift is a force-push rewriting branches with open pull requests -- an
+    operator decision a red required check cannot make. It reports drift today, which is
+    the honest state.
+
+    '
 - id: producer-agreement-report
   status: covered
   gating: false

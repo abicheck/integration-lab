@@ -318,3 +318,44 @@ def test_the_rule_actually_matches_the_known_jobs():
     """A rule that matches nothing would pass vacuously forever."""
     matched = {job_id for _, job_id, _ in _always_jobs_consuming_artifacts_hard()}
     assert {"verify_capability_receipts", "demo_oracle"} <= matched, matched
+
+
+def test_piped_run_steps_set_pipefail():
+    """A pipeline's status is its LAST command's, and GitHub's default run:
+    shell is `bash -e` WITHOUT pipefail.
+
+    Found while wiring demo_branch_drift: `checker | tee log` always exited 0
+    because tee succeeded, so the step's outcome was always `success` and its
+    summary printed the green line no matter how far the branches had
+    drifted. An advisory check that cannot report a problem is worse than no
+    check, because it reads as evidence.
+
+    Only pipelines whose status is actually consumed matter, so this covers
+    steps that pipe AND carry an `id` (something reads steps.<id>.outcome) or
+    set continue-on-error.
+    """
+    offenders = []
+    for workflow in WORKFLOWS:
+        document = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+        for job_id, step_name, step in _steps(document):
+            script = step.get("run")
+            if not isinstance(script, str) or "|" not in script:
+                continue
+            if not (step.get("id") or step.get("continue-on-error")):
+                continue
+            piped = [
+                line for line in script.splitlines()
+                if "|" in line
+                and not line.strip().startswith("#")
+                and "||" not in line
+                and "|]" not in line
+            ]
+            if not piped:
+                continue
+            if "pipefail" not in script:
+                offenders.append(f"{workflow.name}:{job_id}:{step_name}")
+    assert not offenders, (
+        "these steps pipe a command whose status is consumed but do not set "
+        "pipefail, so a failing producer reads as success: "
+        + ", ".join(sorted(offenders))
+    )

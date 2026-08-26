@@ -2255,3 +2255,77 @@ jobs:
             echo >> "$GITHUB_STEP_SUMMARY"
             echo '⚠️ The oracle produced no verdict — see the job log above.' >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # Codex review: scripts/gen_demo_prs.py --check asserts the invariant that
+  # makes a demonstration branch trustworthy -- that it really is the current
+  # base plus its one declared patch -- and nothing ran it. Its own docstring
+  # claimed CI did, which made the gap invisible: a branch could acquire extra
+  # changes that leave its required/forbidden findings intact, still pass
+  # demo_oracle, and keep being presented as generated coverage while the
+  # exact-tree invariant went unevaluated.
+  #
+  # Non-gating on purpose, and not as a hedge. The only way to clear real
+  # drift is the force-push that rewrites five branches carrying open pull
+  # requests; a red required check cannot make that call for anyone. This
+  # reports the drift on every PR, and a human decides. It reports drift
+  # today, which is the honest state -- all five branches are far behind.
+  demo_branch_drift:
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+          # The check compares each demonstration branch's TREE against the
+          # base plus its patch, and counts how far behind it is -- both need
+          # real history, not a shallow clone.
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      # A default checkout tracks only the PR's own branch, so the
+      # demonstration refs have to be asked for by name.
+      - name: Fetch the demonstration refs
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/test/*:refs/remotes/origin/test/*'
+
+      # `set -o pipefail` is load-bearing, not decoration. GitHub's default
+      # run: shell is `bash -e`, WITHOUT pipefail, so a pipeline reports the
+      # LAST command's status -- `tee` always succeeds, the step would always
+      # be `success`, and the summary below would print the green line on
+      # every run no matter how far the branches had drifted. An advisory
+      # check that cannot report a problem is worse than no check, because it
+      # reads as evidence.
+      - name: Check every demonstration branch is base + its patch
+        id: drift
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 scripts/gen_demo_prs.py --check --base-ref origin/main \
+            2>&1 | tee "$RUNNER_TEMP/demo-drift.txt"
+
+      - name: Report demonstration branch drift
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '### Generated demonstration branches (advisory)'
+            echo
+            if [ "${{ steps.drift.outcome }}" = "success" ]; then
+              echo '✅ Every demonstration branch is its base plus its declared patch.'
+            else
+              echo 'These branches no longer match `base + patch`. Clearing this needs'
+              echo '`scripts/gen_demo_prs.py --write` then `--push`, which rewrites'
+              echo 'branches carrying open pull requests — an operator decision, which'
+              echo 'is why this check reports rather than gates.'
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/demo-drift.txt" 2>/dev/null || echo '(no output captured)'
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

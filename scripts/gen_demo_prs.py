@@ -18,7 +18,12 @@ the oracle checks another.
 Modes:
 
   --check   report drift for every demonstration, exit nonzero if any.
-            Reads only; safe anywhere, and what CI runs.
+            Reads only, so it is safe anywhere. The `demo_branch_drift` job
+            in abi-scan.yml runs it on every PR and renders the result into
+            the job summary. That job is deliberately NON-gating: the only
+            way to clear real drift is the force-push below, which rewrites
+            branches carrying open pull requests, and a red required check
+            cannot make that decision for anyone. It reports; a human acts.
   --write   (re)create the branches locally from the current base.
   --push    force-push them. NEVER implied by --write: these branches carry
             open pull requests, and rewriting them is a deliberate act
