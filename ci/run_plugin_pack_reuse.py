@@ -421,16 +421,33 @@ def replay_reference_problems(replay: dict[str, Any] | None) -> list[str]:
             f"replay report carries {len(operational)} operational error(s): {operational!r}"
         )
     assurance = replay.get("analysis_assurance")
-    if isinstance(assurance, dict):
-        if assurance.get("depth_satisfied") is False:
-            problems.append("replay report reports depth_satisfied=False")
-        status = assurance.get("status")
-        if status is not None and status != "complete":
-            notes = assurance.get("notes") or []
-            problems.append(
-                f"replay analysis_assurance.status={status!r}, expected 'complete'"
-                + (f" ({'; '.join(str(n) for n in notes)})" if notes else "")
-            )
+    if not isinstance(assurance, dict):
+        # Codex review, second pass. An earlier revision checked assurance
+        # only when the block was present, on my assumption that a scan-mode
+        # report legitimately carries none. I never verified that, and the
+        # exemption is the hole: effective_depth() falls back to
+        # `level.depth`, so a partial replay reporting `level.depth: source`
+        # with matching findings and targets passed every assertion while
+        # proving no completeness at all.
+        #
+        # ci/validate_source_depth.py already settles the question for this
+        # repository -- a missing block there is "source-depth satisfaction
+        # is unproven" and an error. Agreement with a reference that proved
+        # nothing is not evidence, so the same rule applies here.
+        problems.append(
+            "replay report carries no analysis_assurance; its source-depth "
+            "completeness is unproven, so agreeing with it proves nothing"
+        )
+        return problems
+    if assurance.get("depth_satisfied") is False:
+        problems.append("replay report reports depth_satisfied=False")
+    status = assurance.get("status")
+    if status is not None and status != "complete":
+        notes = assurance.get("notes") or []
+        problems.append(
+            f"replay analysis_assurance.status={status!r}, expected 'complete'"
+            + (f" ({'; '.join(str(n) for n in notes)})" if notes else "")
+        )
     return problems
 
 

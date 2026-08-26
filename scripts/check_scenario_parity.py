@@ -161,6 +161,8 @@ def missing_declared_reports(
     results: Dict[str, Dict[str, Dict[str, Any]]],
     declared: Dict[str, Set[str]],
     profiles: Dict[str, Set[str]],
+    *,
+    allow_partial: bool = False,
 ) -> List[str]:
     """Every declared (build system, scenario, profile) cell must have reported.
 
@@ -184,8 +186,27 @@ def missing_declared_reports(
     for build_system, scenarios in sorted(declared.items()):
         reports = results.get(build_system)
         if reports is None:
-            # This build system was not run at all; that is the caller's
-            # choice (a two-way local run), not a shrinking matrix.
+            # Codex review, second pass: this used to `continue`, on the
+            # reasoning that a build system absent from --results was the
+            # caller's deliberate choice. That is true for a local two-way
+            # run and false for the case that matters -- dropping the Make
+            # pair from the workflow's --results, or mistyping its name,
+            # silently removed an entire leg while Bazel and CMake still
+            # compared clean and the gate stayed green. Exempting a whole
+            # missing leg is a strictly bigger hole than the missing cells
+            # this function exists to catch.
+            #
+            # Default is now strict, so losing a leg is loud. The deliberate
+            # partial run keeps its escape hatch, but has to ask for it by
+            # name (--allow-partial), because the dangerous configuration
+            # should be the one that takes an explicit act.
+            if allow_partial:
+                continue
+            errors.append(
+                f"{build_system}: declared in the build matrix but no results were "
+                "supplied -- an entire build system is missing from the comparison "
+                "(pass --allow-partial for a deliberate partial run)"
+            )
             continue
         for scenario in sorted(scenarios):
             for stem in sorted(expected_stems(scenario, profiles.get(scenario, set()))):
@@ -294,6 +315,12 @@ def main(argv=None) -> int:
              "frontends, so a missing build-system/frontend CELL is caught "
              "rather than only a missing scenario",
     )
+    parser.add_argument(
+        "--allow-partial", action="store_true",
+        help="permit a declared build system to be absent from --results. For "
+             "deliberate partial local runs only: in CI this is what makes a "
+             "dropped or mistyped leg loud instead of invisible.",
+    )
     parser.add_argument("--out", type=Path, help="write a JSON parity receipt here")
     args = parser.parse_args(argv)
     try:
@@ -305,7 +332,12 @@ def main(argv=None) -> int:
         print(f"ERROR: {exc}")
         return 1
 
-    errors = missing_declared_reports(results, declared, profiles) + compare(results)
+    errors = (
+        missing_declared_reports(
+            results, declared, profiles, allow_partial=args.allow_partial
+        )
+        + compare(results)
+    )
     receipt = {
         "build_systems": sorted(results),
         "scenarios_per_build_system": {bs: sorted(r) for bs, r in sorted(results.items())},

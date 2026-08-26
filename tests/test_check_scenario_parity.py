@@ -332,9 +332,61 @@ def test_a_single_run_scenario_expects_a_bare_stem():
     assert parity.missing_declared_reports(results, {"cmake": {"solo"}}, {"solo": set()}) == []
 
 
-def test_a_build_system_not_run_at_all_is_not_a_shrink():
-    """A deliberate two-way local run is the caller's choice."""
-    assert parity.missing_declared_reports(_complete(["cmake"]), DECLARED, PROFILES) == []
+def test_a_wholly_missing_build_system_is_a_shrink_by_default():
+    """Codex review, second pass -- this test previously asserted the OPPOSITE.
+
+    Exempting an absent build system was true for a deliberate local run and
+    false for the case that matters: dropping the Make pair from the
+    workflow's --results, or mistyping its name, removed an entire leg while
+    the surviving legs still compared clean and the gate stayed green. That
+    is a strictly bigger hole than the missing cells this function exists to
+    catch.
+    """
+    errors = parity.missing_declared_reports(_complete(["cmake"]), DECLARED, PROFILES)
+    assert any("make" in e and "entire build system" in e for e in errors)
+
+
+def test_a_mistyped_build_system_name_is_caught():
+    """The typo case: results arrive under a name nothing declares."""
+    results = _complete()
+    results["mak"] = results.pop("make")
+    errors = parity.missing_declared_reports(results, DECLARED, PROFILES)
+    assert any("make" in e and "entire build system" in e for e in errors)
+
+
+def test_a_deliberate_partial_run_can_opt_out():
+    """The escape hatch survives, but has to be asked for by name."""
+    assert parity.missing_declared_reports(
+        _complete(["cmake"]), DECLARED, PROFILES, allow_partial=True
+    ) == []
+
+
+def test_allow_partial_does_not_excuse_a_missing_cell():
+    """Opting out of the whole-leg check must not also disable the cell check."""
+    results = _complete(["cmake"])
+    del results["cmake"]["add_function.clang"]
+    errors = parity.missing_declared_reports(
+        results, DECLARED, PROFILES, allow_partial=True
+    )
+    assert any("add_function.clang" in e for e in errors)
+
+
+def test_the_workflow_supplies_every_declared_build_system():
+    """The gate is only strict if CI actually passes all the legs."""
+    import yaml as _yaml
+
+    root = Path(__file__).resolve().parent.parent
+    document = _yaml.safe_load(
+        (root / ".github/workflows/integration-shadow.yml").read_text(encoding="utf-8")
+    )
+    step = next(
+        s for s in document["jobs"]["scenario_parity"]["steps"]
+        if isinstance(s.get("run"), str) and "check_scenario_parity.py" in s["run"]
+    )
+    declared = parity.load_declared(root / "scenarios" / "build-matrix.yaml")
+    for build_system in declared:
+        assert f"{build_system}=" in step["run"], build_system
+    assert "--allow-partial" not in step["run"], "CI must not opt out of the strict check"
 
 
 def test_scenario_profiles_reads_the_real_manifest():

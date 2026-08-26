@@ -100,10 +100,18 @@ def test_clean_workspace_rejects_a_source_tree(tmp_path, marker):
 def test_two_reports_naming_no_targets_do_not_agree(tmp_path, monkeypatch):
     root = _bundle(tmp_path / "bundle")
     replay = tmp_path / "replay.json"
-    replay.write_text(json.dumps({"verdict": "COMPATIBLE", "diff": {"findings": []}}), encoding="utf-8")
+    replay.write_text(json.dumps({
+        "verdict": "COMPATIBLE",
+        "analysis_assurance": {"status": "complete", "effective_depth": "source"},
+        "diff": {"findings": []},
+    }), encoding="utf-8")
     monkeypatch.setattr(
         reuse, "run_compare",
-        lambda **kw: reuse.Outcome(0, {"verdict": "NO_CHANGE", "changes": []}, []),
+        lambda **kw: reuse.Outcome(0, {
+            "verdict": "NO_CHANGE",
+            "analysis_assurance": {"status": "complete", "effective_depth": "source"},
+            "changes": [],
+        }, []),
     )
     receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
     accounting = next(a for a in receipt["assertions"] if a["assertion"] == "same-target-accounting")
@@ -164,6 +172,7 @@ def test_diverging_findings_are_reported_on_both_sides(tmp_path, monkeypatch):
     replay = tmp_path / "replay.json"
     replay.write_text(
         json.dumps({"verdict": "BREAKING", "library": "libmath.so",
+                    "analysis_assurance": {"status": "complete", "effective_depth": "source"},
                     "diff": {"findings": [{"kind": "SYMBOL_REMOVED", "symbol": "f0"}]}}),
         encoding="utf-8",
     )
@@ -417,7 +426,9 @@ def test_bundle_requires_a_pack(tmp_path):
 
 
 def test_a_clean_replay_report_is_a_usable_reference():
-    assert reuse.replay_reference_problems({"verdict": "COMPATIBLE"}) == []
+    assert reuse.replay_reference_problems(
+        {"verdict": "COMPATIBLE", "analysis_assurance": {"status": "complete"}}
+    ) == []
 
 
 def test_a_replay_report_with_operational_errors_is_rejected():
@@ -438,10 +449,28 @@ def test_a_replay_report_denying_depth_is_rejected():
     assert problems and "depth_satisfied=False" in problems[0]
 
 
-def test_a_scan_mode_report_without_an_assurance_block_is_still_usable():
-    """Scan-mode replay reports need not carry analysis_assurance at all;
-    absence is not degradation, and rejecting it would fail every real run."""
-    assert reuse.replay_reference_problems({"verdict": "COMPATIBLE", "diff": {"findings": []}}) == []
+def test_a_report_without_an_assurance_block_is_rejected():
+    """Codex review, second pass -- this test previously asserted the OPPOSITE,
+    on my unverified assumption that a scan-mode report legitimately carries no
+    assurance block.
+
+    The exemption was the hole: effective_depth() falls back to `level.depth`,
+    so a partial replay reporting `level.depth: source` with matching findings
+    and targets passed every assertion while proving no completeness at all.
+    ci/validate_source_depth.py already settles this for the repository -- a
+    missing block is "source-depth satisfaction is unproven" and an error --
+    so the exemption also contradicted an established convention.
+    """
+    problems = reuse.replay_reference_problems({"verdict": "COMPATIBLE", "diff": {"findings": []}})
+    assert problems and "no analysis_assurance" in problems[0]
+
+
+def test_a_partial_report_claiming_source_depth_via_level_is_rejected():
+    """The concrete case: `level.depth: source` and nothing else."""
+    problems = reuse.replay_reference_problems(
+        {"verdict": "COMPATIBLE", "level": {"depth": "source"}, "diff": {"findings": []}}
+    )
+    assert problems, "level.depth alone is not a completeness proof"
 
 
 def test_an_incomplete_replay_fails_the_three_agreement_assertions(tmp_path, monkeypatch):

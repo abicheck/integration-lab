@@ -194,6 +194,12 @@ depth came from somewhere other than the evidence we shipped), a header
 edited after collection, a deleted translation unit, a bumped plugin LLVM
 major, emptied public roots, and corrupted JSONL.
 
+The replay report used as the reference must itself prove complete source
+depth — a missing `analysis_assurance` block is rejected, matching
+`ci/validate_source_depth.py`'s existing rule that absence means "source-depth
+satisfaction is unproven". Agreement with a reference that proved nothing is
+not evidence.
+
 "Rejected" deliberately admits four channels — an operational exit status, a
 non-empty `operational_errors`, a failed source-depth contract, or no report
 at all. Pinning each case to one exact channel would fail the scenario on an
