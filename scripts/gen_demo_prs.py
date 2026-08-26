@@ -260,15 +260,47 @@ def write(demos: list[dict[str, Any]], base_ref: str, only: str | None) -> list[
             git("commit", "-q", "-m", demo["title"])
             written.append(f"{branch} = {base_ref} + {demo['patch']}")
     finally:
-        # `--detach` is harmless for a branch name and is what makes the
-        # detached case actually restore, rather than creating a checkout of
-        # a branch that was never checked out.
-        if git("rev-parse", "--verify", "--quiet", f"refs/heads/{original}",
-               check=False).strip():
-            git("checkout", "-q", original, check=False)
-        else:
-            git("checkout", "-q", "--detach", original, check=False)
+        problem = _restore_head(original)
+        if problem:
+            # Codex review: this used check=False and threw the result away,
+            # so a failed restoration was silent and the caller was left on a
+            # half-generated demonstration branch by code whose entire
+            # purpose here is to put them back. Reachable: with a conflicting
+            # local edit, `git checkout` refuses ("Your local changes would be
+            # overwritten") and HEAD stays where it is -- verified directly.
+            #
+            # Raising from `finally` replaces an in-flight exception, and that
+            # is the right precedence: whatever went wrong generating a
+            # branch, the caller's checkout being silently wrong is the more
+            # urgent fact, and Python keeps the original reachable as
+            # __context__ so nothing is lost.
+            raise DemoError(problem)
     return written
+
+
+def _restore_head(original: str) -> str | None:
+    """Put HEAD back where it was; return what went wrong, or None.
+
+    `--detach` for a non-branch is what makes the detached case actually
+    restore rather than creating a checkout of a branch that never existed.
+    """
+    is_branch = git(
+        "rev-parse", "--verify", "--quiet", f"refs/heads/{original}", check=False
+    ).strip()
+    args = ("checkout", "-q", original) if is_branch else ("checkout", "-q", "--detach", original)
+    try:
+        git(*args)
+    except DemoError as exc:
+        landed = (
+            git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip()
+            or git("rev-parse", "--short", "HEAD", check=False).strip()
+            or "an unknown commit"
+        )
+        return (
+            f"could not restore the checkout to {original!r}; it is left on "
+            f"{landed!r}. Restore it by hand before rerunning: {exc}"
+        )
+    return None
 
 
 def push(demos: list[dict[str, Any]], only: str | None) -> list[str]:

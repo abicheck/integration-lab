@@ -555,3 +555,69 @@ def test_only_names_the_known_ids_when_it_fails(tmp_path, capsys):
     err = capsys.readouterr().err
     for demo in gen.load_manifest(MANIFEST):
         assert demo["id"] in err
+
+
+# --- a failed restoration must not be silent (Codex review) -------------
+
+
+def test_a_failed_restoration_is_reported(tmp_path):
+    """`check=False` threw the result away, so the caller was left on a
+    half-generated branch by the code that promises to put them back.
+
+    Reachable: with a conflicting local edit `git checkout` refuses and HEAD
+    stays put. Reproduced here rather than asserted about.
+    """
+    repo, patch = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        # A branch whose content differs, checked out, then a conflicting
+        # uncommitted edit -- so restoring to it will be refused.
+        gen.git("checkout", "-q", "-b", "elsewhere")
+        (repo / "f.txt").write_text("elsewhere\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "elsewhere")
+
+        problem = None
+        try:
+            gen.git("checkout", "-q", "main")
+            (repo / "f.txt").write_text("conflicting local edit\n")
+            problem = gen._restore_head("elsewhere")
+        finally:
+            pass
+    assert problem is not None, "the refused checkout must be reported"
+    assert "could not restore the checkout" in problem
+    assert "elsewhere" in problem
+
+
+def test_a_successful_restoration_reports_nothing(tmp_path):
+    """The guard must stay quiet on the normal path."""
+    repo, _ = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-b", "side")
+        gen.git("checkout", "-q", "main")
+        assert gen._restore_head("side") is None
+        assert gen.git("symbolic-ref", "--quiet", "--short", "HEAD").strip() == "side"
+
+
+def test_restoration_names_where_the_checkout_was_actually_left(tmp_path):
+    """The message has to say where the caller IS, not just where they wanted
+    to be -- that is the actionable half."""
+    repo, _ = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        gen.git("checkout", "-q", "-b", "elsewhere")
+        (repo / "f.txt").write_text("elsewhere\n")
+        gen.git("add", "-A")
+        gen.git("commit", "-q", "-m", "elsewhere")
+        gen.git("checkout", "-q", "main")
+        (repo / "f.txt").write_text("conflicting\n")
+        problem = gen._restore_head("elsewhere")
+    assert problem and "'main'" in problem
+
+
+def test_a_detached_original_restores_by_detaching(tmp_path):
+    repo, _ = _repo_with_base(tmp_path)
+    with _rooted_at(repo):
+        sha = gen.git("rev-parse", "HEAD").strip()
+        gen.git("checkout", "-q", "-b", "side")
+        assert gen._restore_head(sha) is None
+        assert gen.git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).strip() == ""
+        assert gen.git("rev-parse", "HEAD").strip() == sha
