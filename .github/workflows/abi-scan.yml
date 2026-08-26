@@ -1209,7 +1209,22 @@ jobs:
   # missing/failed receipt matters most.
   verify_capability_receipts:
     needs: [scan, aggregate]
-    if: always()
+    # A CANCELLED upstream uploads no receipts, and this job then reported
+    # MISSING_RECEIPT for capabilities whose producing job simply never ran
+    # (CI run 32941691653: 1 of 14 jobs failed, and it was this one -- `scan`
+    # was cancelled by the next push, not failed). Third instance of the same
+    # class in this repository, after cross_build_equivalence and
+    # integration_gate: an `always()` job that consumes an upstream's
+    # artifacts and fails hard when they are absent.
+    #
+    # `!= 'cancelled'`, not `== 'success'`, for the reason given on
+    # integration_gate: a genuinely FAILED scan should still be reported here,
+    # where a missing receipt is real evidence; only cancellation, which is
+    # not a result at all, is stepped aside for.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.aggregate.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -2114,7 +2129,15 @@ jobs:
   # this job is harmless everywhere else.
   demo_oracle:
     needs: scan
-    if: always() && github.event_name == 'pull_request'
+    # Same guard, and this one was found by generalizing the rule rather than
+    # by a failure: this job downloads the gate's report WITHOUT
+    # continue-on-error, so a cancelled `scan` on a demonstration branch would
+    # have failed it exactly as it failed verify_capability_receipts. Fixed
+    # before it could happen.
+    if: >-
+      always()
+      && github.event_name == 'pull_request'
+      && needs.scan.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       # Codex review: the BASE commit, not the PR head.

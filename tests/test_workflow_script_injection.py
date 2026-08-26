@@ -255,3 +255,66 @@ def test_demo_oracle_tolerates_an_empty_demonstrations_list():
         if s.get("name") == "Is this a demonstration branch?"
     )
     assert "doc.get('demonstrations') or []" in step["run"]
+
+
+# --- cancelled upstreams must not read as failures (three instances) -----
+
+
+def _always_jobs_consuming_artifacts_hard():
+    """Jobs that run on `always()` and download an upstream artifact WITHOUT
+    continue-on-error -- i.e. that fail hard when the artifact is absent."""
+    out = []
+    for workflow in WORKFLOWS:
+        document = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+        for job_id, job in (document.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            condition = str(job.get("if") or "")
+            if "always()" not in condition:
+                continue
+            hard = [
+                step for step in (job.get("steps") or [])
+                if isinstance(step, dict)
+                and "actions/download-artifact" in str(step.get("uses", ""))
+                and not step.get("continue-on-error")
+            ]
+            if hard:
+                out.append((workflow.name, job_id, condition))
+    return out
+
+
+def test_every_always_job_consuming_an_artifact_guards_against_cancellation():
+    """The general rule behind three separate failures.
+
+    A cancelled upstream -- what happens to every superseded run -- uploads no
+    artifacts. An `always()` job that then downloads one without
+    continue-on-error fails hard, and a routine supersession is
+    indistinguishable from a real defect. It cost three misreads via
+    cross_build_equivalence and integration_gate, then a MISSING_RECEIPT
+    failure in verify_capability_receipts.
+
+    Stated as the general property because the earlier, narrower version of
+    this guard covered only integration-shadow.yml's `select` consumers and
+    missed both abi-scan.yml cases -- including one in a job added in this
+    same PR, which this rule caught BEFORE it ever failed.
+
+    A job that downloads with continue-on-error is deliberately degrading and
+    is not covered: absence there is a handled outcome, not a hard failure.
+    """
+    unguarded = [
+        f"{workflow}:{job_id}"
+        for workflow, job_id, condition in _always_jobs_consuming_artifacts_hard()
+        if "result !=" not in condition and "result ==" not in condition
+    ]
+    assert not unguarded, (
+        "these jobs run on always() and download an upstream artifact without "
+        "continue-on-error, so a CANCELLED upstream fails them: "
+        + ", ".join(sorted(unguarded))
+        + " -- add `&& needs.<upstream>.result != 'cancelled'`"
+    )
+
+
+def test_the_rule_actually_matches_the_known_jobs():
+    """A rule that matches nothing would pass vacuously forever."""
+    matched = {job_id for _, job_id, _ in _always_jobs_consuming_artifacts_hard()}
+    assert {"verify_capability_receipts", "demo_oracle"} <= matched, matched
