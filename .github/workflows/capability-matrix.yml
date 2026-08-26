@@ -37,6 +37,20 @@ on:
       # review, fresh evidence: a *.yaml-only workflow change would
       # otherwise never trigger the one workflow that runs it).
       - '.github/workflows/*.yaml'
+      # Codex review, third recurrence of this same gap (PR #16 was the
+      # first). These are DATA inputs the checks above read -- not scripts,
+      # so no scripts/ glob covers them -- and a PR touching only one of
+      # them skipped the very check meant to police it: the pin-consistency
+      # suite for ci/abicheck-version.yaml, and the generated README gap
+      # block for scenarios/manifest.yaml. tests/test_capability_matrix_
+      # paths.py now derives this list from what the scripts and tests
+      # actually open, so a fourth recurrence fails locally instead of
+      # being found in review.
+      - 'ci/abicheck-version.yaml'
+      - 'ci/profiles.yaml'
+      - 'demos/manifest.yaml'
+      - 'scenarios/manifest.yaml'
+      - 'scenarios/build-matrix.yaml'
   workflow_dispatch:
 
 permissions:
