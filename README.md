@@ -242,11 +242,17 @@ pybind cross-module internals identity remains an explicit expected gap.
   `libmath.so` reports `COMPATIBLE_WITH_RISK`, a DWARF/source-level
   difference the SONAME/symbol-table diff can't see on its own) remains.
   Like every other advisory job, none of this can block a merge.
-- **Not every profile has a production release baseline**, and semantic
-  scenario parity across build systems is still uneven — the scenario
-  oracle exercises Bazel for its full suite while CMake covers only an
-  initial subset (`add_function`/`remove_function`), and Make none of it.
-  Closing that is [roadmap item 12](docs/roadmap.md).
+- **Not every profile has a production release baseline.** Semantic
+  scenario parity across build systems is now asserted rather than
+  assumed: `scenario_parity` runs the suite under Bazel, CMake and Make
+  and fails unless the same mutation yields the same normalized findings
+  and verdict everywhere it ran (`scripts/check_scenario_parity.py`).
+  Provenance — paths, timings, the producing build system's own
+  bookkeeping — is excluded from that comparison by construction.
+  `generated_header_removed_function` stays Bazel-only: its header comes
+  from a Bazel genrule rather than the fixture directory, so the generic
+  CMake/Make recipes have nothing to compile against. It fails closed as
+  "no build mapping declared" rather than being skipped quietly.
 - **Make source evidence is fail-closed.** Bear and the generated
   `compile_commands.json` are mandatory for the Make contract profile; a
   missing tool, failed capture, or a compile database whose entries are not

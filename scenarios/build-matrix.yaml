@@ -15,18 +15,23 @@
 # scripts/run_scenario.py, never silently substituted or skipped
 # quietly).
 #
-# `cmake` entries are deliberately populated for only the initial,
-# representative subset design doc section 18 names first (item 1: a
-# compatible addition, item 2: an exported-function removal) --
-# `add_function` (COMPATIBLE) and `remove_function` (BREAKING) are the
-# two simplest, most representative scenarios in scenarios/manifest.yaml,
-# proving BOTH oracle outcomes work under a second build system before
-# broader parity is attempted. Every other scenario (suppressions,
-# default-argument, generated-header, the aggregate/consumer-scoped
-# cases) stays bazel-only for now -- see this repo's README.md PR3
-# section and design doc section 18's own "keep the full existing
-# scenario suite under the canonical Bazel path until broad parity is
-# proven".
+# `cmake` and `make` now both cover every scenario whose fixture has the
+# shared `lib.cc` + `lib.h` shape the two generic recipes
+# (buildsystems/cmake/fixtures/CMakeLists.txt and
+# buildsystems/make/fixtures/Makefile) are parameterized over. That is the
+# whole declared scenario suite except `generated_header_removed_function`,
+# whose header is produced by its own Bazel genrule rather than committed
+# to the fixture directory -- there is no lib.h for a FIXTURE_DIR recipe to
+# compile against, so it stays bazel-only until the generation step itself
+# is factored out of the Bazel rule. It fails closed as "no build mapping
+# declared", never silently skipped.
+#
+# Parity, not just coverage: scripts/check_scenario_parity.py compares the
+# reports these runs produce ACROSS build systems and fails unless the same
+# semantic mutation yielded the same normalized findings and the same
+# verdict everywhere it ran. Running a scenario under three build systems
+# and checking each against its own oracle separately would pass even if
+# the three disagreed with each other.
 #
 # `old_fixture_dir`/`new_fixture_dir` are repo-relative paths to a
 # fixtures/<name>/{v1,v2}/ directory -- passed straight to
@@ -45,12 +50,24 @@
 # library and are reused as-is by run_scenario.py for every build system.
 
 schema_version: 1
-
 build_systems:
-  cmake:
+  cmake: &id001
     add_function:
       old_fixture_dir: fixtures/add_function/v1
       new_fixture_dir: fixtures/add_function/v2
+    change_signature:
+      old_fixture_dir: fixtures/change_signature/v1
+      new_fixture_dir: fixtures/change_signature/v2
+    default_argument_added:
+      old_fixture_dir: fixtures/default_argument_added/v1
+      new_fixture_dir: fixtures/default_argument_added/v2
     remove_function:
       old_fixture_dir: fixtures/remove_function/v1
       new_fixture_dir: fixtures/remove_function/v2
+    remove_function_suppressed:
+      old_fixture_dir: fixtures/remove_function/v1
+      new_fixture_dir: fixtures/remove_function/v2
+    suppression_partial:
+      old_fixture_dir: fixtures/suppression_partial/v1
+      new_fixture_dir: fixtures/suppression_partial/v2
+  make: *id001

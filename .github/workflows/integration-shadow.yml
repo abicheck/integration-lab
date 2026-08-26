@@ -641,6 +641,101 @@ jobs:
   # only needs scenarios/build-matrix.yaml's currently declared
   # add_function/remove_function subset (see that file's own header
   # comment), not any profile's staged build.
+  scenarios_make:
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install gcc-14/g++-14/cmake/ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 cmake ninja-build
+
+      - run: pip install --quiet pyyaml
+
+      # Same pinned CastXML install scenarios_cmake uses -- see its own
+      # step for why the distro package is not enough.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Install abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Run scenarios against Make-built fixtures
+        run: python3 scripts/run_scenario.py --build-system make --results-dir scenario-results-make
+
+      - name: Upload Make scenario results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-results-make
+          path: scenario-results-make/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # The parity gate. scenarios_cmake and scenarios_make each check their own
+  # run against that scenario's oracle; passing separately is not parity,
+  # because all three build systems could satisfy their own oracle while
+  # disagreeing with each other about which symbols moved. This job runs the
+  # same suite under all three and compares the reports across them.
+  scenario_parity:
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install gcc-14/g++-14/cmake/ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 cmake ninja-build
+
+      - run: pip install --quiet pyyaml
+
+      # Same pinned CastXML install scenarios_cmake uses -- see its own
+      # step for why the distro package is not enough.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Install abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Run the scenario suite under every build system
+        run: |
+          set -euo pipefail
+          # Bazel first: it is the full-coverage path and the reference the
+          # other two are compared against.
+          python3 scripts/run_scenario.py --build-system bazel --results-dir parity/bazel
+          python3 scripts/run_scenario.py --build-system cmake --results-dir parity/cmake
+          python3 scripts/run_scenario.py --build-system make  --results-dir parity/make
+
+      - name: Assert the same mutation yields the same findings everywhere
+        run: |
+          python3 scripts/check_scenario_parity.py \
+            --results bazel=parity/bazel cmake=parity/cmake make=parity/make \
+            --out parity/parity.json
+
+      - name: Upload the parity receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-build-system-parity
+          path: parity/parity.json
+          if-no-files-found: warn
+          retention-days: 14
+
   scenarios_cmake:
     if: always()
     runs-on: ubuntu-24.04

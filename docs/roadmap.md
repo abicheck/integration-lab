@@ -145,15 +145,31 @@ What remains: post-repair wheel behaviour where auditwheel/delocate/
 delvewheel applies — the repaired wheel's vendored library directory,
 its rewritten RPATHs, and the dependency closure those imply.
 
-**Item 12 — build-system scenario parity.** The repository builds through
-Bazel, CMake and Make, but the scenario oracle runs its full suite only
-under Bazel; CMake covers `add_function`/`remove_function` and Make none of
-it. At minimum these should run through all three: function addition,
-function removal, generated public-header removal, public macro value
-change, cross-DSO provider signature break, SONAME change, private/public
-header classification, and a `_GLIBCXX_USE_CXX11_ABI` flip. The bar is not
-"it builds" but: same semantic mutation, same normalized findings, same
-verdict, build-system-specific provenance only.
+**Item 12 — build-system scenario parity: done for the shared-shape
+suite.** `scripts/run_scenario.py` gained a `--build-system make` path
+(`buildsystems/make/fixtures/Makefile`, the Make counterpart of the generic
+CMake fixture project), and `scenarios/build-matrix.yaml` now declares
+every scenario whose fixture has the shared `lib.cc` + `lib.h` shape for
+both CMake and Make.
+
+The bar is not "it builds": `scripts/check_scenario_parity.py` compares the
+reports ACROSS build systems and fails unless the same semantic mutation
+yields the same normalized findings, severities, suppressed symbols and
+verdict everywhere it ran. Checking each run against its own oracle
+separately would pass even if the three disagreed with each other — and on
+its first run this check found exactly that, a `soname_bump_recommended`
+finding CMake produced and Make did not, because a bare `g++ -shared` sets
+no SONAME while CMake and Bazel both do. The Make recipe now sets it.
+
+What remains: `generated_header_removed_function`, whose header is produced
+by its own Bazel genrule rather than committed to the fixture directory, so
+there is nothing for a `FIXTURE_DIR` recipe to compile. Factoring the
+generation step out of the Bazel rule would bring it in. The
+cross-DSO/SONAME/private-header/`_GLIBCXX_USE_CXX11_ABI` mutations named in
+the original list need new fixtures of the same shared shape before they
+can join the matrix; they are covered elsewhere (cross-DSO by
+`project-cross-dso`, SONAME by the loader-feature suite) but not yet as
+three-build-system parity cases.
 
 **Item 9 — plugin-pack reuse in a clean job.** The plugin scenario should
 run three distinct stages: build with the plugin; verify and upload the

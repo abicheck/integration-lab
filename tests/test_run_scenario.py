@@ -10,7 +10,10 @@ of abicheck's own detection correctness (this repo's actual local/CI
 `python3 scripts/run_scenario.py --build-system cmake` runs, which really
 do shell out to cmake + the real abicheck CLI end-to-end).
 """
+
 from __future__ import annotations
+
+import pytest
 
 from pathlib import Path
 
@@ -109,3 +112,56 @@ def test_run_one_bazel_path_unchanged(tmp_path, monkeypatch):
     assert compare_calls[0][0].endswith("bazel-bin/fixtures/add_function/v1/libimpl.so")
     assert compare_calls[0][1].endswith("bazel-bin/fixtures/add_function/v2/libimpl.so")
     assert results[0]["passed"] is True
+
+
+def test_run_one_dispatches_to_make_build_for_mapped_scenario(tmp_path, monkeypatch):
+    """The third build system reaches its own builder, not cmake's."""
+    import run_scenario
+
+    calls = []
+    monkeypatch.setattr(
+        run_scenario, "run_make_build",
+        lambda fixture_dir, build_dir: (calls.append((fixture_dir, build_dir)), tmp_path / "libimpl.so")[1],
+    )
+    monkeypatch.setattr(
+        run_scenario, "run_one_profile",
+        lambda scenario, old_lib, new_lib, profile, expected, results_dir: {"ok": True},
+    )
+    scenario = {"name": "add_function", "expected_verdict": "COMPATIBLE"}
+    matrix = {"make": {"add_function": {
+        "old_fixture_dir": "fixtures/add_function/v1",
+        "new_fixture_dir": "fixtures/add_function/v2",
+    }}}
+    results = run_scenario.run_one(
+        scenario, tmp_path, build_system="make", build_matrix=matrix, scratch_dir=tmp_path
+    )
+    assert results == [{"ok": True}]
+    assert len(calls) == 2, calls
+
+
+def test_builders_are_resolved_at_call_time(monkeypatch):
+    """Binding the function object at import would ignore a replacement."""
+    import run_scenario
+
+    sentinel = object()
+    monkeypatch.setattr(run_scenario, "run_make_build", sentinel)
+    assert run_scenario._fixture_dir_builder("make") is sentinel
+
+
+def test_unknown_build_system_names_the_known_ones(tmp_path):
+    import run_scenario
+
+    with pytest.raises(ValueError, match="bazel.*cmake.*make"):
+        run_scenario.run_one(
+            {"name": "x"}, tmp_path, build_system="ninja", build_matrix={}, scratch_dir=tmp_path
+        )
+
+
+def test_unmapped_scenario_is_skipped_not_substituted(tmp_path):
+    """A missing mapping must return None (skipped), never fall back."""
+    import run_scenario
+
+    assert run_scenario.run_one(
+        {"name": "not_in_matrix"}, tmp_path,
+        build_system="make", build_matrix={"make": {}}, scratch_dir=tmp_path,
+    ) is None
