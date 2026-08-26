@@ -21,15 +21,21 @@ on:
       # unexercised. Globbed rather than listing each check_*.py/
       # gen_*.py script individually so the next one doesn't repeat the
       # same gap.
-      - 'scripts/check_*.py'
-      - 'scripts/gen_*.py'
+      # Codex review, fourth recurrence: these prefix globs left
+      # scripts/run_scenario.py, scripts/normalize_baseline.py and EVERY
+      # module under ci/ outside the trigger, while tests/conftest.py puts
+      # both directories on sys.path and the suite imports them. Since this
+      # is the only workflow that runs pytest at all, a PR touching just one
+      # of those modules skipped its own unit tests -- including the negative
+      # and malformed-input cases no end-to-end run exercises. Globbed by
+      # directory now, so a new module cannot repeat it.
+      - 'scripts/*.py'
+      - 'ci/*.py'
+      - 'ci/backends/*.py'
       # Phase 5 (capability receipts): the receipt schema/emitters/
       # validator have their own unit tests (tests/), run below -- globbed
       # the same way as check_*.py/gen_*.py above so a future receipt
       # helper doesn't repeat the same "landed unexercised" gap.
-      - 'scripts/capability_receipts.py'
-      - 'scripts/emit_*.py'
-      - 'scripts/validate_*.py'
       - 'tests/**'
       - 'README.md'
       - '.github/workflows/*.yml'

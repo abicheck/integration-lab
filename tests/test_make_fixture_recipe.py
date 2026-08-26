@@ -91,10 +91,18 @@ def test_an_unchanged_fixture_is_not_rebuilt(fixture_dir, tmp_path):
     that would hide a staleness bug rather than fix it."""
     out = tmp_path / "out"
     assert _build(fixture_dir, out).returncode == 0
+    before = (out / "libimpl.so").stat().st_mtime_ns
     second = _build(fixture_dir, out)
     assert second.returncode == 0
-    combined = second.stdout + second.stderr
-    assert "up to date" in combined.lower() or "nothing to be done" in combined.lower(), combined
+    # Asserted on the ARTIFACT rather than on make's message. The message
+    # check was a proxy, and it stopped holding when the fixture-identity
+    # stamp was added below: the stamp target is .PHONY, so make always has
+    # something to consider and prints nothing. The property this test is
+    # actually about -- the library was not rebuilt -- is unchanged, and
+    # checking it directly is stronger than matching output text.
+    assert (out / "libimpl.so").stat().st_mtime_ns == before, (
+        second.stdout + second.stderr
+    )
 
 
 def test_a_deleted_header_does_not_wedge_make(tmp_path):
@@ -125,3 +133,84 @@ def test_clean_removes_the_dependency_file_too(fixture_dir, tmp_path):
     )
     assert not (out / "libimpl.so").exists()
     assert not (out / "libimpl.d").exists(), "a stale .d outliving its .so is its own hazard"
+
+
+# --- re-pointing a build dir at a different fixture (Codex review) --------
+#
+# OUT and DEP are keyed on BUILD_DIR alone while SRC is keyed on
+# FIXTURE_DIR. run_scenario.py names its build dir after the SCENARIO
+# (`<scratch>/<name>-old`) and takes the fixture from
+# scenarios/build-matrix.yaml, so re-pointing a scenario at a different
+# fixture reuses the build dir with a different source. Fixture files are
+# checked-out sources whose mtimes predate the previous build, so make saw
+# "Nothing to be done" and kept the PREVIOUS FIXTURE's library.
+
+
+def test_repointing_the_build_dir_at_another_fixture_rebuilds(tmp_path):
+    """Reproduced against the pre-fix recipe: without the fixture stamp the
+    second build is skipped and the first fixture's library survives."""
+    first = tmp_path / "one"
+    first.mkdir()
+    (first / "lib.h").write_text(HEADER_V1)
+    (first / "lib.cc").write_text(SOURCE)
+
+    second = tmp_path / "two"
+    second.mkdir()
+    (second / "lib.h").write_text(HEADER_V1)
+    # A distinguishable body, so a stale binary is detectable by content.
+    (second / "lib.cc").write_text(SOURCE.replace("return 1;", "return 2;"))
+
+    out = tmp_path / "build"
+    out.mkdir()
+    assert _build(first, out).returncode == 0
+    built_first = _digest(out / "libimpl.so")
+
+    result = _build(second, out)
+    assert result.returncode == 0, result.stderr
+    assert _digest(out / "libimpl.so") != built_first, (
+        "re-pointing BUILD_DIR at a different fixture left the previous "
+        "fixture's library in place"
+    )
+
+
+def test_the_fixture_stamp_records_which_fixture_the_build_dir_holds(tmp_path):
+    fixture = tmp_path / "fx"
+    fixture.mkdir()
+    (fixture / "lib.h").write_text(HEADER_V1)
+    (fixture / "lib.cc").write_text(SOURCE)
+    out = tmp_path / "build"
+    out.mkdir()
+    assert _build(fixture, out).returncode == 0
+    assert (out / "libimpl.fixture").read_text().strip() == str(fixture)
+
+
+def test_rebuilding_the_same_fixture_is_still_a_no_op(tmp_path):
+    """The stamp must not defeat incremental builds: it is rewritten only
+    when the fixture actually changes."""
+    fixture = tmp_path / "fx"
+    fixture.mkdir()
+    (fixture / "lib.h").write_text(HEADER_V1)
+    (fixture / "lib.cc").write_text(SOURCE)
+    out = tmp_path / "build"
+    out.mkdir()
+    assert _build(fixture, out).returncode == 0
+    before = (out / "libimpl.so").stat().st_mtime_ns
+    result = _build(fixture, out)
+    assert result.returncode == 0, result.stderr
+    assert (out / "libimpl.so").stat().st_mtime_ns == before, result.stdout
+
+
+def test_clean_removes_the_fixture_stamp(tmp_path):
+    fixture = tmp_path / "fx"
+    fixture.mkdir()
+    (fixture / "lib.h").write_text(HEADER_V1)
+    (fixture / "lib.cc").write_text(SOURCE)
+    out = tmp_path / "build"
+    out.mkdir()
+    assert _build(fixture, out).returncode == 0
+    subprocess.run(
+        ["make", "-f", str(MAKEFILE), f"FIXTURE_DIR={fixture}",
+         f"BUILD_DIR={out}", "clean"],
+        cwd=REPO_ROOT, check=True, capture_output=True,
+    )
+    assert not (out / "libimpl.fixture").exists()

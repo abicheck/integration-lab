@@ -120,6 +120,50 @@ def test_the_matcher_respects_path_boundaries():
     assert not _matches("capabilities.yaml", "other/capabilities.yaml")
 
 
+def _import_roots() -> set[str]:
+    """Directories the test suite puts on `sys.path`.
+
+    Codex review, fourth recurrence: the data-file derivation cannot see
+    these. `tests/conftest.py` adds `ci/` and `scripts/` to sys.path and the
+    tests then IMPORT those modules rather than opening them by path, so no
+    `REPO_ROOT / "..."` literal names them. Excluding `.py` from the data
+    derivation was justified by "the scripts/*.py and tests/** globs already
+    cover them" -- true for scripts/, false for ci/, and the exemption hid
+    the difference. Deriving the import roots closes it at the source.
+    """
+    roots: set[str] = set()
+    for source in sorted((REPO_ROOT / "tests").glob("*.py")):
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if "sys.path.insert" not in line:
+                continue
+            roots |= {
+                name
+                for name in _SEGMENT.findall(line)
+                if (REPO_ROOT / name).is_dir()
+            }
+    return roots
+
+
+def test_the_import_roots_are_discovered():
+    assert {"ci", "scripts"} <= _import_roots(), sorted(_import_roots())
+
+
+def test_every_imported_module_directory_triggers_the_workflow():
+    """A module the tests import is as much an input as a file they open --
+    and capability-matrix.yml is the only workflow that runs pytest at all."""
+    patterns = _declared_paths()
+    missing = sorted(
+        root
+        for root in _import_roots()
+        if not any(_matches(p, f"{root}/probe.py") for p in patterns)
+    )
+    assert not missing, (
+        "the test suite imports modules from these directories, but a PR "
+        "changing only one of them matches no path filter and so skips the "
+        f"only workflow that runs pytest: {missing}"
+    )
+
+
 def test_the_derivation_reads_paths_deeper_than_three_segments():
     """The segment bound silently TRUNCATED rather than failing, which is how
     `buildsystems/make/fixtures/Makefile` disappeared from the derivation

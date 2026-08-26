@@ -67,7 +67,28 @@ all: $(OUT)
 # does not wedge make with "no rule to make target". The `-include` is
 # leading-dash on purpose: the .d file does not exist on the first build,
 # and that is not an error.
-$(OUT): $(SRC)
+# Codex review, second pass on this target: -MMD tracks the headers of the
+# fixture that was built, but OUT and DEP are keyed on BUILD_DIR alone while
+# SRC is keyed on FIXTURE_DIR. run_scenario.py names its build dir after the
+# SCENARIO (`<scratch>/<name>-old`) and takes the fixture from
+# scenarios/build-matrix.yaml, so re-pointing a scenario at a different
+# fixture reuses the same build dir with a different source. Fixture files
+# are checked-out sources whose mtimes predate the previous build, so make
+# saw "Nothing to be done" and left the PREVIOUS FIXTURE's libimpl.so in
+# place -- a wrong-fixture comparison, worse than the stale-header case
+# above, and equally invisible because CMake and Bazel would not do it.
+#
+# The stamp records which fixture the build dir currently holds and is
+# rewritten only when that value actually changes (cmp before write), so
+# incremental rebuilds within one fixture stay incremental.
+STAMP := $(BUILD_DIR)/libimpl.fixture
+
+.PHONY: force
+$(STAMP): force
+	@mkdir -p "$(BUILD_DIR)"
+	@printf '%s\n' "$(FIXTURE_DIR)" | cmp -s - "$@" 2>/dev/null || printf '%s\n' "$(FIXTURE_DIR)" > "$@"
+
+$(OUT): $(SRC) $(STAMP)
 	@test -f "$(SRC)" || { echo "FIXTURE_DIR=$(FIXTURE_DIR) has no lib.cc (expected the fixtures/<name>/{v1,v2} shape)" >&2; exit 1; }
 	@mkdir -p "$(BUILD_DIR)"
 	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -I"$(FIXTURE_DIR)" \
@@ -76,4 +97,4 @@ $(OUT): $(SRC)
 -include $(DEP)
 
 clean:
-	rm -f "$(OUT)" "$(DEP)"
+	rm -f "$(OUT)" "$(DEP)" "$(STAMP)"
