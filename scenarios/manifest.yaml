@@ -29,6 +29,144 @@
 #                                        would be a real cross-backend bug
 #                                        worth catching here.
 expected_gaps:
+  # The producer-compiler scenario proves ABICheck's findings diverge by
+  # producer, but never hands ABICheck a profile id: it compares each
+  # producer's pair standalone. Routing a per-profile cell's findings to the
+  # right profile is the native project path's job, and exercising it needs
+  # the Clang profile to be a contract profile with its own accepted-main
+  # baseline. Declared here rather than implied by the scenario's name.
+  # The plugin-pack reuse scenario's `wrong-llvm-major` assertion cannot pass
+  # against the pack the lab actually produces: the manifest
+  # scripts/merge_abicheck_facts.py writes carries `abicheck_inputs_version`
+  # (the pack FORMAT version) and an empty `version`, and no LLVM or plugin
+  # identity at all. The harness deliberately RAISES on that shape rather than
+  # skipping, because a pack with no producer identity cannot be rejected for
+  # carrying the wrong one -- which is the interchangeability hazard itself.
+  #
+  # Declared here rather than left implicit in a permanently failing
+  # assertion. Closing it means having the pack record the LLVM major it was
+  # collected with; the aspect in tools/abicheck/facts.bzl knows the compiler
+  # it ran, so this is the lab's own to fix, not upstream's. Not done here
+  # because inventing the field without running the real plugin build would be
+  # asserting a binding nothing verified -- the exact failure this assertion
+  # exists to catch.
+  # The L4 clang-plugin compare produces no verdict, and the reuse job
+  # inherits that. This was reproduced locally against the exact bundle CI
+  # run 32954335654 uploaded, and attributed to specific contract fields
+  # rather than left as "exit 16":
+  #
+  #   scope_fields   public_header_dirs  baseline ["<single-header-dir>"]
+  #                                      reuse    []
+  #   profile_fields compiler_family     baseline gnu      reuse clang
+  #                  compiler_version    baseline castxml  reuse clang 18
+  #                  include_sequence, language_standard, macro_ops
+  #
+  # The scope half is the lab's own bug and is FIXED here: scope_fingerprint
+  # hashes `headers` and `public_header_dirs` separately, a `-H` file feeds
+  # only the first, and the committed baseline was extracted with both. Both
+  # compares now pass the public-header directory alongside the file, which
+  # reproduces the baseline's scope_fingerprint exactly.
+  #
+  # What remains is the profile half. A second local experiment against the
+  # same bundle decomposes it into four independent fields -- three of which
+  # ARE reachable, correcting the earlier note here that called the whole
+  # thing "not a flag to tweak":
+  #
+  #   1. compiler_family (castxml/gnu vs clang). Reachable. Parsing the
+  #      headers with castxml while still consuming the CLANG plugin pack via
+  #      --build-info is legal and, verified, still resolves evidence depth
+  #      `source` -- so pack reuse survives the frontend switch. This is the
+  #      important feasibility result: the job's whole point is preserved.
+  #   2. language_standard and 3. macro_ops. Reachable, and verified to match
+  #      the baseline EXACTLY by passing the flags the baseline extraction
+  #      used: --lang c++ --compiler-option -std=c++17, plus the four
+  #      determinism ops -D__DATE__/-D__TIMESTAMP__/-D__TIME__="redacted" and
+  #      -U_FORTIFY_SOURCE.
+  #   4. include_sequence. Now traced to its source, and it is the one that
+  #      does NOT close for this job. baseline.yml's "Collect source-aware
+  #      ABI baseline" step runs the upstream action with
+  #      `public-header-dir: include` AND `sources: .` -- the committed
+  #      baseline is a WHOLE-SOURCE-TREE extraction, which is where its
+  #      repo-root-keyed include entry comes from. The clean reuse job has no
+  #      source tree, by design; that absence is the entire premise of the
+  #      job. So this is not a flag oversight on either side but the job's
+  #      premise colliding with how the baseline is made, and no invocation
+  #      of the clean job can reproduce a `--sources .` include_sequence.
+  #
+  #      That splits the remedy in two, and the two jobs need different
+  #      things:
+  #        - l4_clang_plugin HAS a full checkout, so it can plausibly match
+  #          by mirroring the baseline's own invocation (castxml frontend,
+  #          --sources ., --header include) while still passing the plugin
+  #          pack. Worth trying there first: it is the cheaper of the two and
+  #          it is where the "verdict: null" report is actually produced.
+  #        - plugin_pack_reuse cannot, and genuinely needs a baseline
+  #          extracted the way IT dumps -- shipped in the bundle rather than
+  #          read from abi/. This is the same conclusion as before, but now
+  #          for a demonstrated reason rather than an assumed one.
+  #   5. compiler_version. Environmental, and not decidable from here: the
+  #      committed baseline was produced by castxml 0.7.0 bundling clang
+  #      20.1.8 (conda-forge) with g++ 14.3.0, while action/install-castxml.sh
+  #      pins castxml 0.6.20260105 bundling clang 21.1.8. Whether these agree
+  #      in CI depends on which environment actually produces the baseline on
+  #      the run -- restored vs rebuilt -- and that has to be read off a real
+  #      run rather than guessed.
+  #
+  # Reproduction (needs the bundle artifact and the pinned installer; no
+  # repo build): download `abicheck-plugin-pack-bundle`, run
+  # action/install-castxml.sh, then `abicheck dump bundle/lib/libmath.so
+  # --header <hdr> --header <hdr-dir> --ast-frontend castxml --lang c++
+  # --compiler-option -std=c++17 <determinism ops> --build-info
+  # bundle/abicheck_inputs --depth source` and diff `contract.profile_fields`
+  # against the bundle's own baseline. The baseline side of that diff is
+  # defined by baseline.yml's "Collect source-aware ABI baseline" step --
+  # read it before assuming any field is arbitrary.
+  #
+  # This is NOT specific to the clean job. The `abicheck-l4-clang-plugin`
+  # report the l4 job itself uploaded in that run carries `"verdict": null`
+  # and `"kind": "scope_mismatch"`: the in-tree L4 plugin compare has never
+  # produced a verdict either.
+  #
+  # This is why the receipt matters. With the positive control failing,
+  # every mutation "rejected" with the SAME exit 16, so five assertions went
+  # green while proving nothing about whether any mutation was detected. The
+  # harness now treats the positive control as a precondition and reports
+  # those cases as not evaluated instead, and names the refusal by its
+  # `reason.kind` so scope drift, profile drift and a broken pack stop
+  # collapsing into one indistinguishable channel.
+  - id: plugin-pack-reuse-scope-contract
+    status: expected_gap
+    upstream_issue: integration-lab#pack-reuse-scope-contract
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: baseline_is_castxml_extracted_but_the_l4_plugin_path_parses_with_clang
+
+  # The l4-clang-replay report carries no analysis_assurance block at all
+  # (CI run 32954335654), so it cannot serve as the reuse scenario's
+  # reference: agreeing with a report that proves no source-depth
+  # completeness is not evidence. The check is deliberately NOT relaxed back
+  # to accepting an absent block -- that was the hole an earlier revision
+  # had, and ci/validate_source_depth.py already treats a missing block as
+  # "source-depth satisfaction is unproven" everywhere else in this
+  # repository.
+  - id: replay-report-assurance-block
+    status: expected_gap
+    upstream_issue: abicheck#scan-report-analysis-assurance
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: replay_report_carries_no_analysis_assurance
+  - id: plugin-pack-producer-identity
+    status: expected_gap
+    upstream_issue: integration-lab#pack-producer-identity
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: pack_manifest_records_no_producer_identity
+  - id: producer-attribution-through-project-path
+    status: expected_gap
+    upstream_issue: abicheck#per-profile-cell-attribution
+    expected_failure:
+      phase: check-project
+      reason: clang_profile_not_a_contract_profile
   - id: same-binary-clang-client-only-break
     status: expected_gap
     upstream_issue: "abicheck#consumer-compile-execution"
@@ -46,6 +184,388 @@ expected_gaps:
     upstream_issue: "abicheck#run-plan-build-output-projection"
     expected_failure: {phase: check-project, reason: target_evidence_path_not_projected}
 
+# Producer-compiler attribution.  Every other profile in this lab is a GCC
+# 14 profile -- they vary by build system, not by the compiler that
+# produces the ABI -- so nothing yet proves a finding is attributed to the
+# producers it actually affects and withheld from the ones it does not.
+# One fixture, one build system, two producer compilers; the change lives
+# entirely in the fixture's non-Clang preprocessor branch.
+producer_scenarios:
+  - id: producer-compiler-word-width
+    runner: ci/run_producer_compiler_scenario.py
+    status: supported
+    fixture: fixtures/producer_compiler
+    producers:
+      linux-x86_64-gcc14-cxx17-cmake-ninja:
+        cxx: g++-14
+        standard: c++17
+      linux-x86_64-clang18-cxx17-cmake-ninja:
+        cxx: clang++-18
+        standard: c++17
+    expect:
+      # GCC sees int -> long long: _Z11lab_consumei is removed and
+      # _Z11lab_consumex added, a real L0 break with no headers needed.
+      affected_profiles:
+        - linux-x86_64-gcc14-cxx17-cmake-ninja
+      # Clang sees `long` on both sides: _Z11lab_consumel is unchanged.
+      unaffected_profiles:
+        - linux-x86_64-clang18-cxx17-cmake-ninja
+      # Per-producer findings, not just verdicts. Asserting the verdict
+      # alone would leave the runner doing most of the work: it would pass
+      # if ABICheck reported the right verdict for the wrong reason. Each
+      # producer must name exactly what its own toolchain emitted.
+      producers:
+        linux-x86_64-gcc14-cxx17-cmake-ninja:
+          verdict: BREAKING
+          # Severities transcribed from the attribution.json that CI run
+          # 32954335596 (job 98132563801, commit 475c6ef) actually wrote --
+          # not from a local approximation. A reclassification that kept the
+          # BREAKING verdict but downgraded either breaking finding now fails.
+          findings:
+            - {kind: typedef_base_changed, symbol: client_word, severity: breaking}
+            - {kind: func_removed, symbol: _Z11lab_consumei, severity: breaking}
+            - {kind: func_added, symbol: _Z11lab_consumex, severity: compatible}
+        linux-x86_64-clang18-cxx17-cmake-ninja:
+          verdict: NO_CHANGE
+          findings: []
+
+# Emitted loader/runtime feature drift. One source (fixtures/loader_features/
+# lib.c), linked twice per case with only linker/codegen flags differing, so
+# a finding can only come from the feature the toolchain emitted.
+#
+# Deliberately NOT modelled as a minimum binutils version: binutils is a
+# producer tool, and which binutils built an artifact is not what a loader
+# sees. Each case names the ELF feature it emits, and every side declares
+# what readelf must show before any comparison runs -- so a flag the
+# toolchain silently ignored fails the scenario instead of producing two
+# identical binaries, no findings, and a green result that tested nothing.
+loader_scenarios:
+- id: dt-relr-introduced
+  description: Relative relocations folded into DT_RELR. A loader that does not understand DT_RELR cannot
+    apply them at all.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-z,nopack-relative-relocs
+    emits:
+      absent:
+      - (RELR)
+  new:
+    link:
+    - -Wl,-z,pack-relative-relocs
+    emits:
+      present:
+      - (RELR)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: dt_relr_introduced
+      symbol: DT_RELR
+      severity: risk
+- id: dt-relr-removed
+  description: 'DT_RELR dropped again: readable by strictly more loaders, so a compatible direction --
+    asserted so the pair cannot both read as risk.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-z,pack-relative-relocs
+    emits:
+      present:
+      - (RELR)
+  new:
+    link:
+    - -Wl,-z,nopack-relative-relocs
+    emits:
+      absent:
+      - (RELR)
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: dt_relr_removed
+      symbol: DT_RELR
+      severity: compatible
+- id: runpath-to-rpath
+  description: 'DT_RUNPATH downgraded to DT_RPATH: RPATH is searched BEFORE LD_LIBRARY_PATH and is not
+    overridable, so a consumer that relied on overriding the search path silently stops being able to.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--enable-new-dtags
+    emits:
+      present:
+      - (RUNPATH)
+      absent:
+      - (RPATH)
+  new:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--disable-new-dtags
+    emits:
+      present:
+      - (RPATH)
+      absent:
+      - (RUNPATH)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: rpath_type_changed
+      symbol: DT_RPATH
+      severity: risk
+- id: rpath-to-runpath
+  description: The reverse direction, which changes lookup order for every dependency and is therefore
+    also a runtime risk, not a free upgrade.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--disable-new-dtags
+    emits:
+      present:
+      - (RPATH)
+  new:
+    link:
+    - -Wl,-rpath,/opt/lab
+    - -Wl,--enable-new-dtags
+    emits:
+      present:
+      - (RUNPATH)
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: rpath_type_changed
+      symbol: DT_RUNPATH
+      severity: risk
+- id: sysv-hash-removed
+  description: The SysV .hash table dropped, leaving only .gnu.hash. Loaders and tools that read only
+    the SysV table can no longer resolve symbols.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--hash-style=both
+    emits:
+      present:
+      - (HASH)
+      - (GNU_HASH)
+  new:
+    link:
+    - -Wl,--hash-style=gnu
+    emits:
+      present:
+      - (GNU_HASH)
+      absent:
+      - '(HASH)  '
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: hash_style_removed
+      symbol: .hash
+      severity: risk
+- id: soname-major-change
+  description: 'SONAME major bump with no actual ABI change: every existing consumer must relink, and
+    the bump is not justified by the surface.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,-soname,liblab.so.1
+    emits:
+      present:
+      - liblab.so.1
+  new:
+    link:
+    - -Wl,-soname,liblab.so.2
+    emits:
+      present:
+      - liblab.so.2
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: soname_changed
+      symbol: DT_SONAME
+      severity: risk
+    - kind: soname_bump_unnecessary
+      symbol: DT_SONAME
+      severity: compatible
+- id: symbol-version-node-added
+  description: 'A new version node appears alongside the existing one: additive, so already-linked consumers
+    keep resolving against the old node.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--version-script={fixture}/one-node.map
+    emits:
+      present:
+      - 'Name: LAB_1.0'
+      absent:
+      - 'Name: LAB_2.0'
+  new:
+    link:
+    - -Wl,--version-script={fixture}/two-nodes.map
+    emits:
+      present:
+      - 'Name: LAB_1.0'
+      - 'Name: LAB_2.0'
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: symbol_version_defined_added
+      symbol: LAB_2.0
+      severity: compatible
+- id: symbol-version-node-removed
+  description: 'A version node disappears: every consumer that bound to it fails to resolve at load time.
+    The breaking direction of the pair above.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -Wl,--version-script={fixture}/two-nodes.map
+    emits:
+      present:
+      - 'Name: LAB_2.0'
+  new:
+    link:
+    - -Wl,--version-script={fixture}/one-node.map
+    emits:
+      absent:
+      - 'Name: LAB_2.0'
+  expect:
+    verdict: BREAKING
+    findings:
+    - kind: symbol_version_node_removed
+      symbol: LAB_2.0
+      severity: breaking
+- id: cet-protection-weakened
+  description: IBT/SHSTK dropped from .note.gnu.property. A process that enforces CET loses that enforcement
+    as soon as this object is mapped in.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -fcf-protection=full
+    - -Wl,-z,ibt
+    - -Wl,-z,shstk
+    emits:
+      present:
+      - IBT
+      - SHSTK
+  new:
+    link:
+    - -fcf-protection=none
+    emits:
+      absent:
+      - 'x86 feature: IBT'
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: cet_protection_weakened
+      symbol: .note.gnu.property
+      severity: risk
+- id: cet-protection-improved
+  description: The strengthening direction, asserted so a scanner that reported the same severity in both
+    directions would fail here.
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -fcf-protection=none
+    emits:
+      absent:
+      - 'x86 feature: IBT'
+  new:
+    link:
+    - -fcf-protection=full
+    - -Wl,-z,ibt
+    - -Wl,-z,shstk
+    emits:
+      present:
+      - IBT
+      - SHSTK
+  expect:
+    verdict: COMPATIBLE
+    findings:
+    - kind: cet_protection_improved
+      symbol: .note.gnu.property
+      severity: compatible
+- id: static-tls-introduced
+  description: 'DF_STATIC_TLS appears: the object now demands a static TLS block, so it can fail to dlopen
+    once the process''s surplus static TLS is spent.'
+  fixture: fixtures/loader_features
+  old:
+    link:
+    - -ftls-model=global-dynamic
+    emits:
+      absent:
+      - STATIC_TLS
+  new:
+    link:
+    - -ftls-model=initial-exec
+    emits:
+      present:
+      - STATIC_TLS
+  expect:
+    verdict: COMPATIBLE_WITH_RISK
+    findings:
+    - kind: static_tls_introduced
+      symbol: DF_STATIC_TLS
+      severity: risk
+
+# Wheel-level comparison: old.whl against new.whl, not a standalone .so.
+# python_scenarios (below) recompiles a bare _core.so and compares adjacent
+# .pyi files -- a sound unit-level acceptance case that stays as one, but it
+# never exercises the packaging layer, so it would not notice a missing
+# extension, an unpackaged stub, an added/removed extension, or wheel tags
+# that stopped matching the interpreter. This does.
+wheel_scenarios:
+- id: wheel-package-level
+  runner: ci/run_python_wheel_scenario.py
+  status: supported
+  package: bindings/python
+  stubs: bindings/python/scenarios/keyword-renamed
+  old_stub: v1.pyi
+  new_stub: v2.pyi
+  identity:
+    require_stubs: true
+    packaged_under:
+    - abicheck_lab_py/
+  cases:
+  - id: stub-api-break-inside-the-package
+    old: old
+    new: new
+    expect:
+      verdict: API_BREAK
+      findings:
+      - kind: python_api_parameter_renamed
+        symbol: python:_core.transform
+      - kind: python_api_default_removed
+        symbol: python:_core.transform
+      unmatched_old: []
+      unmatched_new: []
+      bundle_verdict: NO_CHANGE
+      bundle_accounting_findings: []
+  - id: extension-added-to-the-package
+    old: old
+    new: old_plus_extension
+    # Compiled for this interpreter with the matching PyInit__extra and
+    # import-checked before it is packed, so this exercises accounting for a
+    # real extension rather than for a renamed byte copy of _core (which
+    # still exports PyInit__core and cannot be imported at all).
+    added_module: _extra
+    expect:
+      findings: []
+      changed_libraries: []
+      unmatched_old: []
+      # Declared by module stem, not filename: the ABI tag in an extension
+      # filename is whatever interpreter the runner has, and a filename-level
+      # expectation would pin this scenario to one Python version.
+      unmatched_new:
+      - _extra
+      # Package-level accounting only. No `verdict`/`bundle_verdict` is
+      # declared here on purpose: a genuinely loadable second module links
+      # CPython, so the bundle's dependency-closure findings (and the
+      # verdict they drive) are a property of the interpreter it was built
+      # against, not of the addition being noticed. Those findings are
+      # recorded in the receipt instead of pinned.
+      bundle_accounting_findings:
+      - kind: bundle_library_added
+        symbol: _extra
+
 depth_scenarios:
   - id: l2-green-l4-macro-break
     runner: ci/run_depth_scenario.py
@@ -54,13 +574,30 @@ depth_scenarios:
     expect:
       headers:
         verdict: NO_CHANGE
+        # Dump-side. This is the half that detects a depth fallback.
         effective_depth: headers
         findings: []
+        # Compare-side. `status: partial` is honest, not a concession: for
+        # this fixture --scope-public-headers cannot resolve a public
+        # surface and falls back to the full export table. That channel is
+        # orthogonal to depth, and pinning the real value here means a
+        # change in it fails the scenario instead of being absorbed.
+        compare_assurance:
+          status: partial
+          fact_set_comparability: not_applicable
+          l3_context_status: not_evaluated
       source:
         verdict: API_BREAK
         effective_depth: source
         findings:
           - {kind: public_macro_value_changed, symbol: LAB_MAX_ITEMS}
+        # The source stage has no such excuse: `complete`, plus the two
+        # fields that prove L3/L4 evidence was actually used in the
+        # comparison rather than it quietly running on L0/L2 alone.
+        compare_assurance:
+          status: complete
+          fact_set_comparability: comparable
+          l3_context_status: clean
 
 runtime_scenarios:
   - id: runtime-floor-raised

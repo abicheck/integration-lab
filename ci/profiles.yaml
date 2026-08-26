@@ -99,6 +99,12 @@ profiles:
 
   - id: linux-x86_64-gcc14-cxx17-cmake-ninja
     backend: cmake
+    # Which CMakePresets.json preset this profile builds through. Read by
+    # ci/backends/cmake.py, which also reads the preset's own binaryDir --
+    # the preset used to be hard-coded in the backend, so a second cmake
+    # profile would have built with this one's compiler while reporting its
+    # own (Codex review, PR #30).
+    cmake_preset: gcc14-cxx17
     # Promoted to a native project contract after standardized build output,
     # exact GCC binding, and baseline-backed check-project coverage landed.
     contract: true
@@ -152,6 +158,78 @@ profiles:
       require_public_headers: true
       min_compile_units: 1
 
+  - id: linux-x86_64-clang18-cxx17-cmake-ninja
+    backend: cmake
+    cmake_preset: clang18-cxx17
+    # NOT a contract profile, and deliberately not in ci/event-policy.yaml
+    # yet. A profile only earns `contract: true` once it has a committed
+    # per-profile baseline under abi/profiles/<id>/ for check_profile.py to
+    # compare against; until profile-baseline.yml has published one, adding
+    # this id to an event set would make integration-shadow's fan-in gate
+    # red on main for a missing baseline rather than for a real finding.
+    # The remaining promotion step is exactly that: run profile-baseline.yml
+    # for this id, commit abi/profiles/linux-x86_64-clang18-cxx17-cmake-ninja/,
+    # then add the id to event-policy.yaml's `cmake`/`advisory` sets.
+    #
+    # Why it exists now: every other profile here is a GCC 14 profile, so
+    # they vary by BUILD SYSTEM and never by PRODUCER COMPILER. This entry
+    # holds the producer axis, and holds it against the same CMake+Ninja
+    # build system as linux-x86_64-gcc14-cxx17-cmake-ninja so the two
+    # variables are never changed at once. The attribution claim itself is
+    # already exercised end to end by the `producer-compiler-word-width`
+    # scenario in scenarios/manifest.yaml, which needs no committed
+    # baseline because it builds both sides of its own fixture.
+    #
+    # clang-18, not clang-20: 18 is what ubuntu-24.04's own apt ships and
+    # what abi-scan.yml's L4 replay/toolchain-matrix legs already install.
+    # Pinning 20 would add an apt.llvm.org source to every job that builds
+    # this profile -- a separate, riskier change than introducing the axis.
+    contract: false
+    description: >
+      CMake (Ninja generator) build of the same math/strings/consumer
+      sources as linux-x86_64-gcc14-cxx17-cmake-ninja, produced by clang-18
+      instead of gcc-14. Holds the producer-compiler axis.
+    root: "buildsystems/cmake"
+    generator: Ninja
+    compiler:
+      family: clang
+      cc: clang-18
+      cxx: clang++-18
+      standard: c++17
+    targets:
+      core: core
+      math: math
+      strings: strings
+      consumer: consumer_app
+      legacy_math: legacy_math
+      legacy_strings: legacy_strings
+    header_roots:
+      - include
+      - core_include
+      - strings_lib/include
+    target_header_roots:
+      core: [core_include]
+      math: [include]
+      strings: [strings_lib/include]
+      consumer: []
+      legacy_math: [include]
+      legacy_strings: [strings_lib/include]
+    staged_names:
+      legacy_math: legacy/libmath.so
+      legacy_strings: legacy/libstrings.so
+    soname_companions:
+      legacy_math: libmath.so.1
+      legacy_strings: libstrings.so.1
+    legacy_target_aliases:
+      math: legacy_math
+      strings: legacy_strings
+    native_exclude_targets: [legacy_math, legacy_strings]
+    build_command: "cmake --preset clang18-cxx17 && cmake --build --preset clang18-cxx17"
+    coverage:
+      checked_targets: [math, strings]
+      require_public_headers: true
+      min_compile_units: 1
+
   - id: linux-x86_64-gcc14-cxx17-make-bear
     backend: make
     contract: true
@@ -181,15 +259,11 @@ profiles:
       strings: [strings_lib/include]
       consumer: []
     build_command: "make -C buildsystems/make CC=gcc-14 CXX=g++-14"
-    # See the bazel profile's own `coverage` comment above. `bear` is
-    # optional on this backend (make.py's own verify_environment() note),
-    # so `require_compile_commands: false` -- a runner without `bear`
-    # degrades to "no compile_commands.json evidence" (a coverage note),
-    # not a coverage failure, matching make.py's existing best-effort
-    # posture for it. When compile_commands.json IS present (bear
-    # installed), min_compile_units still applies to it.
+    # Bear is a hard dependency for this contract profile. A missing or
+    # empty compile database fails environment/evidence validation; it may
+    # not degrade a required check to a binary-only success.
     coverage:
       checked_targets: [math, strings]
       require_public_headers: true
       min_compile_units: 1
-      require_compile_commands: false
+      require_compile_commands: true

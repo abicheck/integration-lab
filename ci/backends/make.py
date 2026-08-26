@@ -1,10 +1,12 @@
-"""Make backend: drives buildsystems/make/Makefile via real `make`
-subprocess calls. Optionally invokes `bear` for a compile_commands.json
-when it's on PATH -- degrades gracefully (a note, not a failure) when it
-isn't, per PR1 item 5's own requirement.
+"""Make backend with mandatory Bear compile evidence.
+
+The native Make profile is a project contract.  It must therefore fail
+closed when it cannot produce the compile database consumed by the scanner;
+a successful binary build is not sufficient evidence for that profile.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from pathlib import Path
@@ -13,6 +15,37 @@ from typing import Any, Dict
 from base import BackendError, BuildBackend, BuildResult, EnvironmentCheck, TargetResult
 
 _EXECUTABLE_TARGETS = {"consumer"}
+
+
+def _invocation_problems(command: Dict[str, Any]) -> list:
+    """Validate a compile-database entry's invocation fields.
+
+    The JSON Compilation Database format allows either `command` (one shell
+    string) or `arguments` (an argv list).  At least one has to be present
+    AND well-typed: a scanner re-executes or re-parses whatever is here, so
+    a number or a nested list is not evidence, it is a later crash.  When
+    both are present, one usable form is enough -- but a present-and-broken
+    field with no usable sibling is reported, never silently ignored.
+    """
+    problems = []
+    usable = False
+    if "command" in command:
+        value = command["command"]
+        if isinstance(value, str) and value.strip():
+            usable = True
+        else:
+            problems.append("command must be a non-empty string")
+    if "arguments" in command:
+        value = command["arguments"]
+        if not isinstance(value, list) or not value:
+            problems.append("arguments must be a non-empty array")
+        elif any(not isinstance(item, str) for item in value):
+            problems.append("arguments must contain only strings")
+        else:
+            usable = True
+    if usable:
+        return []
+    return problems or ["one of command or arguments is required"]
 
 
 class MakeBackend(BuildBackend):
@@ -25,7 +58,7 @@ class MakeBackend(BuildBackend):
     def verify_environment(self) -> EnvironmentCheck:
         missing = []
         versions = {}
-        for tool in ("make",):
+        for tool in ("make", "bear"):
             version = self._tool_version(tool)
             if version is None:
                 missing.append(tool)
@@ -38,15 +71,7 @@ class MakeBackend(BuildBackend):
             missing.append(cxx)
         else:
             versions[cxx] = cxx_version
-        notes = []
-        if shutil.which("bear") is None:
-            notes.append(
-                "bear not found on PATH -- compile_commands.json generation will be "
-                "skipped (see Makefile's own `compiledb` target); this does not fail "
-                "verify_environment() since bear is optional evidence, not required "
-                "to build."
-            )
-        return EnvironmentCheck(ok=not missing, tool_versions=versions, missing=missing, notes=notes)
+        return EnvironmentCheck(ok=not missing, tool_versions=versions, missing=missing)
 
     def clean(self) -> None:
         # check=False previously discarded a failed `make clean` (e.g. a
@@ -107,19 +132,56 @@ class MakeBackend(BuildBackend):
     def collect_evidence(self, build_result: BuildResult) -> Dict[str, Any]:
         evidence: Dict[str, Any] = {"kind": "make+bear"}
         if shutil.which("bear") is None:
-            evidence["compile_commands_present"] = False
-            evidence["note"] = "bear not installed on this runner -- compile_commands.json not generated"
-            return evidence
-        try:
-            self._run(["make", "compiledb", *self._cc_cxx_args()])
-        except BackendError as exc:
-            evidence["compile_commands_present"] = False
-            evidence["note"] = f"bear invocation failed: {exc}"
-            return evidence
+            raise BackendError(
+                "bear is required by the Make contract profile but was not found on PATH"
+            )
+        self._run(["make", "compiledb", *self._cc_cxx_args()])
         compile_commands = self._build_dir / "compile_commands.json"
-        evidence["compile_commands_present"] = compile_commands.is_file()
-        if evidence["compile_commands_present"]:
-            evidence["compile_commands_path"] = str(compile_commands)
+        if not compile_commands.is_file():
+            raise BackendError(
+                f"Make evidence collection succeeded without producing {compile_commands}"
+            )
+        try:
+            raw = compile_commands.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BackendError(f"Make compile database is unreadable: {exc}") from exc
+        except UnicodeDecodeError as exc:
+            # A truncated or non-UTF-8 capture is an evidence failure with a
+            # named cause, not an uncaught decode traceback out of json.
+            raise BackendError(
+                f"Make compile database is not valid UTF-8 text: {exc}"
+            ) from exc
+        try:
+            commands = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise BackendError(f"Make compile database is not valid JSON: {exc}") from exc
+        if not isinstance(commands, list) or not commands:
+            raise BackendError(
+                "Make compile database must be a non-empty JSON array of compile commands"
+            )
+        for index, command in enumerate(commands):
+            # Shape first: a non-object entry has no fields to inspect, and
+            # `{}.get` on a list/str/None would raise rather than report.
+            if not isinstance(command, dict):
+                raise BackendError(
+                    f"Make compile database entry {index} is not a JSON object "
+                    f"(got {type(command).__name__})"
+                )
+            problems = []
+            for field in ("directory", "file"):
+                value = command.get(field)
+                if not isinstance(value, str) or not value:
+                    # A non-string here is what a scanner would later index
+                    # as a path; reject it as evidence rather than pass it on.
+                    problems.append(f"{field} must be a non-empty string")
+            problems.extend(_invocation_problems(command))
+            if problems:
+                raise BackendError(
+                    f"Make compile database entry {index} is invalid: "
+                    + "; ".join(problems)
+                )
+        evidence["compile_commands_present"] = True
+        evidence["compile_commands_path"] = str(compile_commands)
         return evidence
 
     def stage(self, build_result: BuildResult, dest_dir: Path) -> Dict[str, Any]:

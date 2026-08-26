@@ -109,7 +109,8 @@ jobs:
       # including the Bazel one's own describe() identity, even though
       # Bazel doesn't consult $PATH for its own toolchain -- see that
       # profile's own comment) is not preinstalled on ubuntu-24.04 runners;
-      # gcc-13 is. bear (for the make profile's optional compile_commands.json)
+      # gcc-13 is. bear (mandatory for the make contract profile's
+      # compile_commands.json -- ci/backends/make.py fails closed without it)
       # and patchelf (bazel.py's stage() uses it to rewrite the staged
       # consumer_app's RUNPATH so it can find libmath.so without Bazel's own
       # bazel-bin/_solib_*/ tree -- Codex review, PR #19) aren't preinstalled
@@ -389,7 +390,24 @@ jobs:
   # intentionally aligned and stable."
   cross_build_equivalence:
     needs: [select, build]
-    if: always()
+    # See the identical guard on `integration_gate` for the full reasoning:
+    # a CANCELLED `select` (what happens to every superseded run) left this
+    # job with no matrix, and it failed with "select job produced no matrix"
+    # -- a routine supersession reading exactly like a real cross-build
+    # disagreement.
+    #
+    # `build` needs the same guard, and not guarding it was the same bug one
+    # job further down. `select` finishes in seconds, so a supersession
+    # almost always cancels `build` while `select` has already SUCCEEDED --
+    # exactly what happened on run 32958900378, where all three build legs
+    # were cancelled and this job went on to fail with "fewer than two of the
+    # 3 expected profiles produced staged output -- nothing to compare".
+    # That is the artifact-producing upstream: if it did not run, there is
+    # nothing here to compare and nothing to report.
+    if: >-
+      always()
+      && needs.select.result != 'cancelled'
+      && needs.build.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -540,7 +558,31 @@ jobs:
   # and does fail for real, it just doesn't yet block a merge.
   integration_gate:
     needs: [select, build, cross_build_equivalence]
-    if: always()
+    # A CANCELLED `select` is what happens to every superseded run when a new
+    # commit is pushed. With no matrix to evaluate, a bare `always()` failed
+    # this gate with "select job produced no matrix -- cannot evaluate the
+    # integration gate", so a routine supersession was indistinguishable from
+    # a real gate failure. I misread that as real three times in one day,
+    # which is the actual cost of leaving it.
+    #
+    # `!= 'cancelled'` rather than `== 'success'` on purpose. Cancellation is
+    # not a result, so stepping aside for it loses nothing. A genuinely FAILED
+    # `select` is different: this gate is the summary check a reviewer reads,
+    # and a *skipped* required check can leave a PR looking mergeable while
+    # `select` is broken. On a real failure the gate stays red, and its "no
+    # matrix" message is then accurate rather than misleading.
+    #
+    # Same treatment for the two upstreams whose OUTPUT this gate renders: a
+    # cancelled `build` leaves no receipts to summarize (run 32958900378: all
+    # three legs cancelled, this gate red on "Render integration gate
+    # summary"), and a cancelled `cross_build_equivalence` leaves no
+    # equivalence result to note. A genuine FAILURE in either still gets a
+    # red gate -- only cancellation is stepped aside for.
+    if: >-
+      always()
+      && needs.select.result != 'cancelled'
+      && needs.build.result != 'cancelled'
+      && needs.cross_build_equivalence.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -640,6 +682,106 @@ jobs:
   # only needs scenarios/build-matrix.yaml's currently declared
   # add_function/remove_function subset (see that file's own header
   # comment), not any profile's staged build.
+  scenarios_make:
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install gcc-14/g++-14/cmake/ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 cmake ninja-build
+
+      - run: pip install --quiet pyyaml
+
+      # Same pinned CastXML install scenarios_cmake uses -- see its own
+      # step for why the distro package is not enough.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Install abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Run scenarios against Make-built fixtures
+        run: python3 scripts/run_scenario.py --build-system make --results-dir scenario-results-make
+
+      - name: Upload Make scenario results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-results-make
+          path: scenario-results-make/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # The parity gate. scenarios_cmake and scenarios_make each check their own
+  # run against that scenario's oracle; passing separately is not parity,
+  # because all three build systems could satisfy their own oracle while
+  # disagreeing with each other about which symbols moved. This job runs the
+  # same suite under all three and compares the reports across them.
+  scenario_parity:
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Install gcc-14/g++-14/cmake/ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-14 g++-14 cmake ninja-build
+
+      - run: pip install --quiet pyyaml
+
+      # Same pinned CastXML install scenarios_cmake uses -- see its own
+      # step for why the distro package is not enough.
+      - name: Install pinned CastXML (mirrors abicheck's own install-castxml.sh)
+        run: |
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/install-castxml.sh" \
+            "https://raw.githubusercontent.com/abicheck/abicheck/6fb85361cf4cea67a2f444bc097cfe24cd2d99c3/action/install-castxml.sh"
+          bash "$RUNNER_TEMP/install-castxml.sh"
+
+      - name: Install abicheck
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Run the scenario suite under every build system
+        run: |
+          set -euo pipefail
+          # Bazel first: it is the full-coverage path and the reference the
+          # other two are compared against. --bazel-toolchain pins its
+          # producer to the same gcc-14 the CMake and Make legs pin, so this
+          # comparison varies the BUILD SYSTEM only. Without it the job would
+          # vary build system and compiler at once, and a compiler-specific
+          # ABI difference would read as a build-system parity failure.
+          python3 scripts/run_scenario.py --build-system bazel \
+            --bazel-toolchain gcc-14,g++-14 --results-dir parity/bazel
+          python3 scripts/run_scenario.py --build-system cmake --results-dir parity/cmake
+          python3 scripts/run_scenario.py --build-system make  --results-dir parity/make
+
+      - name: Assert the same mutation yields the same findings everywhere
+        run: |
+          python3 scripts/check_scenario_parity.py \
+            --results bazel=parity/bazel cmake=parity/cmake make=parity/make \
+            --out parity/parity.json
+
+      - name: Upload the parity receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scenario-build-system-parity
+          path: parity/parity.json
+          if-no-files-found: warn
+          retention-days: 14
+
   scenarios_cmake:
     if: always()
     runs-on: ubuntu-24.04

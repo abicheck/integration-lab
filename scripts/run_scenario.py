@@ -64,8 +64,28 @@ def load_build_matrix(path):
     return data.get("build_systems", {})
 
 
-def run_bazel_build(*targets):
-    subprocess.run(["bazel", "build", *targets], check=True)
+def run_bazel_build(*targets, toolchain=None):
+    """Build Bazel fixture targets, optionally pinning the producer.
+
+    `toolchain` is a (cc, cxx) pair. Bazel's autoconfigured cc toolchain
+    reads CC/CXX from the repository rule's environment, so passing them as
+    --repo_env is what actually selects the compiler (the same mechanism
+    ci/backends/bazel.py uses).
+
+    Off by default, and deliberately so: scenarios.yml installs plain
+    `gcc g++`, not gcc-14, so pinning unconditionally would break the
+    existing full-coverage Bazel suite. It is switched on only where a
+    single producer is required -- the parity job, whose CMake and Make
+    legs already pin g++-14 explicitly. Without it that job varies the
+    build system AND the producer at once, so a compiler-specific ABI
+    difference would read as a build-system parity failure, or a green run
+    would be misreported as GCC 14 parity (Codex review, PR #30).
+    """
+    args = []
+    if toolchain is not None:
+        cc, cxx = toolchain
+        args += [f"--repo_env=CC={cc}", f"--repo_env=CXX={cxx}"]
+    subprocess.run(["bazel", "build", *args, *targets], check=True)
 
 
 def run_cmake_build(fixture_dir: Path, build_dir: Path) -> Path:
@@ -196,6 +216,59 @@ def _scenario_profiles(scenario):
     return {None: scenario["expected_verdict"]}
 
 
+def run_make_build(fixture_dir: Path, build_dir: Path) -> Path:
+    """Build buildsystems/make/fixtures/Makefile against fixture_dir.
+
+    The third build system, and the Make counterpart of run_cmake_build():
+    one generic makefile parameterized by FIXTURE_DIR rather than one per
+    fixture, producing the same libimpl.so filename the bazel and cmake
+    paths produce, so everything downstream of the build is identical for
+    all three.
+
+    CXX is pinned to g++-14 for the same reason run_cmake_build() pins
+    CMAKE_CXX_COMPILER: an unpinned build resolves whatever `c++` is on
+    PATH (g++-13 on ubuntu-24.04), and a "same mutation, same findings"
+    parity claim across build systems is worthless if the build systems
+    were not using the same producer.
+    """
+    build_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "make",
+            "-f",
+            str(REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile"),
+            f"FIXTURE_DIR={fixture_dir}",
+            f"BUILD_DIR={build_dir}",
+            "CXX=g++-14",
+        ],
+        check=True,
+        cwd=str(REPO_ROOT),
+    )
+    lib_path = build_dir / "libimpl.so"
+    if not lib_path.is_file():
+        raise FileNotFoundError(f"make build of {fixture_dir} did not produce {lib_path}")
+    return lib_path
+
+
+#: Build systems driven by a fixtures/<name>/{v1,v2} directory rather than
+#: by a target label. Both produce libimpl.so, so everything downstream of
+#: the build is identical for all three build systems.
+#:
+#: Maps to the builder's NAME, resolved at call time, not to the function
+#: object: binding the object at import time would capture the original
+#: function, so a test (or anything else) that replaces the module
+#: attribute would be silently ignored and end up shelling out to a real
+#: cmake/make instead.
+_FIXTURE_DIR_BUILDERS = {
+    "cmake": "run_cmake_build",
+    "make": "run_make_build",
+}
+
+
+def _fixture_dir_builder(build_system: str):
+    return globals()[_FIXTURE_DIR_BUILDERS[build_system]]
+
+
 def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
     name = scenario["name"]
     result_name = name if profile is None else f"{name}.{profile}"
@@ -301,7 +374,8 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
     }
 
 
-def run_one(scenario, results_dir, build_system="bazel", build_matrix=None, scratch_dir=None):
+def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
+            scratch_dir=None, bazel_toolchain=None):
     """Build *scenario*'s fixture pair once (under *build_system*), then
     run every declared profile against it. Returns a list of per-profile
     results (length 1 for a single-oracle scenario, one per named profile
@@ -316,22 +390,22 @@ def run_one(scenario, results_dir, build_system="bazel", build_matrix=None, scra
         # new_output ARE this scenario's bazel build recipe -- every
         # scenario has always declared one, so there is no "no mapping"
         # case for bazel.
-        run_bazel_build(scenario["old_target"], scenario["new_target"])
+        run_bazel_build(
+            scenario["old_target"], scenario["new_target"], toolchain=bazel_toolchain
+        )
         old_lib = REPO_ROOT / scenario["old_output"]
         new_lib = REPO_ROOT / scenario["new_output"]
-    elif build_system == "cmake":
-        mapping = (build_matrix or {}).get("cmake", {}).get(name)
+    elif build_system in _FIXTURE_DIR_BUILDERS:
+        mapping = (build_matrix or {}).get(build_system, {}).get(name)
         if mapping is None:
             return None
         assert scratch_dir is not None, "scratch_dir is required for build_system != 'bazel'"
-        old_lib = run_cmake_build(
-            REPO_ROOT / mapping["old_fixture_dir"], scratch_dir / f"{name}-old"
-        )
-        new_lib = run_cmake_build(
-            REPO_ROOT / mapping["new_fixture_dir"], scratch_dir / f"{name}-new"
-        )
+        builder = _fixture_dir_builder(build_system)
+        old_lib = builder(REPO_ROOT / mapping["old_fixture_dir"], scratch_dir / f"{name}-old")
+        new_lib = builder(REPO_ROOT / mapping["new_fixture_dir"], scratch_dir / f"{name}-new")
     else:
-        raise ValueError(f"unknown --build-system {build_system!r} (expected 'bazel' or 'cmake')")
+        known = ["bazel", *sorted(_FIXTURE_DIR_BUILDERS)]
+        raise ValueError(f"unknown --build-system {build_system!r} (expected one of {known})")
 
     profiles = _scenario_profiles(scenario)
     return [
@@ -359,12 +433,25 @@ def main():
     parser.add_argument(
         "--build-system",
         default="bazel",
-        choices=["bazel", "cmake"],
+        choices=["bazel", "cmake", "make"],
         help=(
-            "PR3 item 2: which build system builds each scenario's fixture pair "
-            "(default: bazel, the original/full-coverage path). 'cmake' is "
-            "currently a deliberately partial subset -- see "
-            "scenarios/build-matrix.yaml's own header comment."
+            "Which build system builds each scenario's fixture pair (default: "
+            "bazel, the original/full-coverage path). 'cmake' and 'make' cover "
+            "the subset scenarios/build-matrix.yaml declares; a scenario with "
+            "no mapping for the selected build system is reported as skipped, "
+            "never silently substituted."
+        ),
+    )
+    parser.add_argument(
+        "--bazel-toolchain",
+        default=None,
+        metavar="CC,CXX",
+        help=(
+            "Pin the Bazel leg's producer compiler, e.g. --bazel-toolchain "
+            "gcc-14,g++-14. Required when comparing Bazel against the CMake/"
+            "Make legs, which pin g++-14 themselves: without it the "
+            "comparison varies build system and producer at once. Ignored "
+            "for --build-system cmake/make."
         ),
     )
     parser.add_argument(
@@ -381,6 +468,12 @@ def main():
         return 1
 
     build_matrix = load_build_matrix(REPO_ROOT / args.build_matrix) if args.build_system != "bazel" else {}
+    bazel_toolchain = None
+    if args.bazel_toolchain:
+        parts = [part.strip() for part in args.bazel_toolchain.split(",")]
+        if len(parts) != 2 or not all(parts):
+            parser.error("--bazel-toolchain expects CC,CXX (e.g. gcc-14,g++-14)")
+        bazel_toolchain = (parts[0], parts[1])
 
     if args.only:
         scenarios = [s for s in scenarios if s["name"] == args.only]
@@ -393,7 +486,7 @@ def main():
 
     results_dir = REPO_ROOT / args.results_dir
     results_dir.mkdir(parents=True, exist_ok=True)
-    scratch_dir = results_dir / "cmake-scratch"
+    scratch_dir = results_dir / f"{args.build_system}-scratch"
 
     # Same reasoning as run_one_profile()'s own output_json.unlink() above:
     # a stale skipped.json from an earlier invocation that reused this same
@@ -417,7 +510,9 @@ def main():
         # no build mapping for this scenario yet -- reported below as
         # skipped, never silently absent from the summary.
         profile_results = run_one(
-            scenario, results_dir, build_system=args.build_system, build_matrix=build_matrix, scratch_dir=scratch_dir
+            scenario, results_dir, build_system=args.build_system,
+            build_matrix=build_matrix, scratch_dir=scratch_dir,
+            bazel_toolchain=bazel_toolchain,
         )
         if profile_results is None:
             print(f"SKIP: no --build-system {args.build_system!r} build mapping declared for this scenario")

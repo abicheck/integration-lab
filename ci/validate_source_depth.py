@@ -23,7 +23,23 @@ def _depths(report: dict[str, Any]) -> tuple[Any, Any]:
     return None, None
 
 
-def validate(report: dict[str, Any], expected: str = "source") -> list[str]:
+def validate(
+    report: dict[str, Any],
+    expected: str = "source",
+    *,
+    require_complete: bool = False,
+) -> list[str]:
+    """Check that a report proves the depth it was asked for.
+
+    `require_complete` additionally gates `analysis_assurance.status ==
+    "complete"`.  It is opt-in because a real comparison's overall assurance
+    can be legitimately `partial` for a channel orthogonal to depth (for
+    example asymmetric historical DWARF), and failing those would be noise.
+    Deterministic in-repo scenarios have no such excuse: they build both
+    sides from the same fixture in the same job, so anything short of
+    `complete` there is a real gap in the evidence and the scenario is not
+    proving what it claims.
+    """
     errors = []
     requested, effective = _depths(report)
     if requested != expected:
@@ -41,6 +57,12 @@ def validate(report: dict[str, Any], expected: str = "source") -> list[str]:
             errors.append(
                 f"analysis_assurance.depth_satisfied={assurance.get('depth_satisfied')!r}, expected True"
             )
+        if require_complete and assurance.get("status") != "complete":
+            notes = assurance.get("notes") or []
+            errors.append(
+                f"analysis_assurance.status={assurance.get('status')!r}, expected 'complete'"
+                + (f" ({'; '.join(str(note) for note in notes)})" if notes else "")
+            )
     else:
         errors.append("analysis_assurance is missing; source-depth satisfaction is unproven")
     operational = report.get("operational_errors")
@@ -53,6 +75,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     parser.add_argument("--expected", default="source")
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="also require analysis_assurance.status == 'complete'",
+    )
     args = parser.parse_args()
     try:
         report = json.loads(args.report.read_text(encoding="utf-8"))
@@ -62,7 +89,7 @@ def main() -> int:
     if not isinstance(report, dict):
         print("ERROR: report must be a JSON object")
         return 1
-    errors = validate(report, args.expected)
+    errors = validate(report, args.expected, require_complete=args.require_complete)
     for error in errors:
         print(f"ERROR: {error}")
     return 1 if errors else 0

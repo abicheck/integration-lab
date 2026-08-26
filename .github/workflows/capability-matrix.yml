@@ -21,15 +21,21 @@ on:
       # unexercised. Globbed rather than listing each check_*.py/
       # gen_*.py script individually so the next one doesn't repeat the
       # same gap.
-      - 'scripts/check_*.py'
-      - 'scripts/gen_*.py'
+      # Codex review, fourth recurrence: these prefix globs left
+      # scripts/run_scenario.py, scripts/normalize_baseline.py and EVERY
+      # module under ci/ outside the trigger, while tests/conftest.py puts
+      # both directories on sys.path and the suite imports them. Since this
+      # is the only workflow that runs pytest at all, a PR touching just one
+      # of those modules skipped its own unit tests -- including the negative
+      # and malformed-input cases no end-to-end run exercises. Globbed by
+      # directory now, so a new module cannot repeat it.
+      - 'scripts/*.py'
+      - 'ci/*.py'
+      - 'ci/backends/*.py'
       # Phase 5 (capability receipts): the receipt schema/emitters/
       # validator have their own unit tests (tests/), run below -- globbed
       # the same way as check_*.py/gen_*.py above so a future receipt
       # helper doesn't repeat the same "landed unexercised" gap.
-      - 'scripts/capability_receipts.py'
-      - 'scripts/emit_*.py'
-      - 'scripts/validate_*.py'
       - 'tests/**'
       - 'README.md'
       - '.github/workflows/*.yml'
@@ -37,6 +43,30 @@ on:
       # review, fresh evidence: a *.yaml-only workflow change would
       # otherwise never trigger the one workflow that runs it).
       - '.github/workflows/*.yaml'
+      # Codex review, third recurrence of this same gap (PR #16 was the
+      # first). These are DATA inputs the checks above read -- not scripts,
+      # so no scripts/ glob covers them -- and a PR touching only one of
+      # them skipped the very check meant to police it: the pin-consistency
+      # suite for ci/abicheck-version.yaml, and the generated README gap
+      # block for scenarios/manifest.yaml. tests/test_capability_matrix_
+      # paths.py now derives this list from what the scripts and tests
+      # actually open, so a fourth recurrence fails locally instead of
+      # being found in review.
+      - 'ci/abicheck-version.yaml'
+      - 'ci/profiles.yaml'
+      - 'demos/manifest.yaml'
+      - 'scenarios/manifest.yaml'
+      - 'scenarios/build-matrix.yaml'
+      # Fixture RECIPES, not data files. tests/test_make_fixture_recipe.py
+      # guards the Makefile's incremental header-dependency tracking, and
+      # this is the repository's only workflow that runs pytest at all -- so
+      # a Makefile-only PR skipped that guard entirely. The parity workflow
+      # cannot substitute: it always starts from clean build directories, so
+      # it structurally cannot expose a stale incremental rebuild.
+      # (Codex review; the CMakeLists entry was found by the derivation
+      # rather than reported, once its suffix allowlist was removed.)
+      - 'buildsystems/make/fixtures/Makefile'
+      - 'buildsystems/cmake/fixtures/CMakeLists.txt'
   workflow_dispatch:
 
 permissions:

@@ -40,496 +40,759 @@
 # why the Bazel-cache-setup step deliberately isn't (yet).
 
 dimensions:
-  evidence_depth: [binary, headers, build, source, n/a]
-  header_frontend: [castxml, clang, n/a]
-  toolchain: [gcc-cxx17, gcc-cxx20, clang-cxx17, clang-cxx20, pinned-default, n/a]
+  evidence_depth:
+  - binary
+  - headers
+  - build
+  - source
+  - n/a
+  header_frontend:
+  - castxml
+  - clang
+  - n/a
+  toolchain:
+  - gcc-cxx17
+  - gcc-cxx20
+  - clang-cxx17
+  - clang-cxx20
+  - pinned-default
+  - gcc14-cxx17
+  - clang18-cxx17
+  - multi-producer
+  - n/a
   scope:
-    [
-      single_library,
-      aggregate_multi_library,
-      consumer_scoped,
-      producer_agreement,
-      detection_correctness,
-      n/a,
-    ]
-  target_shape: [cc_binary_linkshared, cc_shared_library, n/a]
-
-# status:
-#   covered          -- a real job in an in-scope workflow exercises this
-#                        axis today; `job`/`workflow` are required and
-#                        checked against the real workflow file.
-#   non_gating_watch  -- covered, but the job deliberately never fails a
-#                        PR on its own (a property to observe, not a
-#                        pass/fail contract) -- same meaning as `covered`
-#                        for the validator, `gating` distinguishes them.
-#   gap               -- known, not yet covered by any job. `job`/
-#                        `workflow` must be absent (nothing to check).
-#   planned           -- gap with a concrete follow-up already scoped
-#                        (unused today; reserved so a future PR can
-#                        distinguish "known, not yet started" from
-#                        "known, actively being worked").
-
+  - single_library
+  - aggregate_multi_library
+  - consumer_scoped
+  - producer_agreement
+  - detection_correctness
+  - native_project
+  - baseline_lifecycle
+  - cross_dso
+  - loader_runtime
+  - python_extension
+  - run_plan_semantics
+  - evidence_portability
+  - demonstration_oracle
+  - n/a
+  target_shape:
+  - cc_binary_linkshared
+  - cc_shared_library
+  - native_project_topology
+  - python_extension_module
+  - elf_dso
+  - n/a
 capabilities:
-  - id: math-source-gate
-    status: covered
-    gating: true
-    workflow: abi-scan.yml
-    job: scan
-    dimensions:
-      evidence_depth: source
-      header_frontend: castxml
-      toolchain: pinned-default
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      The required PR gate: full depth:source Bazel-evidence comparison of
-      //:math against the committed baseline (abi/math.abicheck.json).
+- id: math-source-gate
+  status: covered
+  gating: true
+  workflow: abi-scan.yml
+  job: scan
+  dimensions:
+    evidence_depth: source
+    header_frontend: castxml
+    toolchain: pinned-default
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'The required PR gate: full depth:source Bazel-evidence comparison of //:math against
+    the committed baseline (abi/math.abicheck.json).
 
-  # Codex review, PR #15: the `scan` job doesn't run only the one gating
-  # comparison above -- it also runs three further, independently
-  # meaningful diagnostic profiles (all continue-on-error, artifact-only,
-  # never gating), each feeding the producer-agreement-report/conformance
-  # job's own comparisons. One entry per job hid these from the matrix.
-  - id: scan-l2-diagnostic-castxml
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: scan
-    dimensions:
-      evidence_depth: headers
-      header_frontend: castxml
-      toolchain: pinned-default
-      scope: producer_agreement
-      target_shape: cc_binary_linkshared
-    note: &scan-l2-diagnostic-note >
-      "L2 diagnostic" step: the SAME committed baseline vs. the SAME
-      candidate library/header as the required gate, but a plain
-      binary+header comparison (no --sources/--build-info) -- one half of
-      the castxml-vs-clang producer-conformance pair the conformance job
-      renders. Never gates (continue-on-error, artifact only).
+    '
+- id: scan-l2-diagnostic-castxml
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: scan
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: pinned-default
+    scope: producer_agreement
+    target_shape: cc_binary_linkshared
+  note: '"L2 diagnostic" step: the SAME committed baseline vs. the SAME candidate library/header
+    as the required gate, but a plain binary+header comparison (no --sources/--build-info)
+    -- one half of the castxml-vs-clang producer-conformance pair the conformance job renders.
+    Never gates (continue-on-error, artifact only).
 
-  - id: scan-l2-diagnostic-clang
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: scan
-    dimensions:
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: pinned-default
-      scope: producer_agreement
-      target_shape: cc_binary_linkshared
-    note: *scan-l2-diagnostic-note
+    '
+- id: scan-l2-diagnostic-clang
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: scan
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: pinned-default
+    scope: producer_agreement
+    target_shape: cc_binary_linkshared
+  note: '"L2 diagnostic" step: the SAME committed baseline vs. the SAME candidate library/header
+    as the required gate, but a plain binary+header comparison (no --sources/--build-info)
+    -- one half of the castxml-vs-clang producer-conformance pair the conformance job renders.
+    Never gates (continue-on-error, artifact only).
 
-  - id: scan-l4-clang-replay
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: scan
-    dimensions:
-      evidence_depth: source
-      header_frontend: clang
-      toolchain: clang-cxx17
-      scope: producer_agreement
-      target_shape: cc_binary_linkshared
-    note: >
-      "L4 diagnostic - Clang replay" step: same shape as the required
-      gate (depth:source, --sources ., same committed baseline and a
-      freshly-captured Bazel evidence pack) but with ast-frontend forced
-      to clang and no `--since` (always replays the full target, not
-      scope=changed) -- the other half of the L4 native-vs-clang-plugin
-      producer-conformance pair the conformance job renders against
-      l4_clang_plugin. Never gates.
+    '
+- id: scan-l4-clang-replay
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: scan
+  dimensions:
+    evidence_depth: source
+    header_frontend: clang
+    toolchain: clang-cxx17
+    scope: producer_agreement
+    target_shape: cc_binary_linkshared
+  note: '"L4 diagnostic - Clang replay" step: same shape as the required gate (depth:source,
+    --sources ., same committed baseline and a freshly-captured Bazel evidence pack) but with
+    ast-frontend forced to clang and no `--since` (always replays the full target, not scope=changed)
+    -- the other half of the L4 native-vs-clang-plugin producer-conformance pair the conformance
+    job renders against l4_clang_plugin. Never gates.
 
-  - id: strings-headers-scan
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: scan_strings
-    dimensions:
-      evidence_depth: headers
-      # Codex review, PR #15: scan_strings explicitly sets
-      # `ast-frontend: clang` (abi-scan.yml's scan_strings job) -- unlike
-      # `scan`'s own canonical depth:source step, which leaves
-      # --ast-frontend on abicheck's default (castxml). Verified directly
-      # against the workflow file, not assumed from the sibling entry above.
-      header_frontend: clang
-      toolchain: pinned-default
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      Best-effort depth:headers scan of strings_lib -- deliberately scoped
-      down (no Bazel evidence pack, no depth:source replay); its job is
-      exercising the aggregate plumbing below, not duplicating :math's own
-      full pipeline. Never gates on its own.
+    '
+- id: strings-headers-scan
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: scan_strings
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: pinned-default
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'Best-effort depth:headers scan of strings_lib -- deliberately scoped down (no Bazel
+    evidence pack, no depth:source replay); its job is exercising the aggregate plumbing below,
+    not duplicating :math''s own full pipeline. Never gates on its own.
 
-  - id: aggregate-multi-library
-    status: covered
-    gating: true
-    workflow: abi-scan.yml
-    job: aggregate
-    dimensions:
-      evidence_depth: headers
-      header_frontend: n/a
-      toolchain: n/a
-      scope: aggregate_multi_library
-      target_shape: n/a
-    note: >
-      `abicheck aggregate` against a fail-closed expected-target manifest
-      (math required whenever scan judged the PR ABI-relevant; strings
-      discovered but not required). A missing required report is a real
-      coverage-axis failure (exit 1), not absorbed into --discovered-only.
+    '
+- id: aggregate-multi-library
+  status: covered
+  gating: true
+  workflow: abi-scan.yml
+  job: aggregate
+  dimensions:
+    evidence_depth: headers
+    header_frontend: n/a
+    toolchain: n/a
+    scope: aggregate_multi_library
+    target_shape: n/a
+  note: '`abicheck aggregate` against a fail-closed expected-target manifest (math required
+    whenever scan judged the PR ABI-relevant; strings discovered but not required). A missing
+    required report is a real coverage-axis failure (exit 1), not absorbed into --discovered-only.
 
-  # Phase 5 (capability receipts, scripts/capability_receipts.py): the
-  # `scan`/`aggregate` jobs above now each write a status:{passed,failed,
-  # skipped} receipt for their own `gating: true` entry immediately after
-  # running -- this job reads both back and fails closed if either is
-  # missing or not `passed`. Closes the gap phases 1-4 (this file +
-  # check_capability_matrix.py) cannot: those prove a `job`/`workflow`
-  # this file names *exists*, never that it actually ran to a passing
-  # result on the run being judged. `gating: false` here deliberately --
-  # this entry doesn't describe an evidence-depth/header-frontend/
-  # toolchain/scope/target-shape axis the way every other entry does, it
-  # describes the meta-property "did the two entries above actually prove
-  # what they claim this run" -- and scripts/validate_capability_receipts.py
-  # itself only ever iterates `gating: true` entries when deriving what a
-  # receipt directory must satisfy, so marking this one `gating: true` too
-  # would make it recursively require a receipt for itself.
-  - id: capability-receipt-verification
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: verify_capability_receipts
-    dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
-      toolchain: n/a
-      scope: n/a
-      target_shape: n/a
-    note: >
-      Fail-closed check that math-source-gate, aggregate-multi-library,
-      and module-bazel-lock-pinning each wrote a receipt that isn't
-      status: failed this run (a legitimate status: skipped -- e.g.
-      math-source-gate on a PR judged not ABI-relevant -- is accepted;
-      see scripts/capability_receipts.py's module docstring for the full
-      rationale). detection-correctness-scenarios-{castxml,clang}'s own
-      receipts are validated inside scenarios.yml itself instead (a
-      separate workflow run this job has no artifact access to).
+    '
+- id: capability-receipt-verification
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: verify_capability_receipts
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: n/a
+    target_shape: n/a
+  note: 'Fail-closed check that math-source-gate, aggregate-multi-library, and module-bazel-lock-pinning
+    each wrote a receipt that isn''t status: failed this run (a legitimate status: skipped
+    -- e.g. math-source-gate on a PR judged not ABI-relevant -- is accepted; see scripts/capability_receipts.py''s
+    module docstring for the full rationale). detection-correctness-scenarios-{castxml,clang}''s
+    own receipts are validated inside scenarios.yml itself instead (a separate workflow run
+    this job has no artifact access to).
 
-  - id: consumer-scoped-compare
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: consumer_scoped
-    dimensions:
-      # Codex review, PR #15: the "ABICheck compare --used-by" step passes
-      # new-header/ast-frontend: clang with none of depth:source's own
-      # inputs (sources/build-info) -- a plain binary+header comparison,
-      # same shape as scan_strings above, not the required gate's
-      # depth:source pipeline. Verified directly against the workflow file.
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: n/a
-      scope: consumer_scoped
-      target_shape: cc_binary_linkshared
-    note: >
-      `compare --used-by` against a real, historically-rebuilt consumer
-      app (base-SHA libmath.so + base-SHA consumer_app, not a HEAD
-      rebuild of both -- see README's "Consumer/app-scoped validation").
-      Validates the app-scoping mechanism itself; not an additional gate.
+    '
+- id: consumer-scoped-compare
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: consumer_scoped
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: n/a
+    scope: consumer_scoped
+    target_shape: cc_binary_linkshared
+  note: '`compare --used-by` against a real, historically-rebuilt consumer app (base-SHA libmath.so
+    + base-SHA consumer_app, not a HEAD rebuild of both -- see README''s "Consumer/app-scoped
+    validation"). Validates the app-scoping mechanism itself; not an additional gate.
 
-  - id: toolchain-matrix-gcc-cxx17
-    status: non_gating_watch
-    gating: false
-    workflow: abi-scan.yml
-    job: toolchain_matrix
-    # Phase 4 (dynamic toolchain_matrix generation): the actual compiler
-    # binaries/standard this leg runs abi-scan.yml's `toolchain_matrix`
-    # `strategy.matrix.include` with -- checked byte-for-byte against the
-    # real workflow file by scripts/check_toolchain_matrix_sync.py, so
-    # this can't silently drift from what CI actually runs the way the
-    # dimensions above could before phase 1's own validator existed.
-    matrix_leg: {cc: gcc, cxx: g++, std: c++17}
-    dimensions:
-      # Codex review, PR #15: the "ABICheck compare" step here passes
-      # new-header/ast-frontend: clang with none of depth:source's own
-      # inputs -- a plain binary+header comparison, not source-depth.
-      # Verified directly against the workflow file.
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: gcc-cxx17
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination
-      and compares against the SAME committed baseline every other leg
-      uses -- proves detection findings are actually toolchain-invariant
-      rather than an artifact of the one fixed toolchain (.bazelrc's
-      pinned default) the required gate always uses. Deliberately
-      non-gating: this validates a property to watch, not a pass/fail
-      contract :math's own ABI must additionally satisfy.
+    '
+- id: toolchain-matrix-gcc-cxx17
+  status: non_gating_watch
+  gating: false
+  workflow: abi-scan.yml
+  job: toolchain_matrix
+  matrix_leg:
+    cc: gcc
+    cxx: g++
+    std: c++17
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: gcc-cxx17
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination and compares
+    against the SAME committed baseline every other leg uses -- proves detection findings
+    are actually toolchain-invariant rather than an artifact of the one fixed toolchain (.bazelrc''s
+    pinned default) the required gate always uses. Deliberately non-gating: this validates
+    a property to watch, not a pass/fail contract :math''s own ABI must additionally satisfy.
 
-  - id: toolchain-matrix-gcc-cxx20
-    status: non_gating_watch
-    gating: false
-    workflow: abi-scan.yml
-    job: toolchain_matrix
-    matrix_leg: {cc: gcc, cxx: g++, std: c++20}
-    dimensions:
-      # Codex review, PR #15: the "ABICheck compare" step here passes
-      # new-header/ast-frontend: clang with none of depth:source's own
-      # inputs -- a plain binary+header comparison, not source-depth.
-      # Verified directly against the workflow file.
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: gcc-cxx20
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination
-      and compares against the SAME committed baseline every other leg
-      uses -- proves detection findings are actually toolchain-invariant
-      rather than an artifact of the one fixed toolchain (.bazelrc's
-      pinned default) the required gate always uses. Deliberately
-      non-gating: this validates a property to watch, not a pass/fail
-      contract :math's own ABI must additionally satisfy.
+    '
+- id: toolchain-matrix-gcc-cxx20
+  status: non_gating_watch
+  gating: false
+  workflow: abi-scan.yml
+  job: toolchain_matrix
+  matrix_leg:
+    cc: gcc
+    cxx: g++
+    std: c++20
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: gcc-cxx20
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination and compares
+    against the SAME committed baseline every other leg uses -- proves detection findings
+    are actually toolchain-invariant rather than an artifact of the one fixed toolchain (.bazelrc''s
+    pinned default) the required gate always uses. Deliberately non-gating: this validates
+    a property to watch, not a pass/fail contract :math''s own ABI must additionally satisfy.
 
-  - id: toolchain-matrix-clang-cxx17
-    status: non_gating_watch
-    gating: false
-    workflow: abi-scan.yml
-    job: toolchain_matrix
-    matrix_leg: {cc: clang-18, cxx: clang++-18, std: c++17}
-    dimensions:
-      # Codex review, PR #15: the "ABICheck compare" step here passes
-      # new-header/ast-frontend: clang with none of depth:source's own
-      # inputs -- a plain binary+header comparison, not source-depth.
-      # Verified directly against the workflow file.
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: clang-cxx17
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination
-      and compares against the SAME committed baseline every other leg
-      uses -- proves detection findings are actually toolchain-invariant
-      rather than an artifact of the one fixed toolchain (.bazelrc's
-      pinned default) the required gate always uses. Deliberately
-      non-gating: this validates a property to watch, not a pass/fail
-      contract :math's own ABI must additionally satisfy.
+    '
+- id: toolchain-matrix-clang-cxx17
+  status: non_gating_watch
+  gating: false
+  workflow: abi-scan.yml
+  job: toolchain_matrix
+  matrix_leg:
+    cc: clang-18
+    cxx: clang++-18
+    std: c++17
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: clang-cxx17
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination and compares
+    against the SAME committed baseline every other leg uses -- proves detection findings
+    are actually toolchain-invariant rather than an artifact of the one fixed toolchain (.bazelrc''s
+    pinned default) the required gate always uses. Deliberately non-gating: this validates
+    a property to watch, not a pass/fail contract :math''s own ABI must additionally satisfy.
 
-  - id: toolchain-matrix-clang-cxx20
-    status: non_gating_watch
-    gating: false
-    workflow: abi-scan.yml
-    job: toolchain_matrix
-    matrix_leg: {cc: clang-18, cxx: clang++-18, std: c++20}
-    dimensions:
-      # Codex review, PR #15: the "ABICheck compare" step here passes
-      # new-header/ast-frontend: clang with none of depth:source's own
-      # inputs -- a plain binary+header comparison, not source-depth.
-      # Verified directly against the workflow file.
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: clang-cxx20
-      scope: single_library
-      target_shape: cc_binary_linkshared
-    note: >
-      Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination
-      and compares against the SAME committed baseline every other leg
-      uses -- proves detection findings are actually toolchain-invariant
-      rather than an artifact of the one fixed toolchain (.bazelrc's
-      pinned default) the required gate always uses. Deliberately
-      non-gating: this validates a property to watch, not a pass/fail
-      contract :math's own ABI must additionally satisfy.
+    '
+- id: toolchain-matrix-clang-cxx20
+  status: non_gating_watch
+  gating: false
+  workflow: abi-scan.yml
+  job: toolchain_matrix
+  matrix_leg:
+    cc: clang-18
+    cxx: clang++-18
+    std: c++20
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: clang-cxx20
+    scope: single_library
+    target_shape: cc_binary_linkshared
+  note: 'Rebuilds //:math under a {gcc,clang-18} x {c++17,c++20} combination and compares
+    against the SAME committed baseline every other leg uses -- proves detection findings
+    are actually toolchain-invariant rather than an artifact of the one fixed toolchain (.bazelrc''s
+    pinned default) the required gate always uses. Deliberately non-gating: this validates
+    a property to watch, not a pass/fail contract :math''s own ABI must additionally satisfy.
 
-  - id: l4-clang-plugin-evidence
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: l4_clang_plugin
-    dimensions:
-      # The comparison passes --depth source explicitly and a following
-      # fail-closed oracle checks the report's requested/effective depth and
-      # assurance. Plugin-shaped facts can no longer silently count as L4.
-      evidence_depth: source
-      header_frontend: clang
-      toolchain: n/a
-      scope: producer_agreement
-      target_shape: cc_binary_linkshared
-    note: >
-      Clang-plugin evidence collection remains availability-advisory because
-      the plugin is ABI-locked to the runner's LLVM major, but any produced
-      report must prove complete source depth or the job fails.
+    '
+- id: l4-clang-plugin-evidence
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: l4_clang_plugin
+  dimensions:
+    evidence_depth: source
+    header_frontend: clang
+    toolchain: n/a
+    scope: producer_agreement
+    target_shape: cc_binary_linkshared
+  note: 'Clang-plugin evidence collection remains availability-advisory because the plugin
+    is ABI-locked to the runner''s LLVM major, but any produced report must prove complete
+    source depth or the job fails.
 
-  - id: producer-agreement-report
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: conformance
-    dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
-      toolchain: n/a
-      scope: producer_agreement
-      target_shape: n/a
-    note: >
-      Renders two informational conformance reports comparing sibling
-      evidence producers pairwise: L2 castxml-vs-clang, and L4
-      native-vs-clang-plugin (needs: [scan, l4_clang_plugin], if: always()
-      -- degrades gracefully when either upstream job skipped). Never
-      gates.
+    '
+- id: plugin-pack-reuse-clean-job
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: plugin_pack_reuse
+  dimensions:
+    evidence_depth: source
+    header_frontend: clang
+    toolchain: n/a
+    scope: evidence_portability
+    target_shape: cc_binary_linkshared
+  note: 'Consumes the l4_clang_plugin facts pack in a job with no source tree and no build
+    (non-cone sparse checkout of ci/ and scripts/ only), so source depth reached here can
+    only have come from the shipped evidence. Nine assertions: agreement with the replay
+    producer on findings, effective depth and target accounting, plus five mutations
+    (pack removed, stale header, missing TU, wrong LLVM major, empty public roots, corrupted
+    JSONL) that must each fail closed. Non-gating for the same availability reason as
+    l4_clang_plugin -- the plugin may not build on a given runner image -- but the harness
+    itself fails closed and the uploaded receipt records which channel each rejection came
+    through, so an upstream loosening stays visible. NOT yet full coverage: the
+    wrong-llvm-major assertion cannot pass against the pack the lab currently produces,
+    whose manifest records no LLVM or plugin identity -- declared as the
+    plugin-pack-producer-identity expected gap. The receipt reports that assertion as
+    failed on every run, so the job being non-gating never reads as the case having
+    passed. CI run 32954335654 further showed the reuse compare itself cannot run yet
+    (scope_fingerprint mismatch between the shipped baseline and the clean job''s dump)
+    and that the replay reference carries no analysis_assurance -- both declared as
+    expected gaps. With the positive control failing, the mutation cases are reported as
+    NOT EVALUATED rather than passed, because every one of them was rejected by that same
+    unrelated error.
 
-  # Codex review, PR #15: scenarios/manifest.yaml's own header comment is
-  # explicit that every scenario below uses the `expected: {castxml: V,
-  # clang: V}` profile-pair form specifically to regression-test that the
-  # two header backends agree -- a single n/a-frontend entry silently
-  # dropped that coverage. Split into one entry per profile, mirroring the
-  # toolchain-matrix-* split above for the same reason (one job, several
-  # independently-meaningful axis values). evidence_depth is `headers`,
-  # not n/a either -- run_scenario.py's own docstring: "binary + header
-  # depth only, deliberately not depth: source".
-  - id: detection-correctness-scenarios-castxml
-    status: covered
-    gating: true
-    workflow: scenarios.yml
-    job: scenarios
-    dimensions:
-      evidence_depth: headers
-      header_frontend: castxml
-      toolchain: n/a
-      scope: detection_correctness
-      # Codex review, PR #15: scenarios/manifest.yaml's own header
-      # comment states every fixture pair is built as
-      # cc_binary(linkshared = True) -- the same shape as every
-      # other real target in this repo.
-      target_shape: cc_binary_linkshared
-    note: &detection-correctness-note >
-      Independent fixture pairs (fixtures/, oracle in
-      scenarios/manifest.yaml) with a machine-readable expected verdict
-      per header-frontend profile -- proves abicheck actually detects a
-      real break and leaves a compatible change alone, which the gate on
-      :math's own diff can never prove on its own. A verdict mismatch
-      fails the job (scripts/run_scenario.py exits non-zero).
+    '
+- id: demonstration-scenario-oracle
+  status: covered
+  gating: true
+  workflow: abi-scan.yml
+  job: demo_oracle
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: demonstration_oracle
+    target_shape: cc_binary_linkshared
+  note: 'Reads the report the ordinary gate already produced -- not a second abicheck
+    invocation, which could drift from the gate and assert a result it never produced --
+    and passes only when the natural result is the one demos/manifest.yaml declares for
+    that branch. Manifest and oracle script are both read from the PR BASE, never the
+    head: this job detects drift in a generated branch, so the branch it judges must not
+    supply its own expectations (or its own checker). Gating, because two of the five demonstration branches are SUPPOSED to
+    turn the gate red: a red gate there carries no information on its own, and this is the
+    check that distinguishes "the demonstration worked" from "the branch drifted". Exits 0
+    without asserting anything on any PR that is not a demonstration branch.
 
-  - id: detection-correctness-scenarios-clang
-    status: covered
-    gating: true
-    workflow: scenarios.yml
-    job: scenarios
-    dimensions:
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: n/a
-      scope: detection_correctness
-      # Codex review, PR #15: scenarios/manifest.yaml's own header
-      # comment states every fixture pair is built as
-      # cc_binary(linkshared = True) -- the same shape as every
-      # other real target in this repo.
-      target_shape: cc_binary_linkshared
-    note: *detection-correctness-note
+    '
+- id: demonstration-branch-drift
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: demo_branch_drift
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: demonstration_oracle
+    target_shape: cc_binary_linkshared
+  note: 'Runs scripts/gen_demo_prs.py --check on every PR: each demonstration branch must
+    be the current base plus its one declared patch, compared by TREE so an extra commit
+    or an edited patch is caught, not just a stale base. demo_oracle asserts the ABI
+    verdict; this asserts the branch is still the generated artifact it claims to be, and
+    a branch can drift without changing its findings. Non-gating because the only way to
+    clear real drift is a force-push rewriting branches with open pull requests -- an
+    operator decision a red required check cannot make. It reports drift today, which is
+    the honest state.
 
-  # Codex review, PR #15: scenarios-canary.yml runs the identical
-  # scripts/run_scenario.py oracle as scenarios.yml (just against
-  # abicheck/main instead of a pinned release), so it exercises the same
-  # castxml/clang split -- split into two entries for the same reason as
-  # detection-correctness-scenarios-* above, keeping gating: false.
-  - id: scenarios-canary-castxml
-    status: non_gating_watch
-    gating: false
-    workflow: scenarios-canary.yml
-    job: scenarios_canary
-    dimensions:
-      evidence_depth: headers
-      header_frontend: castxml
-      toolchain: n/a
-      scope: detection_correctness
-      # Codex review, PR #15: scenarios/manifest.yaml's own header
-      # comment states every fixture pair is built as
-      # cc_binary(linkshared = True) -- the same shape as every
-      # other real target in this repo.
-      target_shape: cc_binary_linkshared
-    note: &scenarios-canary-note >
-      Scheduled canary re-running the same scenario oracle against
-      abicheck main, previewing not-yet-stable features (e.g.
-      --contract-evaluation, ADR-049) before they land in a pinned
-      release. Non-blocking by design.
+    '
+- id: producer-agreement-report
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: conformance
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: producer_agreement
+    target_shape: n/a
+  note: 'Renders two informational conformance reports comparing sibling evidence producers
+    pairwise: L2 castxml-vs-clang, and L4 native-vs-clang-plugin (needs: [scan, l4_clang_plugin],
+    if: always() -- degrades gracefully when either upstream job skipped). Never gates.
 
-  - id: scenarios-canary-clang
-    status: non_gating_watch
-    gating: false
-    workflow: scenarios-canary.yml
-    job: scenarios_canary
-    dimensions:
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: n/a
-      scope: detection_correctness
-      # Codex review, PR #15: scenarios/manifest.yaml's own header
-      # comment states every fixture pair is built as
-      # cc_binary(linkshared = True) -- the same shape as every
-      # other real target in this repo.
-      target_shape: cc_binary_linkshared
-    note: *scenarios-canary-note
+    '
+- id: detection-correctness-scenarios-castxml
+  status: covered
+  gating: true
+  workflow: scenarios.yml
+  job: scenarios
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: n/a
+    scope: detection_correctness
+    target_shape: cc_binary_linkshared
+  note: 'Independent fixture pairs (fixtures/, oracle in scenarios/manifest.yaml) with a machine-readable
+    expected verdict per header-frontend profile -- proves abicheck actually detects a real
+    break and leaves a compatible change alone, which the gate on :math''s own diff can never
+    prove on its own. A verdict mismatch fails the job (scripts/run_scenario.py exits non-zero).
 
-  # Known gaps -- deliberately no job/workflow (there is none to check).
-  - id: cc-shared-library-target-shape
-    status: covered
-    gating: false
-    workflow: abi-scan.yml
-    job: scan_math_shared
-    dimensions:
-      evidence_depth: headers
-      header_frontend: clang
-      toolchain: pinned-default
-      scope: single_library
-      target_shape: cc_shared_library
-    note: >
-      `//:math_shared` (root BUILD.bazel) -- a real `cc_shared_library`
-      wrapping a private `cc_library` (`math_impl`), coexisting with
-      `//:math`'s legacy `cc_binary(linkshared = True)` demo shape rather
-      than replacing it: every existing job's cache key, evidence pack,
-      and committed baseline (abi/math.abicheck.json) stay keyed to
-      `//:math` specifically. `scan_math_shared` builds and scans this
-      target's own genuinely different Bazel action graph (a real link
-      action producing the shared object, not `cc_binary`'s own implicit
-      link step) against its own committed baseline
-      (abi/math_shared.abicheck.json, collected the same headers-depth
-      way as strings.abicheck.json). Deliberately non-gating, same
-      posture as scan_strings -- this validates the target-shape
-      mechanism itself, not an additional required check on :math.
+    '
+- id: detection-correctness-scenarios-clang
+  status: covered
+  gating: true
+  workflow: scenarios.yml
+  job: scenarios
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: n/a
+    scope: detection_correctness
+    target_shape: cc_binary_linkshared
+  note: 'Independent fixture pairs (fixtures/, oracle in scenarios/manifest.yaml) with a machine-readable
+    expected verdict per header-frontend profile -- proves abicheck actually detects a real
+    break and leaves a compatible change alone, which the gate on :math''s own diff can never
+    prove on its own. A verdict mismatch fails the job (scripts/run_scenario.py exits non-zero).
 
-  - id: module-bazel-lock-pinning
-    status: covered
-    gating: true
-    workflow: abi-scan.yml
-    job: scan
-    dimensions:
-      evidence_depth: n/a
-      header_frontend: n/a
-      toolchain: n/a
-      scope: n/a
-      target_shape: n/a
-    note: >
-      Not a job-shaped axis like every other entry in this file --
-      `.bazelrc`'s `common --lockfile_mode=error` enforces MODULE.bazel.lock
-      against every Bazel invocation in every job that runs one (build,
-      query, cquery, aquery, mod), not just `scan`. Pointed at `scan`
-      here (`gating: true`, since it's this repo's own required gate and
-      the earliest Bazel invocation in the PR pipeline) as the
-      representative job check_capability_matrix.py's job/workflow model
-      needs one entry to name; a lockfile-drift failure surfaces there
-      first, on every PR, before any other job's own build runs. `scan`
-      emits a dedicated receipt for it (Codex review, fresh evidence:
-      marking this `gating: true` with no receipt anywhere left a real
-      gap in the one-receipt-per-gating-capability contract) derived
-      from its own `lockfile_check` step -- a cheap `bazel query //:math`
-      run before the real build, independent of whether the library
-      build/scan themselves succeed, so lockfile drift reads distinctly
-      from an ordinary scan failure. Verified directly: `bazel build
-      //:math --lockfile_mode=error` fails closed with an explicit "run
-      bazel mod deps --lockfile_mode=update" message on a deliberately
-      mismatched MODULE.bazel (a downgraded rules_cc version not in the
-      committed lock), and passes cleanly when MODULE.bazel and
-      MODULE.bazel.lock agree.
+    '
+- id: scenarios-canary-castxml
+  status: non_gating_watch
+  gating: false
+  workflow: scenarios-canary.yml
+  job: scenarios_canary
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: n/a
+    scope: detection_correctness
+    target_shape: cc_binary_linkshared
+  note: 'Scheduled canary re-running the same scenario oracle against abicheck main, previewing
+    not-yet-stable features (e.g. --contract-evaluation, ADR-049) before they land in a pinned
+    release. Non-blocking by design.
+
+    '
+- id: scenarios-canary-clang
+  status: non_gating_watch
+  gating: false
+  workflow: scenarios-canary.yml
+  job: scenarios_canary
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: n/a
+    scope: detection_correctness
+    target_shape: cc_binary_linkshared
+  note: 'Scheduled canary re-running the same scenario oracle against abicheck main, previewing
+    not-yet-stable features (e.g. --contract-evaluation, ADR-049) before they land in a pinned
+    release. Non-blocking by design.
+
+    '
+- id: cc-shared-library-target-shape
+  status: covered
+  gating: false
+  workflow: abi-scan.yml
+  job: scan_math_shared
+  dimensions:
+    evidence_depth: headers
+    header_frontend: clang
+    toolchain: pinned-default
+    scope: single_library
+    target_shape: cc_shared_library
+  note: '`//:math_shared` (root BUILD.bazel) -- a real `cc_shared_library` wrapping a private
+    `cc_library` (`math_impl`), coexisting with `//:math`''s legacy `cc_binary(linkshared
+    = True)` demo shape rather than replacing it: every existing job''s cache key, evidence
+    pack, and committed baseline (abi/math.abicheck.json) stay keyed to `//:math` specifically.
+    `scan_math_shared` builds and scans this target''s own genuinely different Bazel action
+    graph (a real link action producing the shared object, not `cc_binary`''s own implicit
+    link step) against its own committed baseline (abi/math_shared.abicheck.json, collected
+    the same headers-depth way as strings.abicheck.json). Deliberately non-gating, same posture
+    as scan_strings -- this validates the target-shape mechanism itself, not an additional
+    required check on :math.
+
+    '
+- id: module-bazel-lock-pinning
+  status: covered
+  gating: true
+  workflow: abi-scan.yml
+  job: scan
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: n/a
+    target_shape: n/a
+  note: 'Not a job-shaped axis like every other entry in this file -- `.bazelrc`''s `common
+    --lockfile_mode=error` enforces MODULE.bazel.lock against every Bazel invocation in every
+    job that runs one (build, query, cquery, aquery, mod), not just `scan`. Pointed at `scan`
+    here (`gating: true`, since it''s this repo''s own required gate and the earliest Bazel
+    invocation in the PR pipeline) as the representative job check_capability_matrix.py''s
+    job/workflow model needs one entry to name; a lockfile-drift failure surfaces there first,
+    on every PR, before any other job''s own build runs. `scan` emits a dedicated receipt
+    for it (Codex review, fresh evidence: marking this `gating: true` with no receipt anywhere
+    left a real gap in the one-receipt-per-gating-capability contract) derived from its own
+    `lockfile_check` step -- a cheap `bazel query //:math` run before the real build, independent
+    of whether the library build/scan themselves succeed, so lockfile drift reads distinctly
+    from an ordinary scan failure. Verified directly: `bazel build //:math --lockfile_mode=error`
+    fails closed with an explicit "run bazel mod deps --lockfile_mode=update" message on a
+    deliberately mismatched MODULE.bazel (a downgraded rules_cc version not in the committed
+    lock), and passes cleanly when MODULE.bazel and MODULE.bazel.lock agree.
+
+    '
+- id: native-project-baseline-resolution
+  status: non_gating_watch
+  gating: false
+  workflow: project-shadow.yml
+  job: baseline-ref
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: baseline_lifecycle
+    target_shape: n/a
+  note: Resolves the PR base to the commit that can own an accepted-main baseline and publishes
+    the resolution receipt. Walks past bot baseline-refresh commits with git diff --no-renames;
+    anything else stops the walk.
+- id: native-project-build-output
+  status: non_gating_watch
+  gating: false
+  workflow: project-shadow.yml
+  job: build
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: native_project
+    target_shape: native_project_topology
+  note: Builds all three contract profiles and validates .abicheck.yml, the upstream build-output.json
+    shape, the project foundation, and the cross-DSO provider edges.
+- id: native-project-baseline-identity
+  status: non_gating_watch
+  gating: false
+  workflow: project-shadow.yml
+  job: restore-baseline
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: baseline_lifecycle
+    target_shape: n/a
+  note: Fails closed unless the baseline-set's manifest matches this profile, the resolved
+    source commit and the declared baseline generation. A restore-keys prefix match is transport
+    only; a missing cache is rebuilt from the resolved source commit and receipted distinctly.
+- id: native-project-aggregate
+  status: non_gating_watch
+  gating: false
+  workflow: project-shadow.yml
+  job: project
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: native_project
+    target_shape: native_project_topology
+  note: The upstream check-project.yml run plan, per-cell checks and trailing aggregate gate
+    over 18 required/deferred cells. Advisory until the promotion criteria in docs/roadmap.md
+    are met.
+- id: native-run-plan-semantics
+  status: non_gating_watch
+  gating: false
+  workflow: project-shadow.yml
+  job: plan-oracle
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: run_plan_semantics
+    target_shape: n/a
+  note: Asserts the generated run plan realizes the declared topology exactly (cells, required,
+    gate_mode, requested_depth, no duplicate check_id) and proves the aggregate fails on a
+    missing required report.
+- id: cross-dso-provider-break
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: project-cross-dso
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: cross_dso
+    target_shape: native_project_topology
+  note: Proves a cross-DSO provider signature break is detected through the native bundle
+    topology, not just within one library.
+- id: evidence-depth-l2-green-l4-red
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: l2-green-l4-red
+  dimensions:
+    evidence_depth: source
+    header_frontend: clang
+    toolchain: gcc14-cxx17
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: 'A public macro value change: invisible at headers depth, an API_BREAK at source depth.
+    Gates the compare-side assurance (status, fact_set_comparability, l3_context_status) so
+    a silent L4-to-L2 fallback fails even when the verdict is still correct.'
+- id: producer-compiler-attribution
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: producer-compiler
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: multi-producer
+    scope: producer_agreement
+    target_shape: elf_dso
+  note: 'One fixture, one build system, two producer compilers. Asserts each producer''s own
+    findings (not just its verdict) and the affected/unaffected split, so ABICheck''s output
+    is the subject rather than the runner''s labelling. ABICheck is not handed a profile id
+    here: routing a per-profile cell''s findings through the native project path is the `producer-attribution-through-project-path`
+    expected gap, and needs the Clang profile to become a contract profile first.'
+- id: loader-feature-drift
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: loader-features
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: loader_runtime
+    target_shape: elf_dso
+  note: Eleven emitted loader/runtime feature cases (DT_RELR, DT_RPATH/DT_RUNPATH, SysV hash,
+    SONAME, symbol-version nodes, CET, static TLS), each linking one source twice. Modelled
+    as emitted features, never a binutils floor; each side's readelf output is verified before
+    comparing so an ignored flag fails instead of producing a vacuous green.
+- id: runtime-floor-modulation
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: runtime-floor
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: gcc14-cxx17
+    scope: loader_runtime
+    target_shape: elf_dso
+  note: A deterministic versioned runtime whose symbol-version floor is raised, checked with
+    and without an environment matrix so the floor's severity tracks the declared runtime.
+- id: python-extension-stub-break
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: python-extension
+  dimensions:
+    evidence_depth: headers
+    header_frontend: n/a
+    toolchain: pinned-default
+    scope: python_extension
+    target_shape: python_extension_module
+  note: A pybind11 keyword rename visible only in the .pyi stub. Builds a real scikit-build-core
+    wheel; wheel-level comparison itself is still a declared follow-up (docs/roadmap.md).
+- id: python-wheel-package-level
+  status: non_gating_watch
+  gating: false
+  workflow: depth-scenarios.yml
+  job: python-wheel
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: pinned-default
+    scope: python_extension
+    target_shape: python_extension_module
+  note: 'Compares the actual built wheels (old.whl vs new.whl): extension and .pyi discovery
+    inside the package, Python API findings, bundled native library discovery, package-level
+    added/removed extensions, and wheel tags/CPython ABI metadata. Post-repair (auditwheel/delocate/delvewheel)
+    behaviour is a declared follow-up, not covered here.'
+
+# --- integration-shadow.yml: the cross-build (producer-agreement) legs -------
+#
+# Codex review (PR #30): this workflow was outside IN_SCOPE_WORKFLOWS, so none
+# of its jobs had to be declared -- including scenarios_make and scenario_parity,
+# which are the cross-build coverage README presents as validated. Deleting or
+# renaming either left check_capability_matrix.py green.
+- id: cross-build-profile-selection
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: select
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: producer_agreement
+    target_shape: n/a
+  note: Resolves which build-system profiles this event runs. An empty matrix here silently empties every
+    downstream leg, so it is declared rather than treated as plumbing.
+- id: cross-build-profile-scan
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: build
+  dimensions:
+    evidence_depth: binary
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: producer_agreement
+    target_shape: elf_dso
+  note: Builds, stages and scans libmath/libstrings once per build-system profile (bazel/cmake+ninja/make+bear)
+    against the resolved base baseline, and emits the per-profile receipt the gate below consumes.
+- id: cross-build-output-equivalence
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: cross_build_equivalence
+  dimensions:
+    evidence_depth: binary
+    header_frontend: n/a
+    toolchain: multi-producer
+    scope: producer_agreement
+    target_shape: elf_dso
+  note: Compares the staged build outputs pairwise across profiles. This is the claim that three build
+    systems describe the SAME artifact, not merely that each one scanned green.
+- id: cross-build-integration-gate
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: integration_gate
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: multi-producer
+    scope: producer_agreement
+    target_shape: n/a
+  note: Renders the per-profile receipts and the equivalence result into one gate summary. Runs on always()
+    with a non-cancelled `select`, so a dropped leg reads as a missing receipt rather than as a pass.
+- id: detection-scenarios-cmake
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenarios_cmake
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: Runs the detection-correctness suite against CMake+Ninja-built fixtures.
+- id: detection-scenarios-make
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenarios_make
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: gcc14-cxx17
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: Runs the detection-correctness suite against Make+Bear-built fixtures, so a finding that depends
+    on a compile_commands.json produced by Bear rather than by CMake is exercised rather than assumed.
+- id: detection-scenario-cross-build-parity
+  status: non_gating_watch
+  gating: false
+  workflow: integration-shadow.yml
+  job: scenario_parity
+  dimensions:
+    evidence_depth: headers
+    header_frontend: castxml
+    toolchain: multi-producer
+    scope: detection_correctness
+    target_shape: elf_dso
+  note: 'Asserts the same fixture mutation yields the same verdict, findings and suppressions under every
+    build system, cell by cell. check_scenario_parity.py requires the Bazel reference to have reported
+    every declared cell: these fixtures are shaped to match Bazel, so a cell missing there would be ''parity''
+    between two imitations.'

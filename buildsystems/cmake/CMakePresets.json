@@ -1,6 +1,10 @@
 {
   "version": 2,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "gcc14-cxx17",
@@ -13,12 +17,29 @@
         "CMAKE_CXX_COMPILER": "g++-14",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
+    },
+    {
+      "name": "clang18-cxx17",
+      "displayName": "clang-18, C++17, Ninja",
+      "description": "Matches ci/profiles.yaml's linux-x86_64-clang18-cxx17-cmake-ninja profile -- the same CMake+Ninja build system as gcc14-cxx17, differing only in the producer compiler, so the producer axis can be varied without also changing the build system. CI installs clang-18 via apt (the same package abi-scan.yml's L4 replay legs already install).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-clang18",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang-18",
+        "CMAKE_CXX_COMPILER": "clang++-18",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "gcc14-cxx17",
       "configurePreset": "gcc14-cxx17"
+    },
+    {
+      "name": "clang18-cxx17",
+      "configurePreset": "clang18-cxx17"
     }
   ]
 }

@@ -165,6 +165,34 @@ treat an old, open PR with a "breaking" or "compatible" title as
 abandoned work — check whether it's referenced as a scenario or test case
 before closing it.
 
+They are no longer hand-maintained. `demos/manifest.yaml` declares each one
+as the current default branch plus a single patch from `demos/patches/`,
+together with the verdict and findings it must produce, and the gating
+`demo_oracle` job in `abi-scan.yml` reads the gate's own report and passes
+only when the natural result is that one. Two of the five are *supposed* to
+make the gate red; the oracle is what distinguishes "the demonstration
+worked" from "the branch drifted".
+
+To refresh them:
+
+```shell
+python3 scripts/gen_demo_prs.py --check          # what is stale, changes nothing
+python3 scripts/gen_demo_prs.py --write          # recreate the branches locally
+python3 scripts/gen_demo_prs.py --push           # force-with-lease to origin
+python3 scripts/gen_demo_prs.py --body <demo-id> # PR body section to paste
+```
+
+`--push` is never implied by `--write`. Regenerating resets each branch to
+the new base, so the old history is not an ancestor of the new and the push
+is a rewrite by construction — of branches that carry open pull requests.
+That is the intended lifecycle for a generated demonstration branch, and it
+is exactly why it takes a separate flag. `--force-with-lease`, not `--force`:
+if someone pushed to a demonstration branch since the last fetch, that is a
+human decision the script must not silently discard.
+
+`--body` writes only between its own markers, so context a human added to a
+PR description survives regeneration.
+
 ## Repository transfer readiness checklist
 
 The repository already lives at `abicheck/integration-lab`; this section

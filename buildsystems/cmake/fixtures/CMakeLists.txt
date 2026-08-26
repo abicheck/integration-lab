@@ -38,5 +38,15 @@ endif()
 # scripts/run_scenario.py's cmake path stages the same libimpl.so
 # filename its bazel path already expects.
 add_library(impl SHARED "${FIXTURE_DIR_ABS}/lib.cc")
+
+# NO_SONAME: match the Bazel reference these fixtures are compared against.
+# Bazel's `cc_binary(linkshared = True)` emits no DT_SONAME, so
+# scenarios/manifest.yaml's expected_gating_symbols contains only API
+# symbols. CMake sets a SONAME for a SHARED library by default, which makes
+# ABICheck add a `soname_bump_recommended` [DT_SONAME] finding to the gating
+# set on a breaking change -- a build-system artifact-shape difference, not
+# a semantic one, and enough on its own to fail the suppression_partial
+# oracle under CMake/Make while it passes under Bazel.
+set_target_properties(impl PROPERTIES NO_SONAME ON)
 target_include_directories(impl PRIVATE "${FIXTURE_DIR_ABS}")
 set_target_properties(impl PROPERTIES OUTPUT_NAME "impl")

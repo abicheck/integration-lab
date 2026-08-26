@@ -4,6 +4,7 @@ subprocess calls.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from pathlib import Path
@@ -12,15 +13,69 @@ from typing import Any, Dict
 from base import BackendError, BuildBackend, BuildResult, EnvironmentCheck, TargetResult
 
 _EXECUTABLE_TARGETS = {"consumer"}
-_PRESET = "gcc14-cxx17"
+_PRESETS_FILE = "CMakePresets.json"
 
 
 class CMakeBackend(BuildBackend):
     name = "cmake"
 
     @property
+    def _preset(self) -> str:
+        """The CMake preset this profile declares.
+
+        Previously hard-coded to "gcc14-cxx17" for every cmake profile.
+        That was invisible while there was only one, but it means a profile
+        declaring a different producer builds with the WRONG compiler while
+        build-output.json still reports the declared one -- corrupted
+        producer provenance rather than an honest failure (Codex review,
+        PR #30, on the clang-18 profile this PR adds).
+
+        Fails closed when unset: silently falling back to another profile's
+        preset is exactly the bug.
+        """
+        preset = self.profile.get("cmake_preset")
+        if not preset:
+            raise BackendError(
+                f"profile {self.profile.get('id')!r} declares no cmake_preset; "
+                "refusing to guess one, since guessing means building with a "
+                "different compiler than the profile claims"
+            )
+        return preset
+
+    @property
     def _build_dir(self) -> Path:
-        return self.root / "build"
+        """The preset's own binaryDir, read from CMakePresets.json.
+
+        Read rather than assumed so the preset and the directory the
+        backend collects outputs from cannot diverge: two presets that
+        share one binaryDir would have each other's objects, and a preset
+        whose binaryDir moved would silently stage a stale tree.
+        """
+        presets_path = self.root / _PRESETS_FILE
+        try:
+            document = json.loads(presets_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BackendError(f"cannot read {presets_path}: {exc}") from exc
+        for entry in document.get("configurePresets", []):
+            if entry.get("name") != self._preset:
+                continue
+            binary_dir = entry.get("binaryDir")
+            if not binary_dir:
+                raise BackendError(
+                    f"{presets_path}: preset {self._preset!r} declares no binaryDir"
+                )
+            # Only ${sourceDir} is substituted; anything else is a macro
+            # this backend has not been taught and must not silently mangle.
+            resolved = binary_dir.replace("${sourceDir}", str(self.root))
+            if "${" in resolved:
+                raise BackendError(
+                    f"{presets_path}: preset {self._preset!r} binaryDir "
+                    f"{binary_dir!r} uses a macro this backend cannot resolve"
+                )
+            return Path(resolved)
+        raise BackendError(
+            f"{presets_path}: no configure preset named {self._preset!r}"
+        )
 
     def verify_environment(self) -> EnvironmentCheck:
         missing = []
@@ -46,7 +101,7 @@ class CMakeBackend(BuildBackend):
             shutil.rmtree(self._build_dir)
 
     def configure(self) -> str:
-        proc = self._run(["cmake", "--preset", _PRESET])
+        proc = self._run(["cmake", "--preset", self._preset])
         return proc.stdout
 
     def build(self) -> BuildResult:
@@ -57,7 +112,7 @@ class CMakeBackend(BuildBackend):
         build_log = ""
         try:
             configure_log = self.configure()
-            proc = self._run(["cmake", "--build", "--preset", _PRESET])
+            proc = self._run(["cmake", "--build", "--preset", self._preset])
             build_log = proc.stdout
         except BackendError as exc:
             build_log = str(exc)

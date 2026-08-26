@@ -10,20 +10,29 @@ pipeline, get proven against real Bazel, CMake, and Make builds, real
 scanner output, and real GitHub Actions runs, so that upstream changes can
 be validated before other projects depend on them.
 
-> **Current status: transition in progress.** The repository's one
-> required, load-bearing compatibility gate is still the Bazel-based
-> workflow described below. A newer, parallel multi-build-system system
-> (Bazel + CMake + Make, all three staged and checked) exists, runs on
-> every PR, and can genuinely fail — but it is advisory only and does not
-> block merges yet. Its per-build-system compatibility check
-> (`ci/check_profile.py`) now runs the REAL ABICheck scanner
-> (`abicheck dump`/`compare`, via `ci/real_scan.py`) for the CMake and Make
-> profiles; the Bazel profile's own leg of this same advisory workflow
-> still uses a lab-only ELF/header signal, since Bazel already has its own
-> real, required gate in the separate, canonical `abi-scan.yml`. See
-> [Honest current limitations](#honest-current-limitations) before relying
-> on any of it as proof of anything beyond "the same source builds under
-> three build systems."
+> **Current status.** Three paths run on every PR, and only one of them is
+> branch-required:
+>
+> 1. **`abi-scan.yml` — required.** The real ABICheck scanner at
+>    `depth: source` over the root Bazel build, resolved against the PR's
+>    exact base commit. This is the one gate that can block a merge.
+> 2. **`integration-shadow.yml` — advisory.** The same source built and
+>    staged through Bazel, CMake and Make, each checked against its own
+>    committed per-profile baseline. Real, and it does fail for real
+>    reasons; it is not in branch protection.
+> 3. **`project-shadow.yml` — advisory, promotion candidate.** The native
+>    `.abicheck.yml` project contract: 18 required/deferred cells across
+>    three contract profiles, an accepted-main baseline resolved with a
+>    receipt, and a trailing aggregate gate. The explicit criteria for
+>    making its aggregate branch-required are in
+>    [docs/roadmap.md](docs/roadmap.md#promoting-the-native-project-aggregate).
+>
+> Everything below describes the current state. What is still being
+> migrated — which profiles are contract profiles, which scenarios run
+> under which build systems, what is still an expected gap — is stated in
+> [Honest current limitations](#honest-current-limitations) and generated
+> from `capabilities.yaml` and `scenarios/manifest.yaml` rather than
+> hand-maintained here.
 
 ## Why this repository exists
 
@@ -70,19 +79,59 @@ as machine-readable `expected_gaps` in the scenario manifest instead of being
 reported as covered.
 
 `.github/workflows/project-baseline.yml` publishes generation-scoped
-`accepted-main` baseline-sets to Actions cache on every main push. Pull-request
-project checks restore the exact base-SHA cache key (never a prefix fallback),
-validate profile/project-ref/generation identity, and upload it under
-`check-project.yml`'s baseline artifact convention. The run plan contains 18
+`accepted-main` baseline-sets to Actions cache on every main push, and every
+pull-request project check resolves its baseline through
+`ci/baseline_resolution.py`, which writes a **baseline-resolution receipt**
+(uploaded as `baseline-resolution-<profile>`) naming every identity involved:
+
+```json
+{
+  "requested_pr_base": "...",
+  "selected_source_commit": "...",
+  "cache_primary_key": "...",
+  "cache_matched_key": "...",
+  "manifest_project_ref": "...",
+  "manifest_generation": 1,
+  "reason_selected": "abi-equivalent-ancestor"
+}
+```
+
+Three things can make the requested base and the baseline's own commit differ,
+and the receipt distinguishes them rather than collapsing all three into one
+`FileNotFoundError` on `baseline-set/manifest.json`:
+
+- `exact-base` — the base commit's own published baseline was restored.
+- `abi-equivalent-ancestor` — the base is separated from the restored
+  baseline's commit only by commits touching nothing the ABI depends on.
+  A bot-authored `chore: refresh ABICheck baseline` commit is the case that
+  matters: it is pushed with automation credentials, so it starts no workflow
+  run and can never own a baseline, and it rewrites only committed legacy
+  `abi/` snapshots. The walk uses `git diff --no-renames` and stops at the
+  first commit that changes anything else.
+- `rebuilt-from-source-commit` — no usable baseline-set was in the cache, so
+  one was rebuilt from the resolved source commit using *that commit's own*
+  build recipe. Actions caches expire after seven idle days and are evicted
+  under the repository's 10 GB budget, so a missing entry is routine; the
+  accepted-main baseline is defined by its source commit, and the cache is
+  transport. A rebuild is never receipted as a cache hit.
+
+A prefix (`restore-keys`) match is a transport fallback only: the manifest's
+`profile`, `project_ref`, and `baseline_generation` must still match exactly,
+and an older unrelated cache is rejected as `wrong-project-ref` with both refs
+printed. The staged result is uploaded under `check-project.yml`'s baseline
+artifact convention. The run plan contains 18
 required/deferred cells: three libraries, the consumer, the plugin contract,
 and the SDK bundle across all three profiles; a negative aggregate oracle
 proves that any missing required report fails coverage.
 
-The one-time introduction PR has no trusted project cache to restore because
-its base commit predates the publisher workflow. The shadow detects that state
-from the base tree and runs build/manifest validation only; the first main push
-publishes the cache, after which missing or stale exact-base baselines fail
-closed. It never manufactures a PR baseline from the candidate under test.
+The one-time introduction PR has no baseline to resolve at all, because its
+base commit predates the publisher workflow and so carries no `.abicheck.yml`
+or profile build recipe to rebuild from either. The shadow detects that one
+state from the base tree and runs build/manifest validation only. Every later
+PR takes the resolution path above, which fails closed with a receipt when it
+cannot produce an identity-matched baseline. Neither path ever manufactures a
+PR baseline from the candidate under test: a rebuild always uses the resolved
+accepted-main source commit's own tree, never this PR's.
 
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
 ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
@@ -101,7 +150,7 @@ profiles, all building the same shared source tree
 |---|---|---|
 | `linux-x86_64-gcc14-cxx17-bazel` | Bazel | `true` |
 | `linux-x86_64-gcc14-cxx17-cmake-ninja` | CMake + Ninja | `true` |
-| `linux-x86_64-gcc14-cxx17-make-bear` | Make (+ Bear when available) | `true` |
+| `linux-x86_64-gcc14-cxx17-make-bear` | Make + required Bear evidence | `true` |
 
 `.github/workflows/integration-shadow.yml` builds and stages all three on
 every PR and push to `main`, runs a per-profile compatibility check
@@ -193,15 +242,47 @@ pybind cross-module internals identity remains an explicit expected gap.
   `libmath.so` reports `COMPATIBLE_WITH_RISK`, a DWARF/source-level
   difference the SONAME/symbol-table diff can't see on its own) remains.
   Like every other advisory job, none of this can block a merge.
-- **Not every profile has a production release baseline**, and not every
-  scenario runs through every build system — the scenario oracle exercises
-  Bazel for its full suite; CMake covers only an initial, deliberately
-  small subset (`add_function`/`remove_function`) proving both a
-  compatible and a breaking verdict work under a second build system, not
-  yet Make.
-- **Make's `bear`-captured evidence is best-effort, not authoritative** —
-  when `bear` isn't on `PATH`, the Make profile degrades to "no
-  compile-commands evidence" rather than failing.
+- **Not every profile has a production release baseline.** Semantic
+  scenario parity across build systems is now asserted rather than
+  assumed: `scenario_parity` runs the suite under Bazel, CMake and Make
+  and fails unless the same mutation yields the same normalized findings
+  and verdict everywhere it ran (`scripts/check_scenario_parity.py`).
+  Provenance — paths, timings, the producing build system's own
+  bookkeeping — is excluded from that comparison by construction.
+  `generated_header_removed_function` stays Bazel-only: its header comes
+  from a Bazel genrule rather than the fixture directory, so the generic
+  CMake/Make recipes have nothing to compile against. It fails closed as
+  "no build mapping declared" rather than being skipped quietly.
+- **Make source evidence is fail-closed.** Bear and the generated
+  `compile_commands.json` are mandatory for the Make contract profile; a
+  missing tool, failed capture, or a compile database whose entries are not
+  well-typed fails the profile before comparison rather than degrading to a
+  binary-only green result.
+- **The producer-compiler axis is exercised by scenario, not yet by
+  profile.** `depth-scenarios.yml`'s `producer-compiler` job builds one
+  fixture under gcc-14 and clang-18 and asserts each producer's own
+  findings: the GCC side must name the exact symbol pair the width change
+  produces, the Clang side must name nothing. It does **not** hand ABICheck
+  a profile id, so it does not prove the native project path routes a
+  per-profile cell's findings to the right profile — that is the
+  `producer-attribution-through-project-path` expected gap. The
+  `linux-x86_64-clang18-cxx17-cmake-ninja` profile is declared but is
+  `contract: false` and not yet scheduled by `ci/event-policy.yaml`: a
+  profile earns scheduling once `profile-baseline.yml` has published
+  `abi/profiles/<id>/` for it, and until then adding it to an event set
+  would make the fan-in gate red for a missing baseline rather than a real
+  finding.
+- **Wheel comparison covers everything except post-repair.**
+  `depth-scenarios.yml`'s `python-wheel` job builds both wheels and runs
+  `abicheck compare old.whl new.whl`, asserting extension and `.pyi`
+  discovery inside the package, the Python API findings, bundled native
+  library discovery, package-level added/removed extensions, and wheel
+  tags/CPython ABI metadata. The separate `python-extension` job compares a
+  standalone `_core` extension against adjacent stubs — a fast unit-level
+  acceptance case, not wheel integration, and described as such.
+  Post-repair behaviour, where auditwheel/delocate/delvewheel rewrites
+  RPATHs and vendors libraries, is still
+  [roadmap item 10](docs/roadmap.md#declared-follow-ups).
 
 See [docs/roadmap.md](docs/roadmap.md) for what closes these gaps, and in
 what order.
@@ -215,56 +296,100 @@ the capability matrix actually declares.
 
 <!-- capability-matrix:gaps:start -->
 _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
+
+Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expected to fall short, with the upstream issue and the phase they fall short in, rather than being reported as covered:
+
+- **plugin-pack-reuse-scope-contract** (`expected_gap`): falls short at `plugin-pack-reuse` -- `baseline_is_castxml_extracted_but_the_l4_plugin_path_parses_with_clang` (upstream: `integration-lab#pack-reuse-scope-contract`)
+- **replay-report-assurance-block** (`expected_gap`): falls short at `plugin-pack-reuse` -- `replay_report_carries_no_analysis_assurance` (upstream: `abicheck#scan-report-analysis-assurance`)
+- **plugin-pack-producer-identity** (`expected_gap`): falls short at `plugin-pack-reuse` -- `pack_manifest_records_no_producer_identity` (upstream: `integration-lab#pack-producer-identity`)
+- **producer-attribution-through-project-path** (`expected_gap`): falls short at `check-project` -- `clang_profile_not_a_contract_profile` (upstream: `abicheck#per-profile-cell-attribution`)
+- **same-binary-clang-client-only-break** (`expected_gap`): falls short at `check-project` -- `consumer_compile_not_applied` (upstream: `abicheck#consumer-compile-execution`)
+- **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)
+- **pybind-cross-module-internals** (`expected_gap`): falls short at `compare` -- `binding_internals_identity_not_collected` (upstream: `abicheck#binding-abi-provider`)
+- **target-specific-source-evidence-routing** (`expected_gap`): falls short at `check-project` -- `target_evidence_path_not_projected` (upstream: `abicheck#run-plan-build-output-projection`)
 <!-- capability-matrix:gaps:end -->
 
 ## Architecture
 
+Three paths run on every PR. Only the first is branch-required today; the
+promotion criteria for the third are in
+[docs/roadmap.md](docs/roadmap.md#promoting-the-native-project-aggregate).
+
 ```text
-                         ┌─────────────────────────────┐
-                         │   pull_request / push:main    │
+                         ┌──────────────────────────────┐
+                         │  pull_request / push:main     │
                          └───────────────┬──────────────┘
                                          │
-              ┌──────────────────────────┼──────────────────────────┐
-              │  REQUIRED, LOAD-BEARING  │   ADVISORY, NON-GATING     │
-              ▼                          ▼                          │
-   .github/workflows/          .github/workflows/                   │
-      abi-scan.yml              integration-shadow.yml               │
-   ┌──────────────────┐    ┌──────────────────────────────────┐     │
-   │ real abicheck     │    │ ci/select_profiles.py             │     │
-   │ scan, depth:source│    │   (profiles.yaml + event-policy)  │     │
-   │ base-SHA baseline │    │        │        │        │        │     │
-   │ coverage contract │    │     bazel    cmake     make        │     │
-   │ ── ONE verdict ── │    │        │        │        │        │     │
-   └──────────────────┘    │  ci/run_profile.py (per profile)   │     │
-                            │  → abicheck-build-<id>/ (staged)   │     │
-                            │  → ci/check_profile.py             │     │
-                            │    (real abicheck for cmake/make,  │     │
-                            │     ELF signal for bazel's own leg) │     │
-                            │  → ci/check_profile_coverage.py    │     │
-                            │  → ci/emit_profile_receipt.py      │     │
-                            │        │        │        │        │     │
-                            │        └────────┴────────┘        │     │
-                            │      integration_gate (fan-in)     │     │
-                            └──────────────────────────────────┘     │
-                                                                      │
-                            scenarios.yml / scenarios-canary.yml ─────┘
-                            (scenario oracle, capability matrix,
-                             suppressions, consumer/aggregate checks)
+        ┌────────────────────────┬───────┴────────┬────────────────────────┐
+        │ REQUIRED, LOAD-BEARING │    ADVISORY    │  ADVISORY (native,     │
+        │                        │                │  promotion candidate)  │
+        ▼                        ▼                ▼
+ .github/workflows/     .github/workflows/   .github/workflows/
+    abi-scan.yml       integration-shadow.yml  project-shadow.yml
+ ┌──────────────────┐  ┌─────────────────────┐ ┌───────────────────────────┐
+ │ real abicheck     │  │ ci/select_profiles  │ │ .abicheck.yml (topology)   │
+ │ scan, depth:source│  │ (profiles.yaml +    │ │   │                        │
+ │ base-SHA baseline │  │  event-policy)      │ │ baseline-ref               │
+ │ coverage contract │  │   bazel cmake make  │ │   ci/baseline_resolution   │
+ │ ── ONE verdict ── │  │   ci/run_profile.py │ │   │  (receipt: which       │
+ └──────────────────┘  │   → abicheck-build- │ │   │   commit, which key)   │
+                        │      <id>/ (staged) │ │ build (3 profiles)         │
+                        │   → check_profile   │ │   → abicheck-build-<id>/   │
+                        │   → coverage        │ │ restore-baseline           │
+                        │   → profile receipt │ │   cache hit, ABI-equivalent│
+                        │   integration_gate  │ │   ancestor, or rebuild     │
+                        └─────────────────────┘ │   from the source commit   │
+                                                 │ project (upstream          │
+   scenarios.yml / scenarios-canary.yml          │   check-project.yml)       │
+   depth-scenarios.yml                           │   plan → check cells →     │
+   (scenario oracle, capability matrix,          │   reports → aggregate      │
+    suppressions, consumer/aggregate checks)     │ plan-oracle                │
+                                                 │   run-plan semantics +     │
+                                                 │   negative aggregate proof │
+                                                 └───────────────────────────┘
 ```
+
+Every ABICheck reference in every workflow resolves to the one reviewed pin in
+[`ci/abicheck-version.yaml`](ci/abicheck-version.yaml). GitHub cannot
+interpolate a `uses:` ref from a file, so reusable-workflow references are
+written out literally — `tests/test_abicheck_pin.py` fails if any of them
+drifts from the reviewed value.
 
 ## The project under test
 
-A small public C++ shared-library project: `//:math` (`include/`, `src/`),
-a second independent library `//strings_lib:strings`, a real consumer
-application `//consumer:consumer_app` that links against `//:math` and
-calls only a subset of its API, and a `cc_shared_library`-shaped variant
-`//:math_shared`. The same sources are also built by
-`buildsystems/cmake/CMakeLists.txt` and `buildsystems/make/Makefile`
-without copying anything. Test PRs intentionally exercise compatible
-additions, binary ABI breaks, source/API breaks, and implementation-only
-changes against the canonical gate — some are intentionally kept open as
-reusable acceptance cases rather than merged or closed; see
+A small public C++ project, built unchanged (not copied) by all three build
+systems. `.abicheck.yml` is the authoritative topology; this is what it
+declares:
+
+| Target | Kind | Sources | Role |
+|---|---|---|---|
+| `core` | library | `core_include/`, `internal/` | The native provider both libraries consume through an internal C ABI. A cross-DSO provider signature change is therefore a real break in its consumers, not just in itself. |
+| `math` | library | `include/`, `src/` | The primary public library. |
+| `strings` | library | `strings_lib/` | A second, independent public library. |
+| `consumer-app` | app-consumer | `consumer/` | A real executable linking `math` and calling only a subset of its API, so consumer-scoped analysis has something narrower than the full export table to scope to. |
+| `math-plugin-contract` | plugin-contract | `plugins/contracts/math-plugin.syms` | The symbol contract a plugin host must keep, checked independently of `math`'s own surface. |
+| `sdk` | bundle | `core` + `math` + `strings` | The three-member release bundle, checked as one unit as well as per member. |
+
+Each of those is checked on all three contract profiles, giving the 18
+required/deferred cells the native run plan generates.
+
+Alongside the C++ targets: `bindings/python/` is a real
+scikit-build-core/pybind11 extension (`abicheck_lab_py`) with committed
+`.pyi` stubs, and `//:math_shared` is a `cc_shared_library`-shaped variant
+of `math` kept so that target shape is exercised too.
+
+Test PRs intentionally exercise compatible additions, binary ABI breaks,
+source/API breaks, and implementation-only changes against the canonical
+gate — some are intentionally kept open as reusable acceptance cases rather
+than merged or closed; see
 [docs/operations.md](docs/operations.md#long-lived-intentional-test-prs).
+Those branches had drifted from what they claim to demonstrate. They are now
+declared in [`demos/manifest.yaml`](demos/manifest.yaml) as *base + one
+patch* plus the result each must produce, regenerable with
+`scripts/gen_demo_prs.py`, and checked by the gating `demo_oracle` job, which
+reads the gate's own report and passes only when the natural result is the
+declared one. `scripts/gen_demo_prs.py --check` reports which branches are
+stale; the force-push that refreshes them is a deliberate operator step.
 
 ## Canonical staged-output shape
 

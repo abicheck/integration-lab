@@ -56,6 +56,13 @@ import check_capability_matrix
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MATRIX_PATH = REPO_ROOT / "capabilities.yaml"
 README_PATH = REPO_ROOT / "README.md"
+# scenarios/manifest.yaml's own `expected_gaps` are the second half of this
+# repository's declared limitations, and the README block used to render
+# only the first: it said "no gap/planned entries are currently declared"
+# while the manifest declared four expected gaps, which is exactly the kind
+# of drift this script exists to prevent. Both sources are rendered now, so
+# the README cannot claim a completeness neither source supports.
+MANIFEST_PATH = REPO_ROOT / "scenarios" / "manifest.yaml"
 
 MARKER_START = "<!-- capability-matrix:gaps:start -->"
 MARKER_END = "<!-- capability-matrix:gaps:end -->"
@@ -89,27 +96,48 @@ def _load_matrix(path: Path) -> dict[str, Any]:
     return data
 
 
-def render_block(matrix: dict[str, Any]) -> str:
+def _load_expected_gaps(path: Path = MANIFEST_PATH) -> list[dict[str, Any]]:
+    """scenarios/manifest.yaml's machine-readable expected gaps.
+
+    A missing manifest is an error, not an empty list: silently rendering
+    nothing is how the README came to disagree with the manifest in the
+    first place.
+    """
+    if not path.is_file():
+        raise SystemExit(f"{path}: expected-gap source is missing")
+    with path.open() as f:
+        data = yaml.safe_load(f) or {}
+    gaps = data.get("expected_gaps", [])
+    if not isinstance(gaps, list):
+        raise SystemExit(f"{path}: 'expected_gaps' must be a list")
+    for gap in gaps:
+        if not isinstance(gap, dict) or not gap.get("id"):
+            raise SystemExit(f"{path}: every expected_gap needs an id: {gap!r}")
+    return gaps
+
+
+def render_block(
+    matrix: dict[str, Any], expected_gaps: list[dict[str, Any]] | None = None
+) -> str:
+    if expected_gaps is None:
+        expected_gaps = _load_expected_gaps()
     gaps = [e for e in matrix["capabilities"] if e.get("status") in GAP_STATUSES]
     lines = [MARKER_START]
+
     if not gaps:
-        # Not just a hypothetical: this line is what stops the block
-        # silently rendering empty (and therefore looking generated-but-
-        # trivial) if every known gap is ever closed without anyone
-        # updating this script.
-        #
-        # Deliberately does NOT claim "every axis is covered" (Codex
-        # review, PR #16): this script only knows that no entry currently
-        # has status gap/planned -- it never checks that every possible
-        # dimension combination actually has a covered/non_gating_watch
-        # entry naming it, so an accidental deletion of the two real gap
-        # entries would make this line assert a completeness this script
-        # never verified. States only what's actually true instead.
+        # Deliberately does NOT claim "every axis is covered" (Codex review,
+        # PR #16): this script only knows that no entry currently has status
+        # gap/planned -- it never checks that every possible dimension
+        # combination actually has a covered/non_gating_watch entry naming
+        # it, so an accidental deletion of the real gap entries would make
+        # this line assert a completeness this script never verified.
         lines.append(
             "_No `gap`/`planned` entries are currently declared in "
             "`capabilities.yaml`._"
         )
     else:
+        lines.append("From `capabilities.yaml`:")
+        lines.append("")
         for entry in gaps:
             note = (entry.get("note") or "").strip()
             # capabilities.yaml notes are YAML folded scalars (`>`), which
@@ -119,6 +147,32 @@ def render_block(matrix: dict[str, Any]) -> str:
             # the surrounding Markdown list.
             note = " ".join(note.split())
             lines.append(f"- **{entry['id']}** (`{entry.get('status')}`): {note}")
+
+    lines.append("")
+    if not expected_gaps:
+        lines.append(
+            "_No `expected_gaps` are currently declared in "
+            "`scenarios/manifest.yaml`._"
+        )
+    else:
+        lines.append(
+            "Expected gaps from `scenarios/manifest.yaml` -- scenarios that "
+            "run and are expected to fall short, with the upstream issue and "
+            "the phase they fall short in, rather than being reported as "
+            "covered:"
+        )
+        lines.append("")
+        for gap in expected_gaps:
+            failure = gap.get("expected_failure") or {}
+            phase = failure.get("phase", "unknown")
+            reason = failure.get("reason", "unspecified")
+            upstream = gap.get("upstream_issue")
+            suffix = f" (upstream: `{upstream}`)" if upstream else ""
+            lines.append(
+                f"- **{gap['id']}** (`{gap.get('status', 'expected_gap')}`): "
+                f"falls short at `{phase}` -- `{reason}`{suffix}"
+            )
+
     lines.append(MARKER_END)
     return "\n".join(lines) + "\n"
 
@@ -178,7 +232,7 @@ def main() -> int:
         )
         print(
             "gen_capability_gaps: README.md's generated gap list is stale "
-            "relative to capabilities.yaml -- run "
+            "relative to capabilities.yaml/scenarios/manifest.yaml -- run "
             "`python3 scripts/gen_capability_gaps.py --write` and commit the result\n",
             file=sys.stderr,
         )
@@ -186,7 +240,13 @@ def main() -> int:
         return 1
 
     n = sum(1 for e in matrix["capabilities"] if e.get("status") in GAP_STATUSES)
-    print(f"gen_capability_gaps: OK -- README.md matches capabilities.yaml ({n} gap(s))")
+    # Both counts: reporting only the capabilities.yaml half is what let the
+    # README say "no declared gaps" while the manifest declared four.
+    expected = len(_load_expected_gaps())
+    print(
+        "gen_capability_gaps: OK -- README.md matches capabilities.yaml "
+        f"({n} gap/planned) and scenarios/manifest.yaml ({expected} expected_gap)"
+    )
     return 0
 
 

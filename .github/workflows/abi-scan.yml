@@ -969,7 +969,15 @@ jobs:
   # actually finished before `aggregate` looks for its artifact.
   aggregate:
     needs: [scan, scan_strings, scan_math_shared]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.scan_strings.result != 'cancelled'
+      && needs.scan_math_shared.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -1209,7 +1217,22 @@ jobs:
   # missing/failed receipt matters most.
   verify_capability_receipts:
     needs: [scan, aggregate]
-    if: always()
+    # A CANCELLED upstream uploads no receipts, and this job then reported
+    # MISSING_RECEIPT for capabilities whose producing job simply never ran
+    # (CI run 32941691653: 1 of 14 jobs failed, and it was this one -- `scan`
+    # was cancelled by the next push, not failed). Third instance of the same
+    # class in this repository, after cross_build_equivalence and
+    # integration_gate: an `always()` job that consumes an upstream's
+    # artifacts and fails hard when they are absent.
+    #
+    # `!= 'cancelled'`, not `== 'success'`, for the reason given on
+    # integration_gate: a genuinely FAILED scan should still be reported here,
+    # where a missing receipt is real evidence; only cancellation, which is
+    # not a result at all, is stepped aside for.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.aggregate.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -1781,6 +1804,40 @@ jobs:
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
+      # The coverage contract below cross-checks the report's own L3_build
+      # counts against Bazel's structural answer, and refuses (fails closed)
+      # when it has no structured summary to check them against. This job
+      # already runs Bazel, so producing that summary is the same two
+      # queries the `scan` and `l4-clang-replay` legs already run -- not new
+      # machinery. Without it the L4 accounting would be accepted on the
+      # report's own say-so, which is the shape of trust this repo keeps
+      # finding bugs in.
+      - name: Bazel structural queries for the coverage cross-check
+        id: plugin_bazel_queries
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/bazel-cquery-plugin.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/bazel-aquery-plugin.json"
+
+      - name: Bazel evidence summary for the coverage cross-check
+        id: plugin_evidence_summary
+        if: steps.plugin_bazel_queries.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery-plugin.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery-plugin.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack-plugin" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary-plugin.json"
+
       # Codex review: --ast-frontend clang added -- without it, the header
       # side of this compare silently used abicheck's CastXML default,
       # so an "l4-clang-plugin" artifact was actually combining Clang-
@@ -1799,46 +1856,91 @@ jobs:
       # exists to surface. `|| true` keeps the step's outcome tied to
       # whether a readable report file was actually written, not to
       # abicheck's gate-encoding exit code.
+      # The public-header DIRECTORY is passed alongside the file because
+      # This step used to invoke the bare CLI by hand, and it never once
+      # produced a verdict: every report it uploaded carried `"verdict":
+      # null`. The reason is now traced rather than guessed.
+      #
+      # `abi/math.abicheck.json` is produced by baseline.yml's "Collect
+      # source-aware ABI baseline" step through the upstream ACTION, with
+      # `public-header-dir: include` and `sources: .`. The `scan` job above
+      # compares against it with the SAME action and the SAME two inputs, and
+      # succeeds. This step reached for the CLI with `--header
+      # include/abicheck_lab/math.h --ast-frontend clang` instead, and the
+      # action supplies include roots the bare CLI does not -- so the two
+      # sides declared different surfaces and ADR-050 refused a verdict
+      # before any ABI evidence was read.
+      #
+      # Verified locally against the bundle CI run 32954335654 uploaded, with
+      # the pinned CastXML: mirroring the proven `scan` inputs takes the
+      # contract from a scope mismatch down to a single residual field
+      # (compiler_version, which is environmental and identical in CI where
+      # both sides come from the same pinned installer).
+      #
+      # The frontend switch costs this job NOTHING. Its claim is about the
+      # clang PLUGIN pack, which is `build-info` -- not about which frontend
+      # parses the headers. Verified locally that castxml + the clang plugin
+      # pack still resolves evidence depth `source`, so the L4 claim is
+      # preserved exactly; the only thing given up is a hand-rolled
+      # invocation that never worked.
+      #
+      # Two CLI flags are dropped because the action does not expose them,
+      # and neither is load-bearing here: `--require-complete-analysis` is
+      # what "Enforce source-depth plugin report contract" below already
+      # asserts from the report itself, and `--policy strict_abi` is replaced
+      # by the action's own fail-on-breaking/fail-on-api-break, exactly as on
+      # the `scan` job.
       - name: Compare candidate (plugin-collected facts) against committed baseline
         id: l4_clang_plugin_compare
         if: steps.install_abicheck.outcome == 'success'
         continue-on-error: true
-        run: |
-          set -euo pipefail
-          set +e
-          abicheck compare \
-            "$RUNNER_TEMP/math.base.abicheck.json" \
-            bazel-bin/libmath.so \
-            --header new=include/abicheck_lab/math.h \
-            --ast-frontend clang \
-            --build-info new=bazel-bin/tools/abicheck/math_abicheck_inputs \
-            --depth source \
-            --require-complete-analysis \
-            --format json \
-            -o abicheck-l4-clang-plugin.json \
-            --policy strict_abi
-          compare_rc=$?
-          set -e
-          # Verdict-bearing exits are valid report production. Usage/input
-          # failures (notably 64) can also leave a non-empty JSON error
-          # envelope, which must not be mistaken for a compatibility report.
-          case "$compare_rc" in
-            0|1|2|4) ;;
-            *) echo "::error::abicheck compare failed with operational exit $compare_rc"; exit "$compare_rc" ;;
-          esac
-          test -s abicheck-l4-clang-plugin.json
+        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          public-header-dir: include
+          sources: .
+          # The one deliberate difference from `scan`: the evidence comes
+          # from the clang plugin's own facts pack, not the bazel pack. That
+          # substitution IS this job.
+          build-info: bazel-bin/tools/abicheck/math_abicheck_inputs
+          against: ${{ runner.temp }}/math.base.abicheck.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          format: json
+          output-file: abicheck-l4-clang-plugin.json
+          fail-on-breaking: true
+          fail-on-api-break: true
 
-      # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate
-      # successful report production on the report's own requested/effective
-      # depth and assurance envelope so an implicit L3 fallback cannot appear
-      # as a green "L4 plugin" result.
+      # A plugin-shaped pack is not sufficient proof of an L4 check. Gate
+      # successful report production on the report's own evidence so an
+      # implicit L3 fallback cannot appear as a green "L4 plugin" result.
+      #
+      # This used to run ci/validate_source_depth.py --expected source, which
+      # requires an `analysis_assurance` block. That was a category error on
+      # my part, not a real contract: `analysis_assurance` belongs to the
+      # bare CLI's COMPARE schema, and this job (like the required `scan`
+      # gate) now produces a SCAN-schema report, which has never carried it
+      # -- verified by downloading both reports from run 32966728693, where
+      # `scan`'s own passing report has `analysis_assurance: null` too. So
+      # the old check could not pass on any report this repo produces.
+      #
+      # scripts/check_coverage_contract.py is the checker written for this
+      # schema, already used by the required gate and by baseline.yml. It is
+      # stricter here, not weaker: against the real report it extracts
+      # effective_depth=source, 19/19 TUs parsed, 3/3 symbols matched and
+      # accounted (ratio 1.0) and public-header provenance -- quantities
+      # `analysis_assurance` never carried -- and it fails closed if the
+      # upstream detail strings it parses ever stop matching.
       - name: Enforce source-depth plugin report contract
         id: validate_l4_plugin_depth
         if: steps.l4_clang_plugin_compare.outcome == 'success'
         run: |
-          python3 ci/validate_source_depth.py \
+          python3 scripts/check_coverage_contract.py \
             abicheck-l4-clang-plugin.json \
-            --expected source
+            -o "$RUNNER_TEMP/l4-plugin-coverage-contract.json" \
+            --requested-depth source \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary-plugin.json"
 
       - name: Upload l4-clang-plugin artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
@@ -1846,6 +1948,38 @@ jobs:
         with:
           name: abicheck-l4-clang-plugin
           path: abicheck-l4-clang-plugin.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Stage 2 of the plugin-pack scenario: ship the pack as an artifact,
+      # not just as a local path this job happens to still have. Everything
+      # a consumer needs and nothing it doesn't -- the pack, the binary it
+      # describes, the public header, and the baseline to compare against.
+      # No sources, no build outputs beyond the library itself: if the
+      # downstream clean job can reach source depth from this bundle, the
+      # pack is genuinely portable evidence; if it can only do so with the
+      # tree next to it, it is a cache with extra steps.
+      - name: Stage the reusable evidence bundle
+        id: stage_reuse_bundle
+        if: steps.verify_facts.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/plugin-pack-bundle"
+          rm -rf "$bundle"
+          mkdir -p "$bundle/lib" "$bundle/include/abicheck_lab" "$bundle/baseline"
+          cp -R bazel-bin/tools/abicheck/math_abicheck_inputs "$bundle/abicheck_inputs"
+          cp bazel-bin/libmath.so "$bundle/lib/"
+          cp include/abicheck_lab/math.h "$bundle/include/abicheck_lab/"
+          cp "$RUNNER_TEMP/math.base.abicheck.json" "$bundle/baseline/"
+          find "$bundle" -type f | sort
+
+      - name: Upload plugin-pack reuse bundle
+        if: steps.stage_reuse_bundle.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-plugin-pack-bundle
+          path: ${{ runner.temp }}/plugin-pack-bundle
           if-no-files-found: ignore
           retention-days: 30
 
@@ -1902,7 +2036,14 @@ jobs:
   # own scan steps and upload nothing).
   conformance:
     needs: [scan, l4_clang_plugin]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.l4_clang_plugin.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -1943,3 +2084,349 @@ jobs:
           path: ${{ runner.temp }}/conformance-l4.md
           if-no-files-found: ignore
           retention-days: 30
+
+  # Stage 3 of the plugin-pack scenario (item 9): consume the pack somewhere
+  # it could not possibly have been produced.
+  #
+  # The `l4_clang_plugin` job above proves a facts pack can be BUILT. It
+  # cannot prove the pack is portable, because that job also has the source
+  # tree, the Bazel outputs and a working Clang -- any of which an implicit
+  # fallback could quietly re-derive source facts from while the report still
+  # said "source depth, complete". This job has the harness and nothing else:
+  # a non-cone sparse checkout of `ci/` and `scripts/` only, so `include/`,
+  # `src/`, `MODULE.bazel` and the Bazel output tree are all absent (the
+  # harness asserts that itself rather than trusting the checkout config),
+  # and no build of any kind runs. clang-18 is installed because the compare
+  # still parses the shipped PUBLIC HEADER -- that is header AST work on an
+  # artifact we downloaded, not a rebuild of the library.
+  #
+  # `needs: [scan, l4_clang_plugin]` + `if: always()`: the plugin job is
+  # documented best-effort and skips whole stages on an apt hiccup or an LLVM
+  # bump, and `scan` can legitimately fail its own gate on a real ABI break.
+  # The harness step is `continue-on-error` for the same reason every other
+  # stage of this profile is -- but the SCRIPT fails closed on every one of
+  # its nine assertions, and the receipt it uploads records which channel
+  # each rejection actually came through, so a silent loosening upstream is
+  # visible in the artifact even while the job stays non-blocking.
+  plugin_pack_reuse:
+    needs: [scan, l4_clang_plugin]
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.scan.result != 'cancelled'
+      && needs.l4_clang_plugin.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+          # Non-cone: cone mode would also materialize every ROOT file,
+          # including MODULE.bazel and CMakeLists.txt, which is exactly the
+          # source-tree presence this job exists to be without.
+          sparse-checkout: |
+            /ci/
+            /scripts/
+          sparse-checkout-cone-mode: false
+
+      - name: Download plugin-pack reuse bundle
+        id: download_bundle
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-plugin-pack-bundle
+          path: ${{ runner.temp }}/bundle
+
+      - name: Download l4-clang-replay artifact
+        id: download_replay
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-l4-clang-replay
+          path: ${{ runner.temp }}/replay
+
+      - name: Install Clang (header AST frontend only -- nothing is built here)
+        id: install_clang
+        if: steps.download_bundle.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 libclang-18-dev
+
+      - name: Install abicheck
+        id: install_abicheck
+        if: steps.install_clang.outcome == 'success'
+        continue-on-error: true
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+
+      - name: Reuse the facts pack in this clean job
+        id: reuse
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 ci/run_plugin_pack_reuse.py \
+            --bundle "$RUNNER_TEMP/bundle" \
+            --replay-report "$RUNNER_TEMP/replay/abicheck-l4-clang-replay.json" \
+            --workdir "$RUNNER_TEMP/reuse-work" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --out plugin-pack-reuse-receipt.json \
+            --summary plugin-pack-reuse-summary.md
+
+      - name: Upload plugin-pack reuse receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-plugin-pack-reuse-receipt
+          path: |
+            plugin-pack-reuse-receipt.json
+            plugin-pack-reuse-summary.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Same discipline as the plugin job's own status step: report which
+      # stage first didn't succeed, and render the per-assertion result
+      # rather than a single pass/fail, so a partially working reuse path is
+      # legible instead of collapsing to "red". The table itself is rendered
+      # by the harness (`--summary`) so this step stays a plain `cat`.
+      - name: Report plugin-pack reuse status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -s plugin-pack-reuse-summary.md ]; then
+            cat plugin-pack-reuse-summary.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### Plugin-pack reuse in a clean job (best-effort, non-blocking)'
+            echo
+            if [ "${{ steps.download_bundle.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: the `l4_clang_plugin` job produced no reusable evidence bundle.'
+            elif [ "${{ steps.install_clang.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install clang-18 for the header AST frontend.'
+            elif [ "${{ steps.install_abicheck.outcome }}" != "success" ]; then
+              echo '⏭️ Skipped: could not install abicheck.'
+            else
+              echo '⚠️ The reuse harness produced no summary -- see the job log above.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The scenario oracle for the generated demonstration branches (item 14).
+  #
+  # Two of the five `test/*` branches are SUPPOSED to make this gate red. A
+  # red gate on a branch whose purpose is to be red carries no information by
+  # itself -- it reads the same whether the demonstration worked or whether
+  # the branch drifted and now breaks for some unrelated reason. This job is
+  # what tells those apart, and it is the check that must be green on a
+  # demonstration PR.
+  #
+  # It reads the report `scan` already uploaded rather than running abicheck a
+  # second time: a separate invocation could drift from the gate's own and end
+  # up asserting a result the gate never produced. On any PR that is not a
+  # demonstration branch the oracle exits 0 without asserting anything, so
+  # this job is harmless everywhere else.
+  demo_oracle:
+    needs: scan
+    # Same guard, and this one was found by generalizing the rule rather than
+    # by a failure: this job downloads the gate's report WITHOUT
+    # continue-on-error, so a cancelled `scan` on a demonstration branch would
+    # have failed it exactly as it failed verify_capability_receipts. Fixed
+    # before it could happen.
+    if: >-
+      always()
+      && github.event_name == 'pull_request'
+      && needs.scan.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    steps:
+      # Codex review: the BASE commit, not the PR head.
+      #
+      # This job exists to detect drift in a generated demonstration branch,
+      # and it was reading the manifest out of the branch it is judging. A
+      # branch that dropped its own entry from demos/manifest.yaml would set
+      # `is_demo=false` and skip the oracle entirely; one that rewrote its
+      # `expect` block would be checked against its own rewritten
+      # expectation. Either way the thing under test supplied the test.
+      #
+      # Checking out the base pins the manifest AND the oracle script to the
+      # trusted side. The script matters as much as the manifest: a branch
+      # that could rewrite check_demo_oracle.py to return 0 defeats this
+      # just as completely, and Codex named only the manifest.
+      #
+      # Nothing here needs the head. The verdict under test arrives as the
+      # `scan` job's uploaded report artifact, and the branch identity comes
+      # from the event context -- neither is read from the checkout.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      # Codex review (P1): `${{ github.head_ref }}` must never be interpolated
+      # into a `run:` block. GitHub substitutes it BEFORE the shell or Python
+      # ever parses the script, and git permits branch names like `foo$(id)`
+      # -- so on a fork PR, where the branch name is chosen by the
+      # contributor, the substitution executes on the runner. Being inside a
+      # Python string literal is no protection: the same substitution can
+      # close that literal too. It goes through the environment instead, where
+      # it is data at every layer.
+      # Codex review: the branch NAME alone does not identify a demonstration.
+      # A fork PR whose contributor happens to call their branch
+      # `test/compatible-addition` would match, and this gating oracle would
+      # then hold their unrelated change to that demo's declared verdict and
+      # fail an otherwise valid PR. The demonstration branches live in THIS
+      # repository, so the head repo has to match too -- and it is checked
+      # first, so a fork PR never even reads the manifest.
+      # Codex review: this job read demos/manifest.yaml with `import yaml`
+      # and `scripts/check_demo_oracle.py` imports it again, but nothing
+      # installed PyYAML -- the only YAML-consuming job in the repository not
+      # to. Every other one installs it explicitly. On a runner image without
+      # it the detection step dies before writing `is_demo`, and since this
+      # job is GATING that would turn every same-repository PR red rather
+      # than only demonstration branches. Not a dependency to leave implicit.
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Is this a demonstration branch?
+        id: demo
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            echo "head repo $HEAD_REPO is not ${{ github.repository }} -- not a demonstration branch"
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A base that declares no demonstrations cannot have one proposed
+          # against it -- true during the transition, before this manifest
+          # reaches the default branch. Absence is "not a demonstration",
+          # never a crash in a gating job.
+          if [ ! -f demos/manifest.yaml ]; then
+            echo "the base commit declares no demonstrations -- nothing to assert"
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if python3 -c "
+          import os, sys, yaml
+          doc = yaml.safe_load(open('demos/manifest.yaml')) or {}
+          branches = {d['branch'] for d in (doc.get('demonstrations') or [])}
+          sys.exit(0 if os.environ['HEAD_REF'] in branches else 1)
+          "; then
+            echo "is_demo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the gate's own report
+        if: steps.demo.outputs.is_demo == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-report
+          path: ${{ runner.temp }}/gate
+
+      # No continue-on-error: a demonstration branch that no longer
+      # demonstrates its claim is a real failure, and this is the one check on
+      # such a PR that is allowed to be red for a real reason.
+      - name: Assert the natural result is the declared one
+        if: steps.demo.outputs.is_demo == 'true'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          python3 scripts/check_demo_oracle.py \
+            --branch "$HEAD_REF" \
+            --report "$RUNNER_TEMP/gate/abicheck-report.json" \
+            --summary "$RUNNER_TEMP/demo-oracle.md"
+
+      - name: Report scenario oracle status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.demo.outputs.is_demo }}" != "true" ]; then
+            echo '### Scenario oracle' >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo 'Not a generated demonstration branch — nothing to assert.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -s "$RUNNER_TEMP/demo-oracle.md" ]; then
+            cat "$RUNNER_TEMP/demo-oracle.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### Scenario oracle' >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo '⚠️ The oracle produced no verdict — see the job log above.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Codex review: scripts/gen_demo_prs.py --check asserts the invariant that
+  # makes a demonstration branch trustworthy -- that it really is the current
+  # base plus its one declared patch -- and nothing ran it. Its own docstring
+  # claimed CI did, which made the gap invisible: a branch could acquire extra
+  # changes that leave its required/forbidden findings intact, still pass
+  # demo_oracle, and keep being presented as generated coverage while the
+  # exact-tree invariant went unevaluated.
+  #
+  # Non-gating on purpose, and not as a hedge. The only way to clear real
+  # drift is the force-push that rewrites five branches carrying open pull
+  # requests; a red required check cannot make that call for anyone. This
+  # reports the drift on every PR, and a human decides. It reports drift
+  # today, which is the honest state -- all five branches are far behind.
+  demo_branch_drift:
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+          # The check compares each demonstration branch's TREE against the
+          # base plus its patch, and counts how far behind it is -- both need
+          # real history, not a shallow clone.
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      # A default checkout tracks only the PR's own branch, so the
+      # demonstration refs have to be asked for by name.
+      - name: Fetch the demonstration refs
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/test/*:refs/remotes/origin/test/*'
+
+      # `set -o pipefail` is load-bearing, not decoration. GitHub's default
+      # run: shell is `bash -e`, WITHOUT pipefail, so a pipeline reports the
+      # LAST command's status -- `tee` always succeeds, the step would always
+      # be `success`, and the summary below would print the green line on
+      # every run no matter how far the branches had drifted. An advisory
+      # check that cannot report a problem is worse than no check, because it
+      # reads as evidence.
+      - name: Check every demonstration branch is base + its patch
+        id: drift
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 scripts/gen_demo_prs.py --check --base-ref origin/main \
+            2>&1 | tee "$RUNNER_TEMP/demo-drift.txt"
+
+      - name: Report demonstration branch drift
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '### Generated demonstration branches (advisory)'
+            echo
+            if [ "${{ steps.drift.outcome }}" = "success" ]; then
+              echo '✅ Every demonstration branch is its base plus its declared patch.'
+            else
+              echo 'These branches no longer match `base + patch`. Clearing this needs'
+              echo '`scripts/gen_demo_prs.py --write` then `--push`, which rewrites'
+              echo 'branches carrying open pull requests — an operator decision, which'
+              echo 'is why this check reports rather than gates.'
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/demo-drift.txt" 2>/dev/null || echo '(no output captured)'
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

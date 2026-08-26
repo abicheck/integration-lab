@@ -1,0 +1,182 @@
+"""Every data input the capability-matrix checks read must trigger them.
+
+Codex has now found this same gap three times (PR #16 was the first): a
+check lands, it reads some file, and `.github/workflows/capability-matrix.yml`'s
+`pull_request.paths` filter does not list it -- so a PR touching only that
+file skips the very check meant to police it. The pin-consistency suite
+(ci/abicheck-version.yaml) and the generated README gap block
+(scenarios/manifest.yaml) were both reachable that way.
+
+Adding two lines would have fixed those two and left the pattern intact. So
+this derives the requirement instead: whatever DATA file the workflow's
+scripts and tests actually open must be matched by the filter. Scripts
+themselves are already covered by the scripts/*.py globs; this is about the
+inputs they read.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "capability-matrix.yml"
+
+#: `REPO_ROOT / "a" / "b.yaml"` and `REPO_ROOT / "a.yaml"` -- the forms the
+#: checked scripts use to name a repo-relative input.
+#:
+#: The bound was {1,3} and silently truncated
+#: `REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile"` to its
+#: first three segments, which is not a file, so the input vanished from the
+#: derivation instead of failing. A cap that quietly drops what it cannot
+#: parse is the same blind spot as the suffix allowlist above, so this is
+#: bounded well past any real path and the truncation case is tested.
+_ROOTED = re.compile(
+    r'REPO_ROOT\s*(?:/\s*"([A-Za-z0-9_.-]+)"\s*){1,8}'
+)
+_SEGMENT = re.compile(r'"([A-Za-z0-9_.-]+)"')
+#: Python sources are already covered by the workflow's scripts/*.py and
+#: tests/** globs, so they are not what this derivation is about. Everything
+#: else a check opens IS -- Codex review, third recurrence: restricting this
+#: to YAML/JSON was itself a hole, because tests/test_make_fixture_recipe.py
+#: reads buildsystems/make/fixtures/Makefile, and a Makefile-only PR skipped
+#: the only workflow that runs pytest at all. A derivation with a suffix
+#: allowlist is a derivation with a blind spot.
+EXCLUDED_SUFFIXES = {".py"}
+
+
+def _declared_paths() -> list[str]:
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")) or {}
+    # `on:` parses as the boolean True in YAML 1.1.
+    triggers = document.get(True) or document.get("on") or {}
+    return list((triggers.get("pull_request") or {}).get("paths") or [])
+
+
+def _matches(pattern: str, path: str) -> bool:
+    """GitHub path-filter semantics: `*` does not cross `/`, `**` does."""
+    parts = []
+    for chunk in re.split(r"(\*\*|\*)", pattern):
+        if chunk == "**":
+            parts.append(".*")
+        elif chunk == "*":
+            parts.append("[^/]*")
+        else:
+            parts.append(re.escape(chunk))
+    return re.fullmatch("".join(parts), path) is not None
+
+
+def _data_inputs() -> set[str]:
+    found: set[str] = set()
+    sources = sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
+        (REPO_ROOT / "tests").glob("*.py")
+    )
+    for source in sources:
+        text = source.read_text(encoding="utf-8")
+        for match in _ROOTED.finditer(text):
+            segments = _SEGMENT.findall(match.group(0))
+            candidate = "/".join(segments)
+            if Path(candidate).suffix in EXCLUDED_SUFFIXES:
+                continue
+            if (REPO_ROOT / candidate).is_file():
+                found.add(candidate)
+    return found
+
+
+def test_the_derivation_finds_the_known_inputs():
+    """A derivation that finds nothing would pass vacuously forever."""
+    inputs = _data_inputs()
+    assert {
+        "capabilities.yaml",
+        "ci/abicheck-version.yaml",
+        "scenarios/manifest.yaml",
+        # Not YAML, and the reason the suffix allowlist had to go.
+        "buildsystems/make/fixtures/Makefile",
+    } <= inputs, sorted(inputs)
+
+
+def test_every_data_input_triggers_the_workflow():
+    patterns = _declared_paths()
+    assert patterns, "the workflow declares a pull_request paths filter"
+    missing = sorted(
+        path
+        for path in _data_inputs()
+        if not any(_matches(pattern, path) for pattern in patterns)
+    )
+    assert not missing, (
+        "these files are read by the capability-matrix checks but do not "
+        "appear in .github/workflows/capability-matrix.yml's "
+        f"pull_request.paths, so a PR touching only them skips the check "
+        f"meant to police them: {missing}"
+    )
+
+
+def test_the_matcher_respects_path_boundaries():
+    """`*` must not cross `/`, or the filter would look broader than it is."""
+    assert _matches("scripts/check_*.py", "scripts/check_demo_oracle.py")
+    assert not _matches("scripts/check_*.py", "scripts/sub/check_x.py")
+    assert _matches("tests/**", "tests/a/b/c.py")
+    assert _matches("capabilities.yaml", "capabilities.yaml")
+    assert not _matches("capabilities.yaml", "other/capabilities.yaml")
+
+
+def _import_roots() -> set[str]:
+    """Directories the test suite puts on `sys.path`.
+
+    Codex review, fourth recurrence: the data-file derivation cannot see
+    these. `tests/conftest.py` adds `ci/` and `scripts/` to sys.path and the
+    tests then IMPORT those modules rather than opening them by path, so no
+    `REPO_ROOT / "..."` literal names them. Excluding `.py` from the data
+    derivation was justified by "the scripts/*.py and tests/** globs already
+    cover them" -- true for scripts/, false for ci/, and the exemption hid
+    the difference. Deriving the import roots closes it at the source.
+    """
+    roots: set[str] = set()
+    for source in sorted((REPO_ROOT / "tests").glob("*.py")):
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if "sys.path.insert" not in line:
+                continue
+            roots |= {
+                name
+                for name in _SEGMENT.findall(line)
+                if (REPO_ROOT / name).is_dir()
+            }
+    return roots
+
+
+def test_the_import_roots_are_discovered():
+    assert {"ci", "scripts"} <= _import_roots(), sorted(_import_roots())
+
+
+def test_every_imported_module_directory_triggers_the_workflow():
+    """A module the tests import is as much an input as a file they open --
+    and capability-matrix.yml is the only workflow that runs pytest at all."""
+    patterns = _declared_paths()
+    missing = sorted(
+        root
+        for root in _import_roots()
+        if not any(_matches(p, f"{root}/probe.py") for p in patterns)
+    )
+    assert not missing, (
+        "the test suite imports modules from these directories, but a PR "
+        "changing only one of them matches no path filter and so skips the "
+        f"only workflow that runs pytest: {missing}"
+    )
+
+
+def test_the_derivation_reads_paths_deeper_than_three_segments():
+    """The segment bound silently TRUNCATED rather than failing, which is how
+    `buildsystems/make/fixtures/Makefile` disappeared from the derivation
+    instead of being reported as unmatched."""
+    deep = 'REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile"'
+    match = _ROOTED.search(deep)
+    assert match and match.group(0).strip().endswith('"Makefile"'), match
+
+
+def test_a_non_yaml_input_is_still_an_input():
+    """A suffix allowlist is a blind spot: the fixture recipes are not data
+    files, and they are exactly what the pytest-only workflow must re-run
+    for."""
+    inputs = _data_inputs()
+    assert "buildsystems/make/fixtures/Makefile" in inputs
+    assert not any(path.endswith(".py") for path in inputs), sorted(inputs)
