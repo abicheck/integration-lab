@@ -126,3 +126,72 @@ candidate upstream SHA
 The legacy single-target scan/scenario suite still runs on a second pin
 (`legacy_sha`), reviewed in the same file, and is migrating onto `sha` one
 workflow at a time.
+
+## Declared follow-ups
+
+These are named from the README rather than left as prose, so what is not
+yet done is as legible as what is.
+
+**Item 10 — compare the actual wheel.** `depth-scenarios.yml`'s
+`python-extension` job builds a real scikit-build-core wheel, then compares
+a standalone `_core` extension and adjacent `.pyi` stubs. That is a sound
+unit-level acceptance case and the README describes it as one; it is not
+wheel integration. The scenario should compare `old.whl` against `new.whl`
+and validate extension discovery inside the package, `.pyi` discovery
+inside the package, Python API findings, bundled native library discovery,
+package-level added/removed extensions, wheel tags and CPython ABI
+metadata, and post-repair behaviour where auditwheel/delocate/delvewheel
+applies. The standalone `.so` case stays as the fast unit-level check.
+
+**Item 12 — build-system scenario parity.** The repository builds through
+Bazel, CMake and Make, but the scenario oracle runs its full suite only
+under Bazel; CMake covers `add_function`/`remove_function` and Make none of
+it. At minimum these should run through all three: function addition,
+function removal, generated public-header removal, public macro value
+change, cross-DSO provider signature break, SONAME change, private/public
+header classification, and a `_GLIBCXX_USE_CXX11_ABI` flip. The bar is not
+"it builds" but: same semantic mutation, same normalized findings, same
+verdict, build-system-specific provenance only.
+
+**Item 9 — plugin-pack reuse in a clean job.** The plugin scenario should
+run three distinct stages: build with the plugin; verify and upload the
+facts pack; then a *new clean job* that downloads binary, headers and pack
+and performs a source-depth compare with no source checkout and no build.
+Required assertions: the same normalized finding set as replay, the same
+effective depth, the same target accounting, no hidden replay fallback, a
+stale source-tree digest rejected, a missing TU rejected, a wrong plugin
+LLVM major rejected, empty public roots rejected, and a corrupted pack
+reported as an operational error.
+
+**Item 14 — generated demonstration PRs.** The long-lived test PRs have
+drifted: the default-argument PR still describes adding a default argument
+as a source/API break, and PRs #12 and #14 pin obsolete scanner revisions,
+so their reports are dominated by old evidence-comparability problems
+rather than the scenario each advertises. Replace the hand-maintained
+branches with generated ones — reset to latest main, apply the scenario
+patch, force-push, regenerate the expected-result section of the PR body —
+each carrying a natural abicheck result (possibly red) plus a separate
+scenario-oracle check that is green only when the natural result is exactly
+the expected one.
+
+**Items 4 and 5 — target-specific evidence and source-depth cells.** Each
+target entry in `build-output.json` should declare its own evidence pack:
+
+```yaml
+evidence:
+  kind: source-facts
+  path: evidence/<target>/abicheck_inputs
+  projection: declared
+```
+
+with one validated pack per target (`evidence/core/abicheck_inputs`,
+`evidence/math/...`, `evidence/strings/...`) and no two targets claiming
+the same `projection: declared` pack. Only once that works can the project
+topology carry real source-depth cells — `math` at `depth: headers` and
+`depth: source`, required and deferred — and the L2/L4 scenario validate
+the same native project pipeline rather than a standalone script. Both are
+sequenced with the upstream pin bump (see [The scanner pin](#the-scanner-pin)):
+they depend on upstream target-specific evidence forwarding, which landed
+after the currently pinned SHA, and are recorded as
+`target-specific-source-evidence-routing` in `scenarios/manifest.yaml`'s
+expected gaps until then.

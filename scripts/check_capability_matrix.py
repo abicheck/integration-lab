@@ -54,7 +54,23 @@ WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 # The only workflows this matrix is responsible for describing -- see the
 # module docstring for why baseline.yml/performance.yml are deliberately
 # excluded rather than omitted by oversight.
-IN_SCOPE_WORKFLOWS = frozenset({"abi-scan.yml", "scenarios.yml", "scenarios-canary.yml"})
+# Widened beyond the original three: capabilities.yaml claimed to be the
+# repository's coverage inventory while modelling only the older
+# single-target scan/scenario suite, so every job in the native project path
+# (project-shadow.yml) and the evidence-depth suite (depth-scenarios.yml)
+# was invisible to it -- the matrix could be fully green with the native
+# aggregate, the run-plan oracle, the depth scenarios, the runtime-floor
+# matrix and the Python-extension scenario entirely undeclared. Adding them
+# here turns UNDOCUMENTED_JOB into the thing that keeps the inventory
+# honest: a new job in any of these workflows now fails CI until an entry
+# names it.
+IN_SCOPE_WORKFLOWS = frozenset({
+    "abi-scan.yml",
+    "scenarios.yml",
+    "scenarios-canary.yml",
+    "project-shadow.yml",
+    "depth-scenarios.yml",
+})
 
 ALLOWED_STATUSES = frozenset({"covered", "non_gating_watch", "gap", "planned"})
 # Statuses that must reference a real job -- the inverse (gap/planned) must

@@ -10,20 +10,29 @@ pipeline, get proven against real Bazel, CMake, and Make builds, real
 scanner output, and real GitHub Actions runs, so that upstream changes can
 be validated before other projects depend on them.
 
-> **Current status: transition in progress.** The repository's one
-> required, load-bearing compatibility gate is still the Bazel-based
-> workflow described below. A newer, parallel multi-build-system system
-> (Bazel + CMake + Make, all three staged and checked) exists, runs on
-> every PR, and can genuinely fail — but it is advisory only and does not
-> block merges yet. Its per-build-system compatibility check
-> (`ci/check_profile.py`) now runs the REAL ABICheck scanner
-> (`abicheck dump`/`compare`, via `ci/real_scan.py`) for the CMake and Make
-> profiles; the Bazel profile's own leg of this same advisory workflow
-> still uses a lab-only ELF/header signal, since Bazel already has its own
-> real, required gate in the separate, canonical `abi-scan.yml`. See
-> [Honest current limitations](#honest-current-limitations) before relying
-> on any of it as proof of anything beyond "the same source builds under
-> three build systems."
+> **Current status.** Three paths run on every PR, and only one of them is
+> branch-required:
+>
+> 1. **`abi-scan.yml` — required.** The real ABICheck scanner at
+>    `depth: source` over the root Bazel build, resolved against the PR's
+>    exact base commit. This is the one gate that can block a merge.
+> 2. **`integration-shadow.yml` — advisory.** The same source built and
+>    staged through Bazel, CMake and Make, each checked against its own
+>    committed per-profile baseline. Real, and it does fail for real
+>    reasons; it is not in branch protection.
+> 3. **`project-shadow.yml` — advisory, promotion candidate.** The native
+>    `.abicheck.yml` project contract: 18 required/deferred cells across
+>    three contract profiles, an accepted-main baseline resolved with a
+>    receipt, and a trailing aggregate gate. The explicit criteria for
+>    making its aggregate branch-required are in
+>    [docs/roadmap.md](docs/roadmap.md#promoting-the-native-project-aggregate).
+>
+> Everything below describes the current state. What is still being
+> migrated — which profiles are contract profiles, which scenarios run
+> under which build systems, what is still an expected gap — is stated in
+> [Honest current limitations](#honest-current-limitations) and generated
+> from `capabilities.yaml` and `scenarios/manifest.yaml` rather than
+> hand-maintained here.
 
 ## Why this repository exists
 
@@ -233,16 +242,33 @@ pybind cross-module internals identity remains an explicit expected gap.
   `libmath.so` reports `COMPATIBLE_WITH_RISK`, a DWARF/source-level
   difference the SONAME/symbol-table diff can't see on its own) remains.
   Like every other advisory job, none of this can block a merge.
-- **Not every profile has a production release baseline**, and not every
-  scenario runs through every build system — the scenario oracle exercises
-  Bazel for its full suite; CMake covers only an initial, deliberately
-  small subset (`add_function`/`remove_function`) proving both a
-  compatible and a breaking verdict work under a second build system, not
-  yet Make.
+- **Not every profile has a production release baseline**, and semantic
+  scenario parity across build systems is still uneven — the scenario
+  oracle exercises Bazel for its full suite while CMake covers only an
+  initial subset (`add_function`/`remove_function`), and Make none of it.
+  Closing that is [roadmap item 12](docs/roadmap.md).
 - **Make source evidence is fail-closed.** Bear and the generated
   `compile_commands.json` are mandatory for the Make contract profile; a
-  missing tool, failed capture, or absent database fails the profile before
-  comparison rather than degrading to a binary-only green result.
+  missing tool, failed capture, or a compile database whose entries are not
+  well-typed fails the profile before comparison rather than degrading to a
+  binary-only green result.
+- **The producer-compiler axis is exercised by scenario, not yet by
+  profile.** `depth-scenarios.yml`'s `producer-compiler` job proves a
+  finding is attributed to the producers it affects and withheld from the
+  ones it does not, building one fixture under gcc-14 and clang-18. The
+  `linux-x86_64-clang18-cxx17-cmake-ninja` profile is declared but is
+  `contract: false` and not yet scheduled by `ci/event-policy.yaml`: a
+  profile earns scheduling once `profile-baseline.yml` has published
+  `abi/profiles/<id>/` for it, and until then adding it to an event set
+  would make the fan-in gate red for a missing baseline rather than a real
+  finding.
+- **The Python scenario compares extension modules, not wheels.** It builds
+  a real scikit-build-core wheel, then compares a standalone `_core`
+  extension and adjacent `.pyi` stubs rather than `old.whl` against
+  `new.whl`. It is a sound unit-level acceptance case and is described as
+  one; wheel-level integration (extension and stub discovery inside the
+  package, bundled native libraries, wheel tags and CPython ABI metadata,
+  post-`auditwheel` behaviour) is [roadmap item 10](docs/roadmap.md).
 
 See [docs/roadmap.md](docs/roadmap.md) for what closes these gaps, and in
 what order.
@@ -256,6 +282,13 @@ the capability matrix actually declares.
 
 <!-- capability-matrix:gaps:start -->
 _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
+
+Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expected to fall short, with the upstream issue and the phase they fall short in, rather than being reported as covered:
+
+- **same-binary-clang-client-only-break** (`expected_gap`): falls short at `check-project` -- `consumer_compile_not_applied` (upstream: `abicheck#consumer-compile-execution`)
+- **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)
+- **pybind-cross-module-internals** (`expected_gap`): falls short at `compare` -- `binding_internals_identity_not_collected` (upstream: `abicheck#binding-abi-provider`)
+- **target-specific-source-evidence-routing** (`expected_gap`): falls short at `check-project` -- `target_evidence_path_not_projected` (upstream: `abicheck#run-plan-build-output-projection`)
 <!-- capability-matrix:gaps:end -->
 
 ## Architecture
@@ -306,17 +339,35 @@ drifts from the reviewed value.
 
 ## The project under test
 
-A small public C++ shared-library project: `//:math` (`include/`, `src/`),
-a second independent library `//strings_lib:strings`, a real consumer
-application `//consumer:consumer_app` that links against `//:math` and
-calls only a subset of its API, and a `cc_shared_library`-shaped variant
-`//:math_shared`. The same sources are also built by
-`buildsystems/cmake/CMakeLists.txt` and `buildsystems/make/Makefile`
-without copying anything. Test PRs intentionally exercise compatible
-additions, binary ABI breaks, source/API breaks, and implementation-only
-changes against the canonical gate — some are intentionally kept open as
-reusable acceptance cases rather than merged or closed; see
+A small public C++ project, built unchanged (not copied) by all three build
+systems. `.abicheck.yml` is the authoritative topology; this is what it
+declares:
+
+| Target | Kind | Sources | Role |
+|---|---|---|---|
+| `core` | library | `core_include/`, `internal/` | The native provider both libraries consume through an internal C ABI. A cross-DSO provider signature change is therefore a real break in its consumers, not just in itself. |
+| `math` | library | `include/`, `src/` | The primary public library. |
+| `strings` | library | `strings_lib/` | A second, independent public library. |
+| `consumer-app` | app-consumer | `consumer/` | A real executable linking `math` and calling only a subset of its API, so consumer-scoped analysis has something narrower than the full export table to scope to. |
+| `math-plugin-contract` | plugin-contract | `plugins/contracts/math-plugin.syms` | The symbol contract a plugin host must keep, checked independently of `math`'s own surface. |
+| `sdk` | bundle | `core` + `math` + `strings` | The three-member release bundle, checked as one unit as well as per member. |
+
+Each of those is checked on all three contract profiles, giving the 18
+required/deferred cells the native run plan generates.
+
+Alongside the C++ targets: `bindings/python/` is a real
+scikit-build-core/pybind11 extension (`abicheck_lab_py`) with committed
+`.pyi` stubs, and `//:math_shared` is a `cc_shared_library`-shaped variant
+of `math` kept so that target shape is exercised too.
+
+Test PRs intentionally exercise compatible additions, binary ABI breaks,
+source/API breaks, and implementation-only changes against the canonical
+gate — some are intentionally kept open as reusable acceptance cases rather
+than merged or closed; see
 [docs/operations.md](docs/operations.md#long-lived-intentional-test-prs).
+Those branches have drifted from what they claim to demonstrate, and
+replacing them with generated scenario PRs is
+[roadmap item 14](docs/roadmap.md).
 
 ## Canonical staged-output shape
 
