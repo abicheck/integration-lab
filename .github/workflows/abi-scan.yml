@@ -1804,6 +1804,40 @@ jobs:
         continue-on-error: true
         run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
+      # The coverage contract below cross-checks the report's own L3_build
+      # counts against Bazel's structural answer, and refuses (fails closed)
+      # when it has no structured summary to check them against. This job
+      # already runs Bazel, so producing that summary is the same two
+      # queries the `scan` and `l4-clang-replay` legs already run -- not new
+      # machinery. Without it the L4 accounting would be accepted on the
+      # report's own say-so, which is the shape of trust this repo keeps
+      # finding bugs in.
+      - name: Bazel structural queries for the coverage cross-check
+        id: plugin_bazel_queries
+        if: steps.install_abicheck.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/bazel-cquery-plugin.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/bazel-aquery-plugin.json"
+
+      - name: Bazel evidence summary for the coverage cross-check
+        id: plugin_evidence_summary
+        if: steps.plugin_bazel_queries.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/bazel-cquery-plugin.json" \
+            --aquery "$RUNNER_TEMP/bazel-aquery-plugin.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/bazel-evidence-pack-plugin" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/bazel-evidence-summary-plugin.json"
+
       # Codex review: --ast-frontend clang added -- without it, the header
       # side of this compare silently used abicheck's CastXML default,
       # so an "l4-clang-plugin" artifact was actually combining Clang-
@@ -1878,17 +1912,35 @@ jobs:
           fail-on-breaking: true
           fail-on-api-break: true
 
-      # A plugin-shaped pack is not sufficient proof of an L4 check.  Gate
-      # successful report production on the report's own requested/effective
-      # depth and assurance envelope so an implicit L3 fallback cannot appear
-      # as a green "L4 plugin" result.
+      # A plugin-shaped pack is not sufficient proof of an L4 check. Gate
+      # successful report production on the report's own evidence so an
+      # implicit L3 fallback cannot appear as a green "L4 plugin" result.
+      #
+      # This used to run ci/validate_source_depth.py --expected source, which
+      # requires an `analysis_assurance` block. That was a category error on
+      # my part, not a real contract: `analysis_assurance` belongs to the
+      # bare CLI's COMPARE schema, and this job (like the required `scan`
+      # gate) now produces a SCAN-schema report, which has never carried it
+      # -- verified by downloading both reports from run 32966728693, where
+      # `scan`'s own passing report has `analysis_assurance: null` too. So
+      # the old check could not pass on any report this repo produces.
+      #
+      # scripts/check_coverage_contract.py is the checker written for this
+      # schema, already used by the required gate and by baseline.yml. It is
+      # stricter here, not weaker: against the real report it extracts
+      # effective_depth=source, 19/19 TUs parsed, 3/3 symbols matched and
+      # accounted (ratio 1.0) and public-header provenance -- quantities
+      # `analysis_assurance` never carried -- and it fails closed if the
+      # upstream detail strings it parses ever stop matching.
       - name: Enforce source-depth plugin report contract
         id: validate_l4_plugin_depth
         if: steps.l4_clang_plugin_compare.outcome == 'success'
         run: |
-          python3 ci/validate_source_depth.py \
+          python3 scripts/check_coverage_contract.py \
             abicheck-l4-clang-plugin.json \
-            --expected source
+            -o "$RUNNER_TEMP/l4-plugin-coverage-contract.json" \
+            --requested-depth source \
+            --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary-plugin.json"
 
       - name: Upload l4-clang-plugin artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
