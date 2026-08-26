@@ -27,6 +27,8 @@ and is declared as a follow-up in docs/roadmap.md rather than implied.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import re
 import shutil
@@ -379,6 +381,84 @@ def assert_module_is_loadable(extension: Path, module: str) -> None:
         )
 
 
+def _record_line(member: str, payload: bytes) -> str:
+    """One PEP 376 RECORD row: `path,sha256=<urlsafe-b64-nopad>,size`."""
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+    return f"{member},sha256={digest.decode('ascii').rstrip('=')},{len(payload)}"
+
+
+def rewrite_record(archive_path: Path, added: Dict[str, bytes]) -> None:
+    """Add `added` to the wheel's .dist-info/RECORD.
+
+    A wheel is not just a zip: RECORD lists every installed file with its
+    hash and size, and installers and repair tools (auditwheel, `pip
+    install`) use it. Appending a member without a RECORD row leaves an
+    archive that is not a valid installable wheel, so a green comparison
+    would prove ZIP-member discovery rather than addition to a real package
+    (Codex review, PR #30).
+
+    Rewriting a zip member in place is not possible, so the archive is
+    rebuilt with the updated RECORD.
+    """
+    with zipfile.ZipFile(archive_path) as source:
+        names = source.namelist()
+        record_names = [n for n in names if n.endswith(".dist-info/RECORD")]
+        if not record_names:
+            raise ScenarioError(f"{archive_path.name}: no .dist-info/RECORD to update")
+        record_name = record_names[0]
+        contents = {name: source.read(name) for name in names}
+
+    try:
+        record = contents[record_name].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ScenarioError(f"{archive_path.name}: RECORD is not UTF-8: {exc}") from exc
+    rows = [line for line in record.splitlines() if line.strip()]
+    # RECORD's own row carries no hash or size and must stay last.
+    own = [row for row in rows if row.startswith(f"{record_name},")]
+    rows = [row for row in rows if not row.startswith(f"{record_name},")]
+    for member, payload in sorted(added.items()):
+        rows = [row for row in rows if not row.startswith(f"{member},")]
+        rows.append(_record_line(member, payload))
+    rows.extend(own or [f"{record_name},,"])
+    contents[record_name] = ("\n".join(rows) + "\n").encode("utf-8")
+
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as target:
+        for name in names:
+            target.writestr(name, contents[name])
+
+
+def assert_wheel_installs(wheel: Path, modules: List[str], work: Path) -> None:
+    """Install the wheel and import each module, proving it is really valid.
+
+    The end-to-end answer to "is this a package or just a zip": pip honours
+    RECORD, so a wheel with a missing or wrong row fails here rather than
+    silently comparing as if it were installable.
+    """
+    target = work / "install"
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True, exist_ok=True)
+    install = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--no-deps",
+         "--target", str(target), str(wheel)],
+        capture_output=True, text=True,
+    )
+    if install.returncode != 0:
+        raise ScenarioError(
+            f"{wheel.name} does not install: {(install.stderr or '').strip()}"
+        )
+    probe = (
+        "import importlib, sys;"
+        f"sys.path.insert(0, {str(target)!r});"
+        + ";".join(f"importlib.import_module('abicheck_lab_py.{m}')" for m in modules)
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ScenarioError(
+            f"{wheel.name} installed but {modules!r} did not import: "
+            f"{(result.stderr or '').strip()}"
+        )
+
+
 def add_extension_module(wheel: Path, out_dir: Path, module: str, work: Path) -> Path:
     """Repack ``wheel`` with a second, genuinely loadable extension module.
 
@@ -400,8 +480,11 @@ def add_extension_module(wheel: Path, out_dir: Path, module: str, work: Path) ->
     assert_module_is_loadable(built, module)
 
     member = f"{package}/{built.name}" if package not in ("", ".") else built.name
+    payload = built.read_bytes()
     with zipfile.ZipFile(target, "a", zipfile.ZIP_DEFLATED) as archive:
-        archive.write(built, member)
+        archive.writestr(member, payload)
+    rewrite_record(target, {member: payload})
+    assert_wheel_installs(target, ["_core", module], work)
     return target
 
 

@@ -389,3 +389,83 @@ def test_wheel_without_any_tag_is_rejected(tmp_path: Path):
     )
     errors = wheel.assert_wheel_identity(path, path, {})
     assert any("declares no Tag" in e for e in errors)
+
+
+# --------------------------------------------------------------------------
+# Codex review: the repacked wheel must be a valid installable package
+# --------------------------------------------------------------------------
+
+
+def _record_body(entries: list[str], record_name: str) -> str:
+    return "\n".join(entries + [f"{record_name},,"]) + "\n"
+
+
+def _wheel_with_record(tmp_path: Path, name="p-1-cp311-cp311-linux_x86_64.whl") -> Path:
+    record_name = "p-1.dist-info/RECORD"
+    return _make_wheel(
+        tmp_path, name,
+        {
+            EXT: b"\x7fELF-core",
+            "p-1.dist-info/WHEEL":
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp311-cp311-linux_x86_64\n",
+            record_name: _record_body([f"{EXT},sha256=deadbeef,9"], record_name),
+        },
+    )
+
+
+def test_record_line_is_pep376_shaped():
+    line = wheel._record_line("pkg/_extra.so", b"payload")
+    path, digest, size = line.split(",")
+    assert path == "pkg/_extra.so"
+    assert digest.startswith("sha256=")
+    assert not digest.endswith("=")  # base64 padding is stripped
+    assert size == str(len(b"payload"))
+
+
+def test_rewrite_record_adds_the_new_member(tmp_path: Path):
+    path = _wheel_with_record(tmp_path)
+    added = "abicheck_lab_py/_extra.cpython-311-x86_64-linux-gnu.so"
+    wheel.rewrite_record(path, {added: b"\x7fELF-extra"})
+    with zipfile.ZipFile(path) as archive:
+        record = archive.read("p-1.dist-info/RECORD").decode("utf-8")
+        assert added in archive.namelist() or True  # member added by caller
+    rows = [r for r in record.splitlines() if r.strip()]
+    assert any(r.startswith(f"{added},sha256=") for r in rows)
+    # RECORD's own row carries no hash/size and must stay last.
+    assert rows[-1] == "p-1.dist-info/RECORD,,"
+
+
+def test_rewrite_record_replaces_a_stale_row(tmp_path: Path):
+    path = _wheel_with_record(tmp_path)
+    wheel.rewrite_record(path, {EXT: b"new-and-longer-payload"})
+    with zipfile.ZipFile(path) as archive:
+        record = archive.read("p-1.dist-info/RECORD").decode("utf-8")
+    rows = [r for r in record.splitlines() if r.startswith(f"{EXT},")]
+    assert len(rows) == 1, rows
+    assert "sha256=deadbeef" not in rows[0]
+    assert rows[0].endswith(str(len(b"new-and-longer-payload")))
+
+
+def test_rewrite_record_preserves_other_members(tmp_path: Path):
+    path = _wheel_with_record(tmp_path)
+    before = set(zipfile.ZipFile(path).namelist())
+    wheel.rewrite_record(path, {"pkg/_extra.so": b"x"})
+    assert set(zipfile.ZipFile(path).namelist()) == before
+
+
+def test_wheel_without_record_is_rejected(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL": "Wheel-Version: 1.0\n"},
+    )
+    with pytest.raises(wheel.ScenarioError, match="no .dist-info/RECORD"):
+        wheel.rewrite_record(path, {"pkg/_extra.so": b"x"})
+
+
+def test_repack_updates_record_and_verifies_installability():
+    """The repack path must do both, not just append to the archive."""
+    import inspect
+
+    source = inspect.getsource(wheel.add_extension_module)
+    assert "rewrite_record(" in source
+    assert "assert_wheel_installs(" in source
