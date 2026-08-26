@@ -22,7 +22,14 @@ def _report(verdict="BREAKING", changes=(), suppressed=()) -> dict:
         "changes": [
             {"kind": k, "symbol": s, "severity": v} for k, s, v in changes
         ],
-        "suppressed_changes": [{"symbol": s} for s in suppressed],
+        # The REAL shape ABICheck emits: nested under "suppression", which is
+        # where scripts/run_scenario.py's own oracle reads it. Using the
+        # top-level shape here is what let a broken lookup pass its tests.
+        "suppression": {
+            "file_provided": True,
+            "suppressed_count": len(suppressed),
+            "suppressed_changes": [{"symbol": s} for s in suppressed],
+        },
         # Provenance that legitimately differs per build system and must
         # never make parity fail.
         "old_path": "/some/build/dir/libimpl.so",
@@ -172,3 +179,67 @@ def test_make_fixture_recipe_sets_a_soname():
         encoding="utf-8"
     )
     assert "-Wl,-soname,libimpl.so" in makefile
+
+
+# --------------------------------------------------------------------------
+# Codex review: the suppression lookup and operational-error gating
+# --------------------------------------------------------------------------
+
+
+def test_suppressed_symbols_are_read_from_the_real_report_shape():
+    """Regression guard: the top-level lookup returned nothing, always.
+
+    That made the suppression-parity assertion compare two empty sets --
+    dead code wearing the shape of a check.
+    """
+    report = _report(changes=BREAK, suppressed=("_ZN8scenario13legacy_metricEi",))
+    assert parity.normalized_suppressed(report) == {"_ZN8scenario13legacy_metricEi"}
+    assert "suppressed_changes" not in report, "the real shape nests this"
+
+
+def test_suppression_parity_is_not_vacuous():
+    """Two reports suppressing DIFFERENT symbols must disagree."""
+    a = _report(changes=BREAK, suppressed=("_ZN8scenario13legacy_metricEi",))
+    b = _report(changes=BREAK, suppressed=("_ZN8scenario12required_apiEi",))
+    errors = parity.compare({"cmake": {"s": a}, "make": {"s": b}})
+    assert any("suppressed symbols differ" in e for e in errors)
+    assert any("legacy_metric" in e for e in errors)
+
+
+def test_top_level_suppression_shape_still_works_for_fixtures():
+    """A hand-written fixture using the flat shape is still understood."""
+    report = {"verdict": "BREAKING", "suppressed_changes": [{"symbol": "_Z3foov"}]}
+    assert parity.normalized_suppressed(report) == {"_Z3foov"}
+
+
+def test_report_with_operational_errors_is_rejected():
+    """Incomplete evidence is not comparable, even when it matches."""
+    clean = _report(changes=BREAK)
+    broken = _report(changes=BREAK)
+    broken["operational_errors"] = [{"code": "castxml_failed"}]
+    errors = parity.compare({"cmake": {"s": clean}, "make": {"s": broken}})
+    assert any("operational error" in e for e in errors)
+    assert any("castxml_failed" in e for e in errors)
+
+
+def test_operational_errors_matter_most_for_empty_finding_sets():
+    """A clean NO_CHANGE and an incomplete run look identical otherwise."""
+    clean = _report(verdict="NO_CHANGE")
+    broken = _report(verdict="NO_CHANGE")
+    broken["operational_errors"] = ["dwarf extraction failed"]
+    assert parity.compare({"cmake": {"s": clean}, "make": {"s": broken}})
+
+
+def test_per_library_operational_errors_are_collected():
+    report = {"libraries": [{"operational_errors": ["nested"]}], "operational_errors": ["top"]}
+    assert len(parity.operational_errors(report)) == 2
+
+
+def test_an_incomplete_scenario_still_counts_as_compared():
+    """Otherwise it would also trip the "nothing was compared" guard and
+    report two different problems for one cause."""
+    clean = _report(changes=BREAK)
+    broken = _report(changes=BREAK)
+    broken["operational_errors"] = ["boom"]
+    errors = parity.compare({"cmake": {"s": clean}, "make": {"s": broken}})
+    assert not any("nothing was compared" in e for e in errors)

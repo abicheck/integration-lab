@@ -54,11 +54,38 @@ def normalized_findings(report: Dict[str, Any]) -> Set[Finding]:
 
 
 def normalized_suppressed(report: Dict[str, Any]) -> Set[str]:
-    """Symbols a suppression rule accepted -- also semantic, not provenance."""
-    return {
-        str(change.get("symbol"))
-        for change in report.get("suppressed_changes") or []
-    }
+    """Symbols a suppression rule accepted -- also semantic, not provenance.
+
+    ABICheck nests these under `report["suppression"]["suppressed_changes"]`,
+    which is where scripts/run_scenario.py's own oracle reads them. A
+    top-level lookup returns nothing for every real report, so this
+    assertion silently compared two empty sets and could never have failed
+    -- dead code wearing the shape of a check (Codex review, PR #30). The
+    top-level fallback is kept only for hand-written fixtures in tests.
+    """
+    block = report.get("suppression")
+    changes = None
+    if isinstance(block, dict):
+        changes = block.get("suppressed_changes")
+    if changes is None:
+        changes = report.get("suppressed_changes")
+    return {str(change.get("symbol")) for change in changes or []}
+
+
+def operational_errors(report: Dict[str, Any]) -> List[Any]:
+    """Every operational-error channel a scenario report can carry.
+
+    A report carrying operational errors is not comparable evidence, even
+    when its verdict and findings match: the run that produced it was
+    incomplete. That matters most for scenarios whose expected finding set
+    is EMPTY, where an incomplete run and a clean run look identical
+    (Codex review, PR #30).
+    """
+    found = list(report.get("operational_errors") or [])
+    for library in report.get("libraries") or []:
+        if isinstance(library, dict):
+            found.extend(library.get("operational_errors") or [])
+    return found
 
 
 def load_results(directory: Path) -> Dict[str, Dict[str, Any]]:
@@ -98,6 +125,21 @@ def compare(results: Dict[str, Dict[str, Dict[str, Any]]]) -> List[str]:
             # Declared for one build system only (see build-matrix.yaml).
             # Not an error; counted so a suite where NOTHING overlaps fails.
             continue
+        # Comparability first: a report with operational errors is not
+        # evidence, so comparing it to another would be comparing noise.
+        incomplete = False
+        for build_system, report in sorted(present.items()):
+            problems = operational_errors(report)
+            if problems:
+                incomplete = True
+                errors.append(
+                    f"{scenario}: {build_system} report carries "
+                    f"{len(problems)} operational error(s): {problems!r}"
+                )
+        if incomplete:
+            compared += 1
+            continue
+
         compared += 1
         reference_bs = sorted(present)[0]
         reference = present[reference_bs]
