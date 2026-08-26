@@ -73,6 +73,7 @@ dimensions:
   - python_extension
   - run_plan_semantics
   - evidence_portability
+  - demonstration_oracle
   - n/a
   target_shape:
   - cc_binary_linkshared
@@ -340,6 +341,26 @@ capabilities:
     l4_clang_plugin -- the plugin may not build on a given runner image -- but the harness
     itself fails closed and the uploaded receipt records which channel each rejection came
     through, so an upstream loosening stays visible.
+
+    '
+- id: demonstration-scenario-oracle
+  status: covered
+  gating: true
+  workflow: abi-scan.yml
+  job: demo_oracle
+  dimensions:
+    evidence_depth: n/a
+    header_frontend: n/a
+    toolchain: n/a
+    scope: demonstration_oracle
+    target_shape: cc_binary_linkshared
+  note: 'Reads the report the ordinary gate already produced -- not a second abicheck
+    invocation, which could drift from the gate and assert a result it never produced --
+    and passes only when the natural result is the one demos/manifest.yaml declares for
+    that branch. Gating, because two of the five demonstration branches are SUPPOSED to
+    turn the gate red: a red gate there carries no information on its own, and this is the
+    check that distinguishes "the demonstration worked" from "the branch drifted". Exits 0
+    without asserting anything on any PR that is not a demonstration branch.
 
     '
 - id: producer-agreement-report

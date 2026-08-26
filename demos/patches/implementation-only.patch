@@ -1,0 +1,16 @@
+diff --git a/src/math.cc b/src/math.cc
+index ed53075..3b40100 100644
+--- a/src/math.cc
++++ b/src/math.cc
+@@ -6,7 +6,10 @@
+ // verify against instead of being unenforceable for this diff.
+ namespace abicheck_lab {
+ 
+-int Calculator::add(int left, int right) const { return left + right; }
++int Calculator::add(int left, int right) const {
++  const int result = left + right;
++  return result;
++}
+ int Calculator::multiply(int left, int right) const { return left * right; }
+ int api_version() { return 1; }
+ 

@@ -1,0 +1,124 @@
+# Generated long-lived demonstration PRs (roadmap item 14).
+#
+# Five branches in this repository exist to exercise one ABI outcome each
+# against the real gate, and are kept open rather than merged. They were
+# hand-maintained, and by the time this manifest was written all five sat
+# 181 commits behind main -- so their reports were dominated by evidence
+# comparability problems from an old scanner revision rather than by the
+# scenario each advertises. Worse, one of them no longer demonstrated what
+# its name claims at all (see `source-api-break` below).
+#
+# This file makes them regenerable instead: `scripts/gen_demo_prs.py`
+# resets each branch to the current default branch, applies the patch here,
+# and rewrites the expected-result section of the PR body from the `expect`
+# block. `scripts/check_demo_oracle.py` is the separate scenario oracle --
+# it reads the report the ordinary gate produced (no second, divergent
+# abicheck invocation) and is green only when the NATURAL result is the
+# declared one.
+#
+# On what the oracle asserts:
+#
+#   verdict            -- exact match. This is "the result", and a demo that
+#                         lands on a different verdict is not demonstrating
+#                         what it claims, full stop.
+#   required_findings  -- every one must be present. These are the findings
+#                         the demo exists to produce.
+#   forbidden_findings -- none may be present. This is what keeps a demo
+#                         honest in the other direction: the source-only
+#                         break must NOT also report a binary break, or it
+#                         has stopped being the L4-only case.
+#
+# Findings are deliberately NOT asserted as exact set equality. A scanner
+# that grows a new advisory finding kind would turn every demonstration PR
+# red at once, which is noise rather than a signal about any of them; the
+# required/forbidden pair states the property each demo actually stands for
+# and stays stable across that. The verdict, which is the thing being
+# demonstrated, is exact.
+
+demonstrations:
+- id: compatible-addition
+  branch: test/compatible-addition
+  title: 'feat: add compatible Calculator subtraction API'
+  claim: A purely additive change -- a new exported method, nothing existing touched.
+  patch: demos/patches/compatible-addition.patch
+  expect:
+    gate: green
+    verdict: COMPATIBLE_WITH_RISK
+    required_findings:
+    - kind: func_added
+      symbol: _ZNK12abicheck_lab10Calculator8subtractEii
+    forbidden_findings:
+    - kind: func_removed
+    - kind: method_access_changed
+
+- id: compatible-header-only-api
+  branch: test/compatible-header-only-api
+  title: 'test: add compatible header-only API helper'
+  claim: An inline function added to a public header -- new source API, no new
+    exported symbol, so nothing moves at binary depth.
+  patch: demos/patches/compatible-header-only-api.patch
+  expect:
+    gate: green
+    verdict: COMPATIBLE_WITH_RISK
+    required_findings: []
+    forbidden_findings:
+    - kind: func_added
+    - kind: func_removed
+
+- id: implementation-only
+  branch: test/implementation-only
+  title: 'test: implementation-only add refactor'
+  claim: A body-only refactor behind an unchanged public surface.
+  patch: demos/patches/implementation-only.patch
+  expect:
+    gate: green
+    verdict: COMPATIBLE_WITH_RISK
+    required_findings: []
+    forbidden_findings:
+    - kind: func_added
+    - kind: func_removed
+    - kind: method_access_changed
+
+- id: binary-abi-break
+  branch: test/binary-abi-break
+  title: 'test: intentionally break multiply ABI'
+  claim: A binary ABI break -- multiply's parameter and return types change, so
+    the old mangled symbol disappears and a new one takes its place.
+  patch: demos/patches/binary-abi-break.patch
+  expect:
+    gate: red
+    verdict: BREAKING
+    required_findings:
+    - kind: func_removed
+      symbol: _ZNK12abicheck_lab10Calculator8multiplyEii
+    - kind: func_added
+      symbol: _ZNK12abicheck_lab10Calculator8multiplyEll
+    forbidden_findings: []
+
+- id: source-api-break
+  branch: test/source-api-break
+  title: 'test: make Calculator::multiply private (source/API break, no ABI break)'
+  claim: A source/API break with NO binary break -- Calculator::multiply becomes
+    private. Access is not part of the mangled name, so every already-linked
+    binary keeps working while every caller that names it stops compiling.
+  # The patch on this branch was REPLACED rather than merely refreshed. It
+  # used to add a default argument (`int add(int left, int right = 0)`),
+  # which the PR body described as a source/API break. It is not one: adding
+  # a default argument is source-compatible AND ABI-neutral, and abicheck
+  # reports exactly nothing for it -- verified directly against the pinned
+  # 0.5.0 scanner while writing this file. A demonstration PR that
+  # demonstrates nothing is worse than no demonstration, because it reads as
+  # coverage. The private-access break is the real L4-only case: invisible at
+  # binary depth, caught at header depth, verified locally as
+  # `method_access_changed` -> API_BREAK (exit 2).
+  patch: demos/patches/source-api-break.patch
+  expect:
+    gate: red
+    verdict: API_BREAK
+    required_findings:
+    - kind: method_access_changed
+      symbol: _ZNK12abicheck_lab10Calculator8multiplyEii
+    forbidden_findings:
+    # The whole point of this case: it must NOT look like a binary break.
+    - kind: func_removed
+    - kind: func_added

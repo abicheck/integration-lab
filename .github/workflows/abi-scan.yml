@@ -2097,3 +2097,76 @@ jobs:
               echo '⚠️ The reuse harness produced no summary -- see the job log above.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The scenario oracle for the generated demonstration branches (item 14).
+  #
+  # Two of the five `test/*` branches are SUPPOSED to make this gate red. A
+  # red gate on a branch whose purpose is to be red carries no information by
+  # itself -- it reads the same whether the demonstration worked or whether
+  # the branch drifted and now breaks for some unrelated reason. This job is
+  # what tells those apart, and it is the check that must be green on a
+  # demonstration PR.
+  #
+  # It reads the report `scan` already uploaded rather than running abicheck a
+  # second time: a separate invocation could drift from the gate's own and end
+  # up asserting a result the gate never produced. On any PR that is not a
+  # demonstration branch the oracle exits 0 without asserting anything, so
+  # this job is harmless everywhere else.
+  demo_oracle:
+    needs: scan
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          persist-credentials: false
+
+      - name: Is this a demonstration branch?
+        id: demo
+        run: |
+          set -euo pipefail
+          if python3 -c "
+          import sys, yaml
+          doc = yaml.safe_load(open('demos/manifest.yaml'))
+          branches = {d['branch'] for d in doc['demonstrations']}
+          sys.exit(0 if '${{ github.head_ref }}' in branches else 1)
+          "; then
+            echo "is_demo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_demo=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the gate's own report
+        if: steps.demo.outputs.is_demo == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: abicheck-report
+          path: ${{ runner.temp }}/gate
+
+      # No continue-on-error: a demonstration branch that no longer
+      # demonstrates its claim is a real failure, and this is the one check on
+      # such a PR that is allowed to be red for a real reason.
+      - name: Assert the natural result is the declared one
+        if: steps.demo.outputs.is_demo == 'true'
+        run: |
+          python3 scripts/check_demo_oracle.py \
+            --branch "${{ github.head_ref }}" \
+            --report "$RUNNER_TEMP/gate/abicheck-report.json" \
+            --summary "$RUNNER_TEMP/demo-oracle.md"
+
+      - name: Report scenario oracle status
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.demo.outputs.is_demo }}" != "true" ]; then
+            echo '### Scenario oracle' >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo 'Not a generated demonstration branch — nothing to assert.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -s "$RUNNER_TEMP/demo-oracle.md" ]; then
+            cat "$RUNNER_TEMP/demo-oracle.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### Scenario oracle' >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo '⚠️ The oracle produced no verdict — see the job log above.' >> "$GITHUB_STEP_SUMMARY"
+          fi

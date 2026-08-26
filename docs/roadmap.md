@@ -209,16 +209,49 @@ itself. The job is non-gating for the same availability reason as
 may simply not build), but the harness fails closed and uploads its receipt
 either way.
 
-**Item 14 — generated demonstration PRs.** The long-lived test PRs have
-drifted: the default-argument PR still describes adding a default argument
-as a source/API break, and PRs #12 and #14 pin obsolete scanner revisions,
-so their reports are dominated by old evidence-comparability problems
-rather than the scenario each advertises. Replace the hand-maintained
-branches with generated ones — reset to latest main, apply the scenario
-patch, force-push, regenerate the expected-result section of the PR body —
-each carrying a natural abicheck result (possibly red) plus a separate
-scenario-oracle check that is green only when the natural result is exactly
-the expected one.
+**Item 14 — generated demonstration PRs.** Tooling done; the force-push is
+an operator step. The five `test/*` branches were all 181 commits behind
+main, so their reports were dominated by evidence-comparability problems
+from an old scanner revision rather than by the scenario each advertises —
+and `test/source-api-break` had stopped demonstrating its claim entirely.
+Its patch added a default argument, which the PR body called a source/API
+break; it is neither a source break nor an ABI change, and the pinned 0.5.0
+scanner reports exactly nothing for it (verified directly). A demonstration
+that demonstrates nothing is worse than a missing one, because it reads as
+coverage.
+
+The branches stop being hand-maintained. `demos/manifest.yaml` declares each
+one as *base + one patch* plus the result it must produce;
+`demos/patches/*.patch` holds the patches, extracted from the branches as
+they stood. `scripts/gen_demo_prs.py --check` reports drift (it reports all
+five today), `--write` recreates the branches locally from the current base,
+and `--push` force-pushes with `--force-with-lease` — never implied by
+`--write`, because these branches carry open PRs and rewriting them is a
+deliberate act someone should have to ask for by name. `--body <id>` renders
+the expected-result section of the PR body from the same manifest the oracle
+asserts against, between markers, preserving whatever a human wrote outside
+them, so the claim and the check cannot diverge.
+
+`test/source-api-break`'s patch was replaced rather than refreshed: making
+`Calculator::multiply` private is a real source/API break with no binary
+break — access is not part of the mangled name, so every linked binary keeps
+working while every caller that names it stops compiling. Verified locally as
+`method_access_changed` → `API_BREAK` (exit 2). That is also the L4-only case
+item 6's promotion criteria name.
+
+The oracle is the `demo_oracle` job in `abi-scan.yml`. It reads the report
+`scan` already uploaded — not a second abicheck invocation, which could drift
+from the gate and assert a result the gate never produced — and is green only
+when the natural result is the declared one. It is gating, because two of the
+five branches are *supposed* to make the gate red, and a red gate there
+carries no information by itself. Verdict is matched exactly; findings are
+required/forbidden rather than exact set equality, so a scanner that grows a
+new advisory kind does not turn every demonstration red at once, while the
+source-only break still has to prove it produces no binary finding.
+
+What remains is the push. Regenerating rewrites five branches with open pull
+requests, which is an outward-facing act on someone else's PRs; the tooling
+is here and `--check` names exactly what is stale.
 
 **Items 4 and 5 — target-specific evidence and source-depth cells.** Each
 target entry in `build-output.json` should declare its own evidence pack:

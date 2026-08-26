@@ -380,9 +380,13 @@ source/API breaks, and implementation-only changes against the canonical
 gate — some are intentionally kept open as reusable acceptance cases rather
 than merged or closed; see
 [docs/operations.md](docs/operations.md#long-lived-intentional-test-prs).
-Those branches have drifted from what they claim to demonstrate, and
-replacing them with generated scenario PRs is
-[roadmap item 14](docs/roadmap.md).
+Those branches had drifted from what they claim to demonstrate. They are now
+declared in [`demos/manifest.yaml`](demos/manifest.yaml) as *base + one
+patch* plus the result each must produce, regenerable with
+`scripts/gen_demo_prs.py`, and checked by the gating `demo_oracle` job, which
+reads the gate's own report and passes only when the natural result is the
+declared one. `scripts/gen_demo_prs.py --check` reports which branches are
+stale; the force-push that refreshes them is a deliberate operator step.
 
 ## Canonical staged-output shape
 
