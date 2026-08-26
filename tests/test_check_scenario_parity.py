@@ -270,37 +270,95 @@ def test_an_incomplete_scenario_still_counts_as_compared():
 DECLARED = {"cmake": {"add_function", "remove_function"}, "make": {"add_function", "remove_function"}}
 
 
+#: Every declared scenario runs under both header frontends, matching the
+#: real scenarios/manifest.yaml (all seven use the `expected: {castxml, clang}`
+#: form).
+PROFILES = {name: {"castxml", "clang"} for names in DECLARED.values() for name in names}
+
+
+def _complete(build_systems=None):
+    """Every declared cell present, for the given build systems."""
+    return {
+        bs: {stem: _report()
+             for name in names
+             for stem in parity.expected_stems(name, PROFILES.get(name, set()))}
+        for bs, names in DECLARED.items()
+        if build_systems is None or bs in build_systems
+    }
+
+
 def test_every_declared_scenario_must_report():
     """run_scenario.py treats an absent mapping as a SKIP, so deleting one
     would otherwise remove a scenario from parity while the gate stayed
     green."""
-    results = {
-        "cmake": {"add_function.clang": _report(), "remove_function.clang": _report()},
-        "make": {"add_function.clang": _report()},
-    }
-    errors = parity.missing_declared_reports(results, DECLARED)
+    results = _complete()
+    del results["make"]["remove_function.castxml"]
+    del results["make"]["remove_function.clang"]
+    errors = parity.missing_declared_reports(results, DECLARED, PROFILES)
     assert any("remove_function" in e and "make" in e for e in errors)
     assert any("coverage shrank silently" in e for e in errors)
 
 
 def test_full_declared_coverage_passes():
-    results = {
-        bs: {f"{name}.clang": _report() for name in names}
-        for bs, names in DECLARED.items()
-    }
-    assert parity.missing_declared_reports(results, DECLARED) == []
+    assert parity.missing_declared_reports(_complete(), DECLARED, PROFILES) == []
 
 
-def test_profile_suffixes_are_stripped_when_matching():
-    """Reports are named `<scenario>.<profile>.json`."""
-    results = {"cmake": {"add_function.castxml": _report(), "remove_function.clang": _report()}}
-    assert parity.missing_declared_reports(results, {"cmake": DECLARED["cmake"]}) == []
+def test_one_missing_frontend_is_a_shrink():
+    """Codex review, second pass. The check collapsed a stem at its first
+    dot, so `add_function.castxml` alone satisfied `add_function` and the
+    missing Clang half passed -- while compare() went on comparing the Clang
+    reports that survived elsewhere. One build-system/frontend CELL could
+    vanish with the gate still green.
+    """
+    results = _complete()
+    del results["cmake"]["add_function.clang"]
+    errors = parity.missing_declared_reports(results, DECLARED, PROFILES)
+    assert any("add_function.clang" in e and "cmake" in e for e in errors)
+
+
+def test_the_other_frontend_of_the_same_scenario_is_not_reported_missing():
+    """Only the absent cell is named, so the message stays actionable."""
+    results = _complete()
+    del results["cmake"]["add_function.clang"]
+    errors = parity.missing_declared_reports(results, DECLARED, PROFILES)
+    assert not any("add_function.castxml" in e for e in errors)
+
+
+def test_a_single_run_scenario_expects_a_bare_stem():
+    """The older `expected_verdict:` form runs once under the default
+    frontend, and its report carries no profile suffix."""
+    assert parity.expected_stems("solo", set()) == {"solo"}
+    results = {"cmake": {"solo": _report()}}
+    assert parity.missing_declared_reports(results, {"cmake": {"solo"}}, {"solo": set()}) == []
 
 
 def test_a_build_system_not_run_at_all_is_not_a_shrink():
     """A deliberate two-way local run is the caller's choice."""
-    results = {"cmake": {f"{n}.clang": _report() for n in DECLARED["cmake"]}}
-    assert parity.missing_declared_reports(results, DECLARED) == []
+    assert parity.missing_declared_reports(_complete(["cmake"]), DECLARED, PROFILES) == []
+
+
+def test_scenario_profiles_reads_the_real_manifest():
+    """The profiles come from the real manifest, not a hardcoded pair."""
+    root = Path(__file__).resolve().parent.parent
+    profiles = parity.scenario_profiles(root / "scenarios" / "manifest.yaml")
+    assert profiles, "the manifest declares scenarios"
+    for name, declared_profiles in profiles.items():
+        assert declared_profiles == {"castxml", "clang"}, name
+
+
+def test_the_real_declared_matrix_has_no_missing_cells_when_complete():
+    """Guards against the fix over-reporting on the actual suite."""
+    root = Path(__file__).resolve().parent.parent
+    profiles = parity.scenario_profiles(root / "scenarios" / "manifest.yaml")
+    declared = parity.load_declared(root / "scenarios" / "build-matrix.yaml")
+    declared.pop("bazel", None)
+    results = {
+        bs: {stem: _report()
+             for name in names
+             for stem in parity.expected_stems(name, profiles.get(name, set()))}
+        for bs, names in declared.items()
+    }
+    assert parity.missing_declared_reports(results, declared, profiles) == []
 
 
 def test_declared_matrix_is_loaded_from_the_real_file():

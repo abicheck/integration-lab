@@ -121,11 +121,48 @@ def load_declared(path: Path) -> Dict[str, Set[str]]:
     return {name: set(mapping or {}) for name, mapping in systems.items()}
 
 
+def scenario_profiles(path: Path) -> Dict[str, Set[str]]:
+    """{scenario name: declared profile ids} from scenarios/manifest.yaml.
+
+    A scenario declares `expected: {castxml: V, clang: V}` (one run per named
+    header frontend, and every scenario in the suite uses this form) or the
+    older `expected_verdict: V` (a single run under abicheck's default
+    frontend, whose report carries no profile suffix). An empty set means the
+    latter.
+    """
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - CI always has it
+        raise ParityError(f"PyYAML is required to read {path}: {exc}") from exc
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ParityError(f"{path}: unreadable scenario manifest: {exc}") from exc
+    entries = document.get("scenarios")
+    if not isinstance(entries, list) or not entries:
+        raise ParityError(f"{path}: no scenarios declared")
+    profiles: Dict[str, Set[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        expected = entry.get("expected")
+        profiles[str(entry["name"])] = (
+            {str(key) for key in expected} if isinstance(expected, dict) and expected else set()
+        )
+    return profiles
+
+
+def expected_stems(scenario: str, profiles: Set[str]) -> Set[str]:
+    """The report stems a scenario must produce under one build system."""
+    return {f"{scenario}.{profile}" for profile in profiles} or {scenario}
+
+
 def missing_declared_reports(
     results: Dict[str, Dict[str, Dict[str, Any]]],
     declared: Dict[str, Set[str]],
+    profiles: Dict[str, Set[str]],
 ) -> List[str]:
-    """Every declared (build system, scenario) pair must have reported.
+    """Every declared (build system, scenario, profile) cell must have reported.
 
     run_scenario.py treats an absent mapping as a SKIP, not a failure, so
     deleting a CMake or Make mapping silently removes that scenario from
@@ -134,8 +171,14 @@ def missing_declared_reports(
     PR #30). Checking against the declaration makes shrinking coverage a
     red gate rather than an invisible one.
 
-    Scenario report names carry a profile suffix (`name.clang`), so the
-    declared name is matched against the report's leading segment.
+    Codex review, second pass: the first version of this check collapsed a
+    report stem at its first dot, so `add_function.castxml` alone satisfied
+    the requirement for `add_function` and a missing `add_function.clang`
+    passed -- while compare() went on comparing the Clang reports that DID
+    survive on other build systems. One build-system/frontend cell could
+    vanish with the parity gate still green, which is the exact hole this
+    check exists to close, one level finer. The unit is the CELL, so the
+    full stem is what must be present.
     """
     errors = []
     for build_system, scenarios in sorted(declared.items()):
@@ -144,12 +187,13 @@ def missing_declared_reports(
             # This build system was not run at all; that is the caller's
             # choice (a two-way local run), not a shrinking matrix.
             continue
-        reported = {name.split(".", 1)[0] for name in reports}
-        for scenario in sorted(scenarios - reported):
-            errors.append(
-                f"{scenario}: declared for {build_system} in the build matrix "
-                "but produced no report -- coverage shrank silently"
-            )
+        for scenario in sorted(scenarios):
+            for stem in sorted(expected_stems(scenario, profiles.get(scenario, set()))):
+                if stem not in reports:
+                    errors.append(
+                        f"{stem}: declared for {build_system} in the build matrix "
+                        "but produced no report -- coverage shrank silently"
+                    )
     return errors
 
 
@@ -244,17 +288,24 @@ def main(argv=None) -> int:
         help="the declared matrix; every build system that DECLARES a scenario "
              "must have produced a report for it",
     )
+    parser.add_argument(
+        "--manifest", type=Path, default=Path("scenarios/manifest.yaml"),
+        help="the semantic manifest; supplies each scenario's declared header "
+             "frontends, so a missing build-system/frontend CELL is caught "
+             "rather than only a missing scenario",
+    )
     parser.add_argument("--out", type=Path, help="write a JSON parity receipt here")
     args = parser.parse_args(argv)
     try:
         directories = _parse_results(args.results)
         results = {name: load_results(path) for name, path in directories.items()}
         declared = load_declared(args.build_matrix)
+        profiles = scenario_profiles(args.manifest)
     except ParityError as exc:
         print(f"ERROR: {exc}")
         return 1
 
-    errors = missing_declared_reports(results, declared) + compare(results)
+    errors = missing_declared_reports(results, declared, profiles) + compare(results)
     receipt = {
         "build_systems": sorted(results),
         "scenarios_per_build_system": {bs: sorted(r) for bs, r in sorted(results.items())},
