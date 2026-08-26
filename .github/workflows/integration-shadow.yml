@@ -109,7 +109,8 @@ jobs:
       # including the Bazel one's own describe() identity, even though
       # Bazel doesn't consult $PATH for its own toolchain -- see that
       # profile's own comment) is not preinstalled on ubuntu-24.04 runners;
-      # gcc-13 is. bear (for the make profile's optional compile_commands.json)
+      # gcc-13 is. bear (mandatory for the make contract profile's
+      # compile_commands.json -- ci/backends/make.py fails closed without it)
       # and patchelf (bazel.py's stage() uses it to rewrite the staged
       # consumer_app's RUNPATH so it can find libmath.so without Bazel's own
       # bazel-bin/_solib_*/ tree -- Codex review, PR #19) aren't preinstalled

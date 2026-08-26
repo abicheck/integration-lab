@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.ref.outputs.sha }}
+      requested_pr_base: ${{ steps.ref.outputs.requested_pr_base }}
+      walk: ${{ steps.ref.outputs.walk }}
       native_ready: ${{ steps.readiness.outputs.native_ready }}
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -34,20 +36,21 @@ jobs:
           if [[ -z "$sha" ]]; then sha="$PUSH_BEFORE"; fi
           if [[ -z "$sha" || "$sha" =~ ^0+$ ]]; then sha="$CURRENT_SHA"; fi
           # Baseline refresh commits are written by automation credentials
-          # whose pushes do not start another workflow run. They only modify
-          # committed legacy abi/ snapshots, so no native project cache can
-          # exist for that SHA and the project inputs are identical to its
-          # first parent. Resolve through any such commits to the nearest
-          # project-producing ancestor instead of demanding an impossible
-          # cache key. Any non-abi change stops the walk and remains exact.
-          while parent="$(git rev-parse "$sha^" 2>/dev/null)" && \
-                changed="$(git diff --name-only "$parent" "$sha")" && \
-                [[ -n "$changed" ]] && \
-                ! grep -qvE '^abi/' <<<"$changed"; do
-            echo "Baseline-only commit $sha has no workflow-produced native cache; using $parent."
-            sha="$parent"
-          done
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # whose pushes start no workflow run, so no accepted-main baseline
+          # can ever exist for such a SHA.  They only rewrite committed
+          # legacy abi/ snapshots, so the project inputs are identical to
+          # the first parent and that ancestor's baseline *is* this base's
+          # baseline.  ci/baseline_resolution.py walks through them with
+          # `git diff --no-renames` and records every commit it stepped
+          # over; any non-abi/ change stops the walk and stays exact.
+          python3 ci/baseline_resolution.py resolve \
+            --requested "$sha" --out baseline-source-resolution.json
+      - name: Publish the baseline source resolution
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: baseline-source-resolution
+          path: baseline-source-resolution.json
+          if-no-files-found: error
       - id: readiness
         env:
           BASE_SHA: ${{ steps.ref.outputs.sha }}
@@ -108,6 +111,12 @@ jobs:
     needs: baseline-ref
     if: needs.baseline-ref.outputs.native_ready == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Read-only listing of this repository's Actions caches, so a cache
+      # miss can name what *was* available instead of leaving the reader to
+      # guess whether the entry was never written, evicted, or misnamed.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -115,32 +124,183 @@ jobs:
           - linux-x86_64-gcc14-cxx17-bazel
           - linux-x86_64-gcc14-cxx17-cmake-ninja
           - linux-x86_64-gcc14-cxx17-make-bear
+    env:
+      PROFILE: ${{ matrix.profile }}
+      REQUESTED_PR_BASE: ${{ needs.baseline-ref.outputs.requested_pr_base }}
+      SOURCE_COMMIT: ${{ needs.baseline-ref.outputs.sha }}
+      PRIMARY_KEY: integration-lab-main-g1-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
     steps:
-      - name: Restore exact accepted-main baseline
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore accepted-main baseline
         id: restore
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: baseline-set
-          key: integration-lab-main-g1-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
-          # A prefix restore is a transport fallback only. The following
-          # step still requires the manifest's project_ref to equal the
-          # resolved trusted ancestor exactly, so an older unrelated cache
-          # can never be accepted as the comparison baseline.
+          key: ${{ env.PRIMARY_KEY }}
+          # A prefix restore is a transport fallback only.  The classify
+          # step below still requires the manifest's project_ref to equal
+          # the resolved source commit exactly, so an older unrelated cache
+          # can never be accepted as the comparison baseline -- it is
+          # rejected as wrong-project-ref, with both refs in the receipt.
           restore-keys: |
             integration-lab-main-g1-${{ matrix.profile }}-
-      - name: Require exact cache hit and baseline identity
+      - name: List available accepted-main cache keys
+        continue-on-error: true
         env:
-          EXPECTED_REF: ${{ needs.baseline-ref.outputs.sha }}
-          PROFILE: ${{ matrix.profile }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Diagnostic only -- `continue-on-error` keeps a listing failure
+          # (token scope, API outage) from changing the verdict.
+          curl -sS --fail \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100" \
+            -o cache-listing.json
+      - name: Classify the restored baseline
+        id: classify
+        env:
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          WALK: ${{ needs.baseline-ref.outputs.walk }}
+        run: |
+          set -euo pipefail
+          # --no-fail: this pass only decides whether a rebuild is needed.
+          # The receipt still records the verdict, and the fail-closed
+          # assertion below runs whichever path produced the baseline-set.
+          python3 ci/baseline_resolution.py classify \
+            --requested "$REQUESTED_PR_BASE" \
+            --selected "$SOURCE_COMMIT" \
+            --profile "$PROFILE" \
+            --expected-generation 1 \
+            --primary-key "$PRIMARY_KEY" \
+            --matched-key "$MATCHED_KEY" \
+            --walk "$WALK" \
+            --cache-listing cache-listing.json \
+            --baseline-dir baseline-set \
+            --out baseline-resolution.json \
+            --no-fail
+
+      # ----------------------------------------------------------------
+      # Rebuild path.  Actions caches expire (7 days idle) and are evicted
+      # under the repository's 10 GB budget, so "the cache is gone" is a
+      # routine state, not a defect -- and a lab whose native project job
+      # can only run within days of a main push demonstrates nothing.  The
+      # accepted-main baseline is defined by its *source commit*, which is
+      # permanent; the cache is transport.  Rebuilding from that commit
+      # reproduces exactly what project-baseline.yml published, using the
+      # source commit's own build recipe, and is receipted distinctly as
+      # `rebuilt-from-source-commit` so it can never be read as a cache hit.
+      # ----------------------------------------------------------------
+      - name: Check out the accepted-main source commit
+        if: steps.classify.outputs.usable != 'true'
+        run: |
+          set -euo pipefail
+          echo "No usable cached baseline (${{ steps.classify.outputs.reason }});" \
+               "rebuilding from $SOURCE_COMMIT."
+          # A prefix-matched cache for the wrong commit may already have
+          # unpacked snapshots here; the rebuild must not merge with them.
+          rm -rf baseline-set
+          git worktree add --detach accepted-main-src "$SOURCE_COMMIT"
+      - name: Install build toolchain
+        if: steps.classify.outputs.usable != 'true'
+        run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 patchelf ninja-build bear
+      - run: pip install --quiet pyyaml jsonschema "abicheck @ git+https://github.com/abicheck/abicheck.git@${ABICHECK_REF}"
+        if: steps.classify.outputs.usable != 'true'
+      - name: Rebuild the accepted-main build-output
+        if: steps.classify.outputs.usable != 'true'
+        working-directory: accepted-main-src
+        run: |
+          set -euo pipefail
+          # The source commit's own recipe, not this PR's -- a baseline
+          # built by the candidate's build scripts would not be a baseline.
+          python3 ci/run_profile.py --profile-id "$PROFILE"
+          abicheck project validate-build "abicheck-build-$PROFILE"
+      - name: Check out abicheck at the reviewed pin
+        if: steps.classify.outputs.usable != 'true'
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          repository: abicheck/abicheck
+          ref: ${{ env.ABICHECK_REF }}
+          path: .abicheck-src
+          persist-credentials: false
+      - name: Derive baseline libraries from build-output.json
+        id: libraries
+        if: steps.classify.outputs.usable != 'true'
+        run: |
+          set -euo pipefail
+          # Same derivation update-main-baseline.yml performs, so a rebuilt
+          # baseline-set has the same library set and staging as a published
+          # one.  Unlike upstream's `|| true`, a failure here is fatal: a
+          # silently empty library list would produce an empty baseline.
           python3 - <<'PY'
           import json, os
-          manifest = json.load(open("baseline-set/manifest.json"))
-          assert manifest["profile"] == os.environ["PROFILE"], manifest
-          assert manifest["project_ref"] == os.environ["EXPECTED_REF"], manifest
-          assert manifest["baseline_generation"] == 1, manifest
+          from pathlib import Path
+          from abicheck.buildsource.baseline_publish import derive_baseline_libraries
+          from abicheck.buildsource.build_output import load_build_output
+
+          directory = Path("accepted-main-src") / f"abicheck-build-{os.environ['PROFILE']}"
+          report = derive_baseline_libraries(load_build_output(directory), directory)
+          payload = report.to_dict()
+          if not payload["ok"]:
+              raise SystemExit("; ".join(payload["errors"]))
+          Path("libraries.json").write_text(json.dumps(payload["entries"]))
           PY
+          {
+            echo "libraries<<ABICHECK_LIBRARIES_EOF"
+            cat libraries.json
+            echo
+            echo "ABICHECK_LIBRARIES_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Rebuild the accepted-main baseline-set
+        if: steps.classify.outputs.usable != 'true'
+        uses: ./.abicheck-src/actions/baseline
+        with:
+          libraries: ${{ steps.libraries.outputs.libraries }}
+          output-dir: baseline-set
+          project-ref: ${{ needs.baseline-ref.outputs.sha }}
+          profile: ${{ matrix.profile }}
+          depth: binary
+          baseline-generation: '1'
+          generator-git-sha: ${{ env.ABICHECK_REF }}
+          validation: strict
+          snapshot-compression: none
+
+      - name: Require a receipted, identity-matched baseline
+        id: receipt
+        if: always() && steps.classify.outcome == 'success'
+        env:
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          WALK: ${{ needs.baseline-ref.outputs.walk }}
+          REBUILT: ${{ steps.classify.outputs.usable != 'true' && '--rebuilt' || '' }}
+        run: |
+          set -euo pipefail
+          # Fail-closed pass.  Whichever path produced baseline-set, its
+          # manifest must name this profile, this source commit, and this
+          # baseline generation, or the job goes red with the receipt
+          # naming the identity that did not match.
+          python3 ci/baseline_resolution.py classify \
+            --requested "$REQUESTED_PR_BASE" \
+            --selected "$SOURCE_COMMIT" \
+            --profile "$PROFILE" \
+            --expected-generation 1 \
+            --primary-key "$PRIMARY_KEY" \
+            --matched-key "$MATCHED_KEY" \
+            --walk "$WALK" \
+            --cache-listing cache-listing.json \
+            --baseline-dir baseline-set \
+            --out baseline-resolution.json \
+            $REBUILT
+      - name: Publish the baseline resolution receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: baseline-resolution-${{ matrix.profile }}
+          path: baseline-resolution.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: abicheck-baseline-${{ matrix.profile }}-accepted-main

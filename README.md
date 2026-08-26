@@ -70,19 +70,59 @@ as machine-readable `expected_gaps` in the scenario manifest instead of being
 reported as covered.
 
 `.github/workflows/project-baseline.yml` publishes generation-scoped
-`accepted-main` baseline-sets to Actions cache on every main push. Pull-request
-project checks restore the exact base-SHA cache key (never a prefix fallback),
-validate profile/project-ref/generation identity, and upload it under
-`check-project.yml`'s baseline artifact convention. The run plan contains 18
+`accepted-main` baseline-sets to Actions cache on every main push, and every
+pull-request project check resolves its baseline through
+`ci/baseline_resolution.py`, which writes a **baseline-resolution receipt**
+(uploaded as `baseline-resolution-<profile>`) naming every identity involved:
+
+```json
+{
+  "requested_pr_base": "...",
+  "selected_source_commit": "...",
+  "cache_primary_key": "...",
+  "cache_matched_key": "...",
+  "manifest_project_ref": "...",
+  "manifest_generation": 1,
+  "reason_selected": "abi-equivalent-ancestor"
+}
+```
+
+Three things can make the requested base and the baseline's own commit differ,
+and the receipt distinguishes them rather than collapsing all three into one
+`FileNotFoundError` on `baseline-set/manifest.json`:
+
+- `exact-base` — the base commit's own published baseline was restored.
+- `abi-equivalent-ancestor` — the base is separated from the restored
+  baseline's commit only by commits touching nothing the ABI depends on.
+  A bot-authored `chore: refresh ABICheck baseline` commit is the case that
+  matters: it is pushed with automation credentials, so it starts no workflow
+  run and can never own a baseline, and it rewrites only committed legacy
+  `abi/` snapshots. The walk uses `git diff --no-renames` and stops at the
+  first commit that changes anything else.
+- `rebuilt-from-source-commit` — no usable baseline-set was in the cache, so
+  one was rebuilt from the resolved source commit using *that commit's own*
+  build recipe. Actions caches expire after seven idle days and are evicted
+  under the repository's 10 GB budget, so a missing entry is routine; the
+  accepted-main baseline is defined by its source commit, and the cache is
+  transport. A rebuild is never receipted as a cache hit.
+
+A prefix (`restore-keys`) match is a transport fallback only: the manifest's
+`profile`, `project_ref`, and `baseline_generation` must still match exactly,
+and an older unrelated cache is rejected as `wrong-project-ref` with both refs
+printed. The staged result is uploaded under `check-project.yml`'s baseline
+artifact convention. The run plan contains 18
 required/deferred cells: three libraries, the consumer, the plugin contract,
 and the SDK bundle across all three profiles; a negative aggregate oracle
 proves that any missing required report fails coverage.
 
-The one-time introduction PR has no trusted project cache to restore because
-its base commit predates the publisher workflow. The shadow detects that state
-from the base tree and runs build/manifest validation only; the first main push
-publishes the cache, after which missing or stale exact-base baselines fail
-closed. It never manufactures a PR baseline from the candidate under test.
+The one-time introduction PR has no baseline to resolve at all, because its
+base commit predates the publisher workflow and so carries no `.abicheck.yml`
+or profile build recipe to rebuild from either. The shadow detects that one
+state from the base tree and runs build/manifest validation only. Every later
+PR takes the resolution path above, which fails closed with a receipt when it
+cannot produce an identity-matched baseline. Neither path ever manufactures a
+PR baseline from the candidate under test: a rebuild always uses the resolved
+accepted-main source commit's own tree, never this PR's.
 
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
 ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
@@ -220,38 +260,49 @@ _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 
 ## Architecture
 
+Three paths run on every PR. Only the first is branch-required today; the
+promotion criteria for the third are in
+[docs/roadmap.md](docs/roadmap.md#promoting-the-native-project-aggregate).
+
 ```text
-                         ┌─────────────────────────────┐
-                         │   pull_request / push:main    │
+                         ┌──────────────────────────────┐
+                         │  pull_request / push:main     │
                          └───────────────┬──────────────┘
                                          │
-              ┌──────────────────────────┼──────────────────────────┐
-              │  REQUIRED, LOAD-BEARING  │   ADVISORY, NON-GATING     │
-              ▼                          ▼                          │
-   .github/workflows/          .github/workflows/                   │
-      abi-scan.yml              integration-shadow.yml               │
-   ┌──────────────────┐    ┌──────────────────────────────────┐     │
-   │ real abicheck     │    │ ci/select_profiles.py             │     │
-   │ scan, depth:source│    │   (profiles.yaml + event-policy)  │     │
-   │ base-SHA baseline │    │        │        │        │        │     │
-   │ coverage contract │    │     bazel    cmake     make        │     │
-   │ ── ONE verdict ── │    │        │        │        │        │     │
-   └──────────────────┘    │  ci/run_profile.py (per profile)   │     │
-                            │  → abicheck-build-<id>/ (staged)   │     │
-                            │  → ci/check_profile.py             │     │
-                            │    (real abicheck for cmake/make,  │     │
-                            │     ELF signal for bazel's own leg) │     │
-                            │  → ci/check_profile_coverage.py    │     │
-                            │  → ci/emit_profile_receipt.py      │     │
-                            │        │        │        │        │     │
-                            │        └────────┴────────┘        │     │
-                            │      integration_gate (fan-in)     │     │
-                            └──────────────────────────────────┘     │
-                                                                      │
-                            scenarios.yml / scenarios-canary.yml ─────┘
-                            (scenario oracle, capability matrix,
-                             suppressions, consumer/aggregate checks)
+        ┌────────────────────────┬───────┴────────┬────────────────────────┐
+        │ REQUIRED, LOAD-BEARING │    ADVISORY    │  ADVISORY (native,     │
+        │                        │                │  promotion candidate)  │
+        ▼                        ▼                ▼
+ .github/workflows/     .github/workflows/   .github/workflows/
+    abi-scan.yml       integration-shadow.yml  project-shadow.yml
+ ┌──────────────────┐  ┌─────────────────────┐ ┌───────────────────────────┐
+ │ real abicheck     │  │ ci/select_profiles  │ │ .abicheck.yml (topology)   │
+ │ scan, depth:source│  │ (profiles.yaml +    │ │   │                        │
+ │ base-SHA baseline │  │  event-policy)      │ │ baseline-ref               │
+ │ coverage contract │  │   bazel cmake make  │ │   ci/baseline_resolution   │
+ │ ── ONE verdict ── │  │   ci/run_profile.py │ │   │  (receipt: which       │
+ └──────────────────┘  │   → abicheck-build- │ │   │   commit, which key)   │
+                        │      <id>/ (staged) │ │ build (3 profiles)         │
+                        │   → check_profile   │ │   → abicheck-build-<id>/   │
+                        │   → coverage        │ │ restore-baseline           │
+                        │   → profile receipt │ │   cache hit, ABI-equivalent│
+                        │   integration_gate  │ │   ancestor, or rebuild     │
+                        └─────────────────────┘ │   from the source commit   │
+                                                 │ project (upstream          │
+   scenarios.yml / scenarios-canary.yml          │   check-project.yml)       │
+   depth-scenarios.yml                           │   plan → check cells →     │
+   (scenario oracle, capability matrix,          │   reports → aggregate      │
+    suppressions, consumer/aggregate checks)     │ plan-oracle                │
+                                                 │   run-plan semantics +     │
+                                                 │   negative aggregate proof │
+                                                 └───────────────────────────┘
 ```
+
+Every ABICheck reference in every workflow resolves to the one reviewed pin in
+[`ci/abicheck-version.yaml`](ci/abicheck-version.yaml). GitHub cannot
+interpolate a `uses:` ref from a file, so reusable-workflow references are
+written out literally — `tests/test_abicheck_pin.py` fails if any of them
+drifts from the reviewed value.
 
 ## The project under test
 

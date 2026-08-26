@@ -27,9 +27,13 @@ account of what is implemented today.
    standardized build output, restores exact-base accepted-main baselines,
    and invokes upstream `check-project.yml`. Its run-plan oracle derives the
    exact target/profile/channel/depth cells from the project declaration and
-   verifies each cell's required/gate policy. Source-depth promotion remains
-   blocked on upstream target-specific build-output evidence projection and
-   is recorded as an `expected_gap`, not emulated with lab routing glue.
+   verifies each cell's required/gate policy, rejecting duplicate `check_id`
+   values and malformed cells before either can join the comparison set.
+   Baseline resolution is receipted (see
+   [Promoting the native project aggregate](#promoting-the-native-project-aggregate)).
+   Source-depth promotion remains blocked on upstream target-specific
+   build-output evidence projection and is recorded as an `expected_gap`, not
+   emulated with lab routing glue.
 3. **Broaden cross-build-system public-contract equivalence.** An advisory
    version already exists (`ci/compare_build_outputs.py`, the
    `cross_build_equivalence` job — see
@@ -75,3 +79,50 @@ account of what is implemented today.
    needs.** Additional `(compiler × standard × platform)` combinations, or
    additional build systems, added when a real integration need
    demonstrates the gap — not speculatively ahead of one.
+
+## Promoting the native project aggregate
+
+`project-shadow.yml`'s aggregate job stays advisory until the native path has
+survived real traffic. `contract: true` in `.abicheck.yml` marks a profile's
+*declared* status; it is not evidence, and the repository branch itself is
+still unprotected with no required status checks. Promotion to a required
+status check needs all seven of the following, each on an ordinary PR with no
+bootstrap or baseline-refresh special case involved:
+
+1. At least one clean ordinary PR — every cell green, aggregate green.
+2. One binary-breaking PR — caught at `depth: binary`, aggregate red.
+3. One L4-only API-breaking PR — invisible at binary depth, caught at source
+   depth, aggregate red. (Blocked on source-depth cells; see item 2.)
+4. One missing-baseline or missing-report PR — the fail-closed path goes red
+   rather than green-by-absence, with a baseline-resolution receipt naming
+   the identity that did not match.
+5. One upstream pin bump — `ci/abicheck-version.yaml`'s `candidate_sha`
+   certified by the canary, then promoted to `sha`, with every workflow ref
+   moving in the same reviewed commit (`tests/test_abicheck_pin.py`).
+6. No run in the set may have taken the bootstrap path
+   (`native_ready == false`) or have been decided by a baseline-refresh
+   special case.
+7. Aggregate status matches every cell — no cell red with the aggregate
+   green, and no aggregate red without a red cell.
+
+Until all seven have happened on real PRs, the Bazel gate in `abi-scan.yml`
+remains the one branch-required compatibility check.
+
+## The scanner pin
+
+There is one reviewed ABICheck pin, `ci/abicheck-version.yaml`. Every install
+and every reusable-workflow reference derives from it; where GitHub syntax
+forbids interpolating a `uses:` ref, `tests/test_abicheck_pin.py` fails on any
+divergence instead. Bumping it follows one order:
+
+```text
+candidate upstream SHA
+    -> canary certification
+    -> integration-lab PR pin bump
+    -> all scenarios + real accepted-main baseline comparison
+    -> reviewed merge
+```
+
+The legacy single-target scan/scenario suite still runs on a second pin
+(`legacy_sha`), reviewed in the same file, and is migrating onto `sha` one
+workflow at a time.

@@ -108,6 +108,20 @@ def test_make_evidence_requires_generated_database(tmp_path, monkeypatch):
         '[{"directory": "/tmp", "command": "g++ -c src/math.cc"}]',
         '[{"file": "src/math.cc", "command": "g++ -c src/math.cc"}]',
         '[{"directory": "/tmp", "file": "src/math.cc", "arguments": []}]',
+        # Non-string path/command fields.  Each of these is a value a
+        # scanner would later index as a path or re-parse as an argv, so
+        # the compile database has to reject them as evidence rather than
+        # forward them and crash somewhere with less context.
+        '[{"directory": 7, "file": "src/math.cc", "command": "g++ -c a.cc"}]',
+        '[{"directory": "/tmp", "file": ["src/math.cc"], "command": "g++ -c a.cc"}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "command": 7}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "command": "   "}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "arguments": "g++ -c a.cc"}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "arguments": ["g++", 7]}]',
+        '[{"directory": "/tmp", "file": "src/math.cc", "arguments": [["g++"]]}]',
+        '[{"directory": null, "file": null, "command": null}]',
+        # A well-formed entry does not excuse a malformed sibling.
+        '[{"directory": "/tmp", "file": "a.cc", "command": "g++ a.cc"}, 3]',
     ],
 )
 def test_make_evidence_requires_usable_database(tmp_path, monkeypatch, contents):
@@ -124,6 +138,52 @@ def test_make_evidence_requires_usable_database(tmp_path, monkeypatch, contents)
 
     with pytest.raises(BackendError, match="compile database"):
         backend.collect_evidence(result)
+
+
+def test_make_evidence_rejects_malformed_utf8_database(tmp_path, monkeypatch):
+    """A byte-corrupted capture is a BackendError, not a decode traceback."""
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    backend._build_dir.mkdir()
+    (backend._build_dir / "compile_commands.json").write_bytes(
+        b'[{"directory": "/tmp", "file": "\xff\xfe.cc", "command": "g++"}]'
+    )
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: "/usr/bin/bear")
+    monkeypatch.setattr(backend, "_run", lambda *args, **kwargs: None)
+
+    with pytest.raises(BackendError, match="not valid UTF-8"):
+        backend.collect_evidence(result)
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        # `arguments` is the JSON Compilation Database's other legal form.
+        '[{"directory": "/tmp", "file": "a.cc", "arguments": ["g++", "-c", "a.cc"]}]',
+        # One usable invocation is enough when both keys are present.
+        '[{"directory": "/tmp", "file": "a.cc", "command": "g++ -c a.cc",'
+        ' "arguments": []}]',
+    ],
+)
+def test_make_evidence_accepts_every_legal_invocation_form(
+    tmp_path, monkeypatch, contents
+):
+    from make import MakeBackend
+
+    backend = MakeBackend({"root": "."}, tmp_path)
+    backend._build_dir.mkdir()
+    (backend._build_dir / "compile_commands.json").write_text(contents)
+    result = BuildResult(
+        profile_id="make", backend="make", success=True, started_at=0, ended_at=1
+    )
+    monkeypatch.setattr("make.shutil.which", lambda tool: "/usr/bin/bear")
+    monkeypatch.setattr(backend, "_run", lambda *args, **kwargs: None)
+
+    assert backend.collect_evidence(result)["compile_commands_present"] is True
 
 
 def test_make_evidence_accepts_nonempty_command_array(tmp_path, monkeypatch):

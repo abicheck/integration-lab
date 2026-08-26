@@ -24,20 +24,49 @@ def validate(config_path: Path, plan_path: Path) -> list[str]:
                     expected[check_id] = check
     checks = plan.get("checks", [])
     errors = []
-    invalid_ids = [check.get("check_id") for check in checks
-                   if not isinstance(check.get("check_id"), str) or not check.get("check_id")]
-    if invalid_ids:
-        errors.append(f"run-plan contains invalid check_id value(s): {invalid_ids!r}")
-    actual = {
-        check.get("check_id") for check in checks
-        if isinstance(check.get("check_id"), str) and check.get("check_id")
-    }
+    if not isinstance(checks, list):
+        return [f"run-plan checks must be a list, got {type(checks).__name__}"]
+
+    # Shape before identity: a non-object cell has no check_id to collect,
+    # and folding it into the comparison sets would let a malformed plan
+    # read as a merely-different one.  Malformed cells are rejected here and
+    # never contribute an identifier to `actual`.
+    well_formed = []
+    for index, check in enumerate(checks):
+        if not isinstance(check, dict):
+            errors.append(
+                f"run-plan check {index} is not an object (got {type(check).__name__})"
+            )
+            continue
+        check_id = check.get("check_id")
+        if not isinstance(check_id, str) or not check_id:
+            errors.append(
+                f"run-plan check {index} has an invalid check_id: {check_id!r}"
+            )
+            continue
+        well_formed.append((check_id, check))
+
+    # A duplicate check_id is not a cosmetic problem: aggregate projects the
+    # run plan to an expected-target set keyed by check_id, so two cells
+    # sharing one id collapse to a single expectation and one of them can go
+    # missing without the gate noticing.  Set comparison alone cannot see it.
+    seen = set()
+    duplicates = []
+    for check_id, _check in well_formed:
+        if check_id in seen:
+            duplicates.append(check_id)
+        seen.add(check_id)
+    if duplicates:
+        errors.append(
+            f"run-plan contains duplicate check_id value(s): {sorted(set(duplicates))}"
+        )
+
+    actual = seen
     if actual != set(expected):
         errors.append(
             f"run-plan cells differ: actual={sorted(actual)} expected={sorted(expected)}"
         )
-    for check in checks:
-        check_id = check.get("check_id")
+    for check_id, check in well_formed:
         declaration = expected.get(check_id)
         if declaration is None:
             continue
