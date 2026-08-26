@@ -17,6 +17,37 @@ from base import BackendError, BuildBackend, BuildResult, EnvironmentCheck, Targ
 _EXECUTABLE_TARGETS = {"consumer"}
 
 
+def _invocation_problems(command: Dict[str, Any]) -> list:
+    """Validate a compile-database entry's invocation fields.
+
+    The JSON Compilation Database format allows either `command` (one shell
+    string) or `arguments` (an argv list).  At least one has to be present
+    AND well-typed: a scanner re-executes or re-parses whatever is here, so
+    a number or a nested list is not evidence, it is a later crash.  When
+    both are present, one usable form is enough -- but a present-and-broken
+    field with no usable sibling is reported, never silently ignored.
+    """
+    problems = []
+    usable = False
+    if "command" in command:
+        value = command["command"]
+        if isinstance(value, str) and value.strip():
+            usable = True
+        else:
+            problems.append("command must be a non-empty string")
+    if "arguments" in command:
+        value = command["arguments"]
+        if not isinstance(value, list) or not value:
+            problems.append("arguments must be a non-empty array")
+        elif any(not isinstance(item, str) for item in value):
+            problems.append("arguments must contain only strings")
+        else:
+            usable = True
+    if usable:
+        return []
+    return problems or ["one of command or arguments is required"]
+
+
 class MakeBackend(BuildBackend):
     name = "make"
 
@@ -111,26 +142,43 @@ class MakeBackend(BuildBackend):
                 f"Make evidence collection succeeded without producing {compile_commands}"
             )
         try:
-            commands = json.loads(compile_commands.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            raw = compile_commands.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BackendError(f"Make compile database is unreadable: {exc}") from exc
+        except UnicodeDecodeError as exc:
+            # A truncated or non-UTF-8 capture is an evidence failure with a
+            # named cause, not an uncaught decode traceback out of json.
+            raise BackendError(
+                f"Make compile database is not valid UTF-8 text: {exc}"
+            ) from exc
+        try:
+            commands = json.loads(raw)
+        except json.JSONDecodeError as exc:
             raise BackendError(f"Make compile database is not valid JSON: {exc}") from exc
         if not isinstance(commands, list) or not commands:
             raise BackendError(
                 "Make compile database must be a non-empty JSON array of compile commands"
             )
-        if any(not isinstance(command, dict) for command in commands):
-            raise BackendError("Make compile database entries must be JSON objects")
         for index, command in enumerate(commands):
-            missing = [field for field in ("directory", "file") if not command.get(field)]
-            has_invocation = bool(command.get("command")) or (
-                isinstance(command.get("arguments"), list) and bool(command["arguments"])
-            )
-            if missing or not has_invocation:
-                required = ", ".join(missing) or "command or non-empty arguments"
-                if missing and not has_invocation:
-                    required += ", command or non-empty arguments"
+            # Shape first: a non-object entry has no fields to inspect, and
+            # `{}.get` on a list/str/None would raise rather than report.
+            if not isinstance(command, dict):
                 raise BackendError(
-                    f"Make compile database entry {index} is missing required field(s): {required}"
+                    f"Make compile database entry {index} is not a JSON object "
+                    f"(got {type(command).__name__})"
+                )
+            problems = []
+            for field in ("directory", "file"):
+                value = command.get(field)
+                if not isinstance(value, str) or not value:
+                    # A non-string here is what a scanner would later index
+                    # as a path; reject it as evidence rather than pass it on.
+                    problems.append(f"{field} must be a non-empty string")
+            problems.extend(_invocation_problems(command))
+            if problems:
+                raise BackendError(
+                    f"Make compile database entry {index} is invalid: "
+                    + "; ".join(problems)
                 )
         evidence["compile_commands_present"] = True
         evidence["compile_commands_path"] = str(compile_commands)

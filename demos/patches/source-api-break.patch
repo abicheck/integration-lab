@@ -1,0 +1,17 @@
+diff --git a/include/abicheck_lab/math.h b/include/abicheck_lab/math.h
+index 99c1fe4..2b0b24f 100644
+--- a/include/abicheck_lab/math.h
++++ b/include/abicheck_lab/math.h
+@@ -7,6 +7,12 @@ class Calculator {
+  public:
+   Calculator() = default;
+   int add(int left, int right) const;
++
++ private:
++  // Source/API break with NO binary break: access is not part of the
++  // mangled name, so every already-linked binary keeps working while every
++  // caller that names Calculator::multiply stops compiling. This is the
++  // L4-only case -- invisible at binary depth, caught at header depth.
+   int multiply(int left, int right) const;
+ };
+ 

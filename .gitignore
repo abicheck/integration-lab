@@ -10,6 +10,8 @@ tools/abicheck/libabicheck-facts.so
 # per-profile output, none of which is checked in -- see
 # ci/profiles.yaml/ci/emit_build_output.py.
 buildsystems/cmake/build/
+# Each cmake preset has its own binaryDir (see CMakePresets.json).
+buildsystems/cmake/build-clang18/
 buildsystems/make/build/
 /abicheck-build-*/
 

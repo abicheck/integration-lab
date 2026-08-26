@@ -17,8 +17,14 @@ jobs:
         with:
           persist-credentials: false
       - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Prove cross-DSO provider signature break
-        run: python3 ci/run_project_bundle_scenario.py
+        # Explicit compiler, not the runner default: capabilities.yaml
+        # labels this job's toolchain axis gcc14-cxx17, and a job that
+        # silently used whatever gcc the image ships would record its
+        # coverage under a toolchain it never exercised (Codex review,
+        # PR #30).
+        run: python3 ci/run_project_bundle_scenario.py --cc gcc-14
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -33,13 +39,73 @@ jobs:
         with:
           persist-credentials: false
       - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Prove L2 green and L4 macro break
-        run: python3 ci/run_depth_scenario.py
+        run: python3 ci/run_depth_scenario.py --cxx g++-14
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: l2-green-l4-macro-break
           path: depth-scenario-results/
+          if-no-files-found: error
+
+  producer-compiler:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      # Both declared producers must be present: ci/run_producer_compiler_scenario.py
+      # fails closed on a missing one rather than skipping it, because an
+      # attribution aggregate computed from one producer proves nothing.
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - name: Prove producer-compiler attribution
+        run: python3 ci/run_producer_compiler_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: producer-compiler-word-width
+          path: producer-compiler-results/
+          if-no-files-found: error
+
+  loader-features:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
+      - name: Prove emitted loader/runtime feature drift is detected
+        # The emitted feature set depends on the producer, so pinning the
+        # compiler is what makes these cases deterministic as well as
+        # correctly labelled. Each case's `emits` pre-flight fails loudly
+        # if this toolchain stops emitting a feature the case depends on.
+        run: python3 ci/run_loader_feature_scenario.py --cc gcc-14
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: loader-feature-drift
+          path: loader-feature-results/
+          if-no-files-found: error
+
+  python-wheel:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pybind11 scikit-build-core pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      # Builds both wheels itself, from the same package with different
+      # stubs, so the two sides differ only in what this scenario changes.
+      - name: Compare the actual built wheels
+        run: python3 ci/run_python_wheel_scenario.py
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-wheel-package-level
+          path: python-wheel-results/wheel-comparison.json
           if-no-files-found: error
 
   runtime-floor:
@@ -49,8 +115,9 @@ jobs:
         with:
           persist-credentials: false
       - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Verify deterministic LABRT runtime-floor matrix
-        run: python3 ci/run_runtime_floor_scenario.py
+        run: python3 ci/run_runtime_floor_scenario.py --cc gcc-14
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

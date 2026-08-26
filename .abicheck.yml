@@ -90,6 +90,20 @@ profiles:
       binding: gcc14
       standard: c++17
       stdlib: libstdc++
+  # Declared so the native project and ci/profiles.yaml agree on the profile
+  # id set (ci/validate_project_foundation.py requires exactly that), while
+  # `contract: false` keeps it out of every check cell: it holds the
+  # producer-compiler axis and has no accepted-main baseline yet.
+  linux-x86_64-clang18-cxx17-cmake-ninja:
+    contract: false
+    os: linux
+    arch: x86_64
+    compile:
+      compiler_family: clang
+      compiler_version: ">=18,<19"
+      binding: clang18
+      standard: c++17
+      stdlib: libstdc++
   linux-x86_64-gcc14-cxx17-make-bear:
     contract: true
     os: linux

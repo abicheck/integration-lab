@@ -5,6 +5,7 @@ read/write primitives every emitter and the validator build on.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -215,3 +216,51 @@ def test_load_all_receipts_rejects_filename_id_mismatch(tmp_path):
     path.write_text(json.dumps(mismatched))
     with pytest.raises(ReceiptError, match="does not match filename"):
         load_all_receipts(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# Item 15: the matrix must cover the native project and depth-scenario paths
+# --------------------------------------------------------------------------
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _matrix() -> dict:
+    import yaml
+
+    return yaml.safe_load(
+        (REPO_ROOT / "capabilities.yaml").read_text(encoding="utf-8")
+    )
+
+
+def test_matrix_covers_the_native_project_and_depth_workflows():
+    """capabilities.yaml claimed to be the coverage inventory while modelling
+    only the older scan/scenario suite; every native-project and
+    evidence-depth job was invisible to it."""
+    workflows = {entry.get("workflow") for entry in _matrix()["capabilities"]}
+    assert "project-shadow.yml" in workflows
+    assert "depth-scenarios.yml" in workflows
+
+
+def test_every_declared_job_still_exists():
+    """The UNDOCUMENTED_JOB / STALE_ENTRY contract, run as a unit test."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_capability_matrix", REPO_ROOT / "scripts" / "check_capability_matrix.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.check(_matrix()) == []
+
+
+def test_new_scenario_families_are_declared():
+    ids = {entry["id"] for entry in _matrix()["capabilities"]}
+    for required in (
+        "producer-compiler-attribution",
+        "loader-feature-drift",
+        "native-project-baseline-identity",
+        "native-run-plan-semantics",
+    ):
+        assert required in ids, required

@@ -1,0 +1,47 @@
+# The single reviewed ABICheck scanner pin.
+#
+# Every workflow that installs the scanner, and every reusable-workflow
+# reference into abicheck/abicheck, must resolve to `sha` below.  GitHub does
+# not allow `uses:` refs to be interpolated from a file, so the reusable
+# workflow references are still written out literally in the workflow YAML --
+# tests/test_abicheck_pin.py fails if any of them drifts from this value, so
+# the literal duplication cannot silently diverge from the reviewed pin.
+#
+# Bumping the pin is not an edit to this file alone.  The flow is:
+#
+#     candidate upstream SHA
+#         -> canary certification (.github/workflows/canary.yml)
+#         -> integration-lab PR that moves `sha` here and every literal
+#            `uses:`/pip ref with it
+#         -> all scenarios + real accepted-main baseline comparison
+#         -> reviewed merge
+#
+# `candidate_sha` is the next SHA the canary is expected to certify.  It is
+# recorded here so the certification target is reviewed in the same place as
+# the pin it will replace; nothing installs it until it becomes `sha`.
+repository: abicheck/abicheck
+
+# Scanner used by the native project path (.abicheck.yml, project-shadow.yml,
+# project-baseline.yml, depth-scenarios.yml).
+sha: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+
+# Baseline-generation this pin's fact extraction corresponds to.  Bumping
+# `sha` across a fact/normalization/schema change must bump this too, which
+# re-namespaces every accepted-main cache key (see project-baseline.yml).
+generation: 1
+
+# Scanner still used by the older single-target scan/scenario suite.  These
+# workflows predate the native project contract and are migrating onto `sha`
+# one at a time; until then this pin is reviewed here rather than being an
+# unexplained literal in nine workflow files.
+legacy_sha: 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3
+
+# Next candidate for canary certification.  Not installed by anything.
+candidate_sha: b299afdc2277a3c9857c413058177c8f6472fcd0
+
+# Workflows that legitimately track a moving ref instead of a pin, because
+# their whole purpose is to find out what upstream main does before it is
+# pinned.  Anything not listed here must use a pin above.
+unpinned_by_design:
+  - .github/workflows/scenarios-canary.yml
+  - .github/workflows/canary.yml

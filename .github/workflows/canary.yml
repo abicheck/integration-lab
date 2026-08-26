@@ -630,7 +630,16 @@ jobs:
   # report even when every upstream job failed outright.
   classify:
     needs: [resolve_candidate, semantic_canary, action_contract_canary, build_integration_canary]
-    if: always()
+    # A cancelled upstream uploads no artifacts, so this always() job would
+    # run against nothing and go red on a routine supersession. `!= 'cancelled'`
+    # only steps aside for cancellation -- a genuine upstream FAILURE still
+    # reaches this job and still turns it red.
+    if: >-
+      always()
+      && needs.resolve_candidate.result != 'cancelled'
+      && needs.semantic_canary.result != 'cancelled'
+      && needs.action_contract_canary.result != 'cancelled'
+      && needs.build_integration_canary.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1

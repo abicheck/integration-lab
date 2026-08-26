@@ -115,6 +115,27 @@ class BazelBackend(BuildBackend):
             args.append(f"--repo_env=CXX={compiler['cxx']}")
         return args
 
+    def _bazel_command(self, subcommand: str, *args: str) -> list:
+        """Build a Bazel argv that always carries this profile's toolchain.
+
+        Every Bazel invocation involved in producing or describing this
+        profile's evidence -- build, cquery output-path resolution, cquery/
+        aquery target evidence -- has to run under the SAME configuration.
+        `--repo_env=CC/CXX` is part of the configuration key: a cquery
+        without it analyses a *different* configured target graph than the
+        one `build` produced, under whatever `cc`/`gcc` the runner defaults
+        to (gcc-13 on ubuntu-24.04). Even when the resolved output path
+        happens to coincide, the evidence receipt would then describe a
+        configuration nothing was actually built under.
+
+        Before this helper, `build()` passed the toolchain args and both
+        cquery call sites did not. Route every invocation through here so
+        adding a call site cannot reintroduce the split -- and so
+        tests/test_backends.py can assert no raw `bazel` argv is built
+        anywhere else.
+        """
+        return [self._bazel_executable(), subcommand, *self._toolchain_args(), *args]
+
     def build(self) -> BuildResult:
         started = time.time()
         labels = self._labels()
@@ -122,9 +143,7 @@ class BazelBackend(BuildBackend):
         build_log = ""
         success = True
         try:
-            proc = self._run(
-                [self._bazel_executable(), "build", *self._toolchain_args(), *labels.values()]
-            )
+            proc = self._run(self._bazel_command("build", *labels.values()))
             build_log = proc.stdout
         except BackendError as exc:
             build_log = str(exc)
@@ -160,7 +179,7 @@ class BazelBackend(BuildBackend):
 
     def _resolve_output_path(self, label: str) -> Path:
         proc = self._run(
-            [self._bazel_executable(), "cquery", "--output=files", label], check=False
+            self._bazel_command("cquery", "--output=files", label), check=False
         )
         for line in proc.stdout.splitlines():
             line = line.strip()
@@ -179,7 +198,14 @@ class BazelBackend(BuildBackend):
         # all 4 targets "resolved" and the coverage contract passed with
         # no real evidence behind it (Codex review, PR #20). Only labels
         # cquery actually printed a line for now count as resolved.
-        evidence: Dict[str, Any] = {"kind": "bazel-cquery", "targets": []}
+        evidence: Dict[str, Any] = {
+            "kind": "bazel-cquery",
+            "targets": [],
+            # The receipt has to say which configuration produced it, or a
+            # reader cannot tell an evidence pass that matched the build
+            # from one that silently ran under the runner default.
+            "toolchain_args": self._toolchain_args(),
+        }
         try:
             # `cquery` takes ONE query expression, not N positional target
             # args -- passing labels as separate argv entries (as this line
@@ -191,7 +217,7 @@ class BazelBackend(BuildBackend):
             # actually been collected here. Join with `+` (set union) for
             # one valid query expression.
             proc = self._run(
-                [self._bazel_executable(), "cquery", "--output=label_kind", " + ".join(labels)],
+                self._bazel_command("cquery", "--output=label_kind", " + ".join(labels)),
                 check=False,
             )
             evidence["label_kind"] = proc.stdout.strip()

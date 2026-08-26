@@ -1,0 +1,26 @@
+diff --git a/include/abicheck_lab/math.h b/include/abicheck_lab/math.h
+index 99c1fe4..282e04b 100644
+--- a/include/abicheck_lab/math.h
++++ b/include/abicheck_lab/math.h
+@@ -7,7 +7,7 @@ class Calculator {
+  public:
+   Calculator() = default;
+   int add(int left, int right) const;
+-  int multiply(int left, int right) const;
++  long multiply(long left, long right) const;
+ };
+ 
+ int api_version();
+diff --git a/src/math.cc b/src/math.cc
+index ed53075..8f688ca 100644
+--- a/src/math.cc
++++ b/src/math.cc
+@@ -7,7 +7,7 @@
+ namespace abicheck_lab {
+ 
+ int Calculator::add(int left, int right) const { return left + right; }
+-int Calculator::multiply(int left, int right) const { return left * right; }
++long Calculator::multiply(long left, long right) const { return left * right; }
+ int api_version() { return 1; }
+ 
+ }  // namespace abicheck_lab
