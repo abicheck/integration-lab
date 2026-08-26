@@ -82,11 +82,28 @@ expected_gaps:
   #      used: --lang c++ --compiler-option -std=c++17, plus the four
   #      determinism ops -D__DATE__/-D__TIMESTAMP__/-D__TIME__="redacted" and
   #      -U_FORTIFY_SOURCE.
-  #   4. include_sequence. NOT yet reproduced. The baseline carries three
-  #      entries -- two header roots (`include/` and the repo root) and an
-  #      EMPTY external include dir (sha256:e3b0c442... is the hash of the
-  #      empty string) -- against two here. The baseline's exact --include
-  #      set has to be recovered before this closes.
+  #   4. include_sequence. Now traced to its source, and it is the one that
+  #      does NOT close for this job. baseline.yml's "Collect source-aware
+  #      ABI baseline" step runs the upstream action with
+  #      `public-header-dir: include` AND `sources: .` -- the committed
+  #      baseline is a WHOLE-SOURCE-TREE extraction, which is where its
+  #      repo-root-keyed include entry comes from. The clean reuse job has no
+  #      source tree, by design; that absence is the entire premise of the
+  #      job. So this is not a flag oversight on either side but the job's
+  #      premise colliding with how the baseline is made, and no invocation
+  #      of the clean job can reproduce a `--sources .` include_sequence.
+  #
+  #      That splits the remedy in two, and the two jobs need different
+  #      things:
+  #        - l4_clang_plugin HAS a full checkout, so it can plausibly match
+  #          by mirroring the baseline's own invocation (castxml frontend,
+  #          --sources ., --header include) while still passing the plugin
+  #          pack. Worth trying there first: it is the cheaper of the two and
+  #          it is where the "verdict: null" report is actually produced.
+  #        - plugin_pack_reuse cannot, and genuinely needs a baseline
+  #          extracted the way IT dumps -- shipped in the bundle rather than
+  #          read from abi/. This is the same conclusion as before, but now
+  #          for a demonstrated reason rather than an assumed one.
   #   5. compiler_version. Environmental, and not decidable from here: the
   #      committed baseline was produced by castxml 0.7.0 bundling clang
   #      20.1.8 (conda-forge) with g++ 14.3.0, while action/install-castxml.sh
@@ -101,7 +118,9 @@ expected_gaps:
   # --header <hdr> --header <hdr-dir> --ast-frontend castxml --lang c++
   # --compiler-option -std=c++17 <determinism ops> --build-info
   # bundle/abicheck_inputs --depth source` and diff `contract.profile_fields`
-  # against the bundle's own baseline.
+  # against the bundle's own baseline. The baseline side of that diff is
+  # defined by baseline.yml's "Collect source-aware ABI baseline" step --
+  # read it before assuming any field is arbitrary.
   #
   # This is NOT specific to the clean job. The `abicheck-l4-clang-plugin`
   # report the l4 job itself uploaded in that run carries `"verdict": null`
