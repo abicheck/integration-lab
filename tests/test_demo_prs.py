@@ -236,3 +236,93 @@ def test_body_states_the_expected_verdict_and_gate_colour():
 def test_body_says_none_rather_than_omitting_the_required_section():
     demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "implementation-only")
     assert "must produce:** none" in gen.render_body(demo)
+
+
+# --- the branch invariant (Codex review) --------------------------------
+#
+# `--check` used to ask only whether a branch was behind the base, and
+# whether the patch still applied to the local working tree. Neither is the
+# invariant: a branch rebuilt on today's base but carrying an extra commit or
+# a hand-edited diff answers "0 behind" and reports healthy. These tests pin
+# the tree-equality check that replaced it, using throwaway git indexes so
+# nothing touches the working tree.
+
+
+def _tree_of(base_ref: str, *, patch: Path | None = None, extra: tuple[str, str] | None = None) -> str:
+    """Build `base_ref + patch (+ extra file)` and return its tree hash."""
+    import os
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+
+        def run(*args, **kw):
+            return subprocess.run(["git", *args], cwd=gen.REPO_ROOT, text=True,
+                                  capture_output=True, env=env, **kw)
+
+        run("read-tree", f"{base_ref}^{{tree}}")
+        if patch is not None:
+            run("apply", "--cached", str(patch))
+        if extra is not None:
+            name, content = extra
+            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"],
+                                  cwd=gen.REPO_ROOT, input=content, text=True,
+                                  capture_output=True).stdout.strip()
+            run("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
+        return run("write-tree").stdout.strip()
+
+
+def test_expected_tree_is_base_plus_patch():
+    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
+    assert gen.expected_tree(demo, "origin/main") == _tree_of(
+        "origin/main", patch=REPO_ROOT / demo["patch"]
+    )
+
+
+def test_expected_tree_differs_from_the_untouched_base():
+    """Guards against a patch that silently applies to nothing."""
+    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
+    assert gen.expected_tree(demo, "origin/main") != _tree_of("origin/main")
+
+
+def test_a_branch_with_an_extra_change_is_not_the_expected_tree():
+    """Codex's case: current base, patch applied, plus something else."""
+    demo = next(d for d in gen.load_manifest(MANIFEST) if d["id"] == "binary-abi-break")
+    drifted = _tree_of("origin/main", patch=REPO_ROOT / demo["patch"],
+                       extra=("EXTRA.txt", "an extra commit\n"))
+    assert drifted != gen.expected_tree(demo, "origin/main")
+
+
+def test_a_branch_carrying_a_different_patch_is_not_the_expected_tree():
+    demos = gen.load_manifest(MANIFEST)
+    mine = next(d for d in demos if d["id"] == "binary-abi-break")
+    theirs = next(d for d in demos if d["id"] == "compatible-addition")
+    assert gen.expected_tree(mine, "origin/main") != gen.expected_tree(theirs, "origin/main")
+
+
+def test_expected_tree_leaves_the_working_tree_and_index_alone():
+    import subprocess
+
+    before = subprocess.run(["git", "status", "--porcelain"], cwd=gen.REPO_ROOT,
+                            text=True, capture_output=True).stdout
+    for demo in gen.load_manifest(MANIFEST):
+        gen.expected_tree(demo, "origin/main")
+    after = subprocess.run(["git", "status", "--porcelain"], cwd=gen.REPO_ROOT,
+                           text=True, capture_output=True).stdout
+    assert before == after
+
+
+def test_check_reports_the_real_branches_as_drifted():
+    """All five are stale today; the check must say so rather than pass."""
+    problems = gen.check(gen.load_manifest(MANIFEST), "origin/main")
+    assert problems
+    for demo in gen.load_manifest(MANIFEST):
+        assert any(demo["id"] in p for p in problems), demo["id"]
+
+
+def test_check_distinguishes_behind_from_divergent():
+    """Two different problems deserve two different messages."""
+    problems = gen.check(gen.load_manifest(MANIFEST), "origin/main")
+    assert any("commit(s) behind" in p for p in problems)
+    assert any("is not origin/main +" in p for p in problems)

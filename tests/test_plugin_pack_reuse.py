@@ -211,7 +211,56 @@ def test_unversioned_pack_is_a_failure_not_a_skip(tmp_path):
     pack = _pack(tmp_path, manifest={"kind": "abicheck_inputs", "headers": ["a.h"]})
     with pytest.raises(reuse.ScenarioError) as exc:
         reuse.mutate_wrong_llvm_major(pack)
-    assert "records no plugin/LLVM version" in str(exc.value)
+    assert "no populated plugin/LLVM identity" in str(exc.value)
+
+
+def test_the_real_upstream_manifest_shape_is_reported_not_silently_passed(tmp_path):
+    """Codex review: the exact manifest merge_abicheck_facts.py emits.
+
+    It carries `abicheck_inputs_version` (the pack FORMAT version) and an
+    empty `version`, and no LLVM identity at all. A substring search on
+    "version" picked up the format key, so the case bumped a schema version
+    and any rejection proved schema validation rather than the LLVM binding
+    this assertion claims to test.
+    """
+    pack = _pack(tmp_path, manifest={
+        "abicheck_inputs_version": 1, "binary": "", "compile_db": "",
+        "created_by": "abicheck-integration-lab merge_abicheck_facts.py",
+        "exported_symbols": [], "headers": [], "kind": "abicheck_inputs",
+        "library": "", "source_facts": ["source_facts"], "version": "",
+    })
+    with pytest.raises(reuse.ScenarioError):
+        reuse.mutate_wrong_llvm_major(pack)
+    # And the format version must be left exactly as it was.
+    assert json.loads((pack / "manifest.json").read_text())["abicheck_inputs_version"] == 1
+
+
+def test_the_pack_format_version_is_never_what_gets_mutated(tmp_path):
+    pack = _pack(tmp_path, manifest={
+        "abicheck_inputs_version": 1, "version": "", "kind": "abicheck_inputs",
+        "plugin_llvm_version": "18", "headers": ["a.h"],
+    })
+    detail = reuse.mutate_wrong_llvm_major(pack)
+    manifest = json.loads((pack / "manifest.json").read_text())
+    assert manifest["abicheck_inputs_version"] == 1
+    assert manifest["version"] == ""
+    assert manifest["kind"] == "abicheck_inputs"
+    assert manifest["plugin_llvm_version"] != "18"
+    assert detail == "bumped LLVM/plugin version in plugin_llvm_version"
+
+
+def test_an_empty_producer_identity_does_not_count_as_mutated(tmp_path):
+    """An empty identity is no identity -- it cannot be made "wrong"."""
+    pack = _pack(tmp_path, manifest={"kind": "abicheck_inputs", "headers": ["a.h"],
+                                     "clang_version": "   "})
+    with pytest.raises(reuse.ScenarioError):
+        reuse.mutate_wrong_llvm_major(pack)
+
+
+@pytest.mark.parametrize("key", ["llvm_major", "clang_version", "compiler_id", "plugin_build"])
+def test_real_producer_identity_keys_are_found(tmp_path, key):
+    pack = _pack(tmp_path, manifest={"kind": "abicheck_inputs", "headers": ["a.h"], key: "18"})
+    assert key in reuse.mutate_wrong_llvm_major(pack)
 
 
 def test_empty_public_roots_empties_the_declared_header_list(tmp_path):
@@ -244,7 +293,7 @@ def test_a_harness_error_in_a_negative_case_fails_that_assertion(tmp_path, monke
     receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
     item = next(a for a in receipt["assertions"] if a["assertion"] == "rejects/wrong-llvm-major")
     assert not item["passed"]
-    assert "records no plugin/LLVM version" in item["errors"][0]
+    assert "no populated plugin/LLVM identity" in item["errors"][0]
 
 
 # --- negative cases actually run against a copy --------------------------

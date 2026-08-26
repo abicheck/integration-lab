@@ -33,8 +33,10 @@ why --push is separate.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +55,14 @@ class DemoError(RuntimeError):
     pass
 
 
-def git(*args: str, check: bool = True, capture: bool = True) -> str:
+def git(*args: str, check: bool = True, capture: bool = True,
+        env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=REPO_ROOT,
         text=True,
         capture_output=capture,
+        env=env,
     )
     if check and result.returncode != 0:
         raise DemoError(
@@ -148,8 +152,39 @@ def base_commit(base_ref: str) -> str:
     return git("rev-parse", base_ref).strip()
 
 
+def expected_tree(demo: dict[str, Any], base_ref: str) -> str:
+    """The tree a correctly generated branch would have: base + this patch.
+
+    Built in a throwaway index (`GIT_INDEX_FILE` + `git apply --cached`), so
+    it needs no checkout and touches neither the working tree nor the real
+    index -- `--check` has to be safe to run anywhere, including on a branch
+    someone is mid-edit on.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        git("read-tree", f"{base_ref}^{{tree}}", env=env)
+        git("apply", "--cached", str(REPO_ROOT / demo["patch"]), env=env)
+        return git("write-tree", env=env).strip()
+
+
 def check(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
-    """Report drift without touching anything."""
+    """Report drift without touching anything.
+
+    Codex review: this used to ask only whether the branch was behind the
+    base (`rev-list <head>..<base>`), and separately whether the patch still
+    applied to the local WORKING TREE. Neither question is the invariant. A
+    branch rebuilt on today's base but carrying extra commits, or the same
+    base with a hand-edited diff, answers "0 commits behind" and reports
+    healthy -- which is exactly the silently-drifted long-lived demo this
+    whole mechanism exists to make impossible. And checking the patch against
+    the working tree checks it against whatever branch happens to be checked
+    out, not against the base the branch would be regenerated from.
+
+    So the invariant is asserted directly: the branch's TREE must equal the
+    tree of base + its declared patch. That is content equality, so it is
+    indifferent to commit messages, authorship and history shape, and it
+    catches an extra commit, an edited patch and a stale base alike.
+    """
     problems: list[str] = []
     base = base_commit(base_ref)
     for demo in demos:
@@ -159,24 +194,32 @@ def check(demos: list[dict[str, Any]], base_ref: str) -> list[str]:
         if not head:
             problems.append(f"{demo['id']}: {branch} does not exist on origin")
             continue
+
+        # Reported separately from the tree mismatch below even though a
+        # stale branch usually implies one: "you are N commits behind" is a
+        # far more actionable message than "your tree hash differs".
         behind = git("rev-list", "--count", f"{head}..{base}").strip()
         if behind != "0":
             problems.append(
                 f"{demo['id']}: {branch} is {behind} commit(s) behind {base_ref} "
                 "-- regenerate it (--write, then --push)"
             )
-        # The patch applying cleanly to the CURRENT base is what makes
-        # regeneration possible at all; a patch that has rotted needs a human
-        # before any branch is rewritten.
-        patch = REPO_ROOT / demo["patch"]
-        applies = subprocess.run(
-            ["git", "apply", "--check", str(patch)],
-            cwd=REPO_ROOT, capture_output=True, text=True,
-        )
-        if applies.returncode != 0:
+
+        try:
+            want = expected_tree(demo, base_ref)
+        except DemoError as exc:
+            # A patch that no longer applies to the CURRENT base has rotted
+            # and needs a human before any branch is rewritten.
             problems.append(
-                f"{demo['id']}: {demo['patch']} no longer applies to the working tree: "
-                + (applies.stderr or "").strip()
+                f"{demo['id']}: {demo['patch']} no longer applies to {base_ref}: {exc}"
+            )
+            continue
+        got = git("rev-parse", f"{head}^{{tree}}").strip()
+        if got != want:
+            problems.append(
+                f"{demo['id']}: {branch} is not {base_ref} + {demo['patch']} "
+                f"(tree {got[:12]}, expected {want[:12]}) -- it carries extra or "
+                "different changes; regenerate it (--write, then --push)"
             )
     return problems
 

@@ -80,12 +80,28 @@ SOURCE_TREE_MARKERS: tuple[str, ...] = (
     "CMakeLists.txt",
 )
 
-#: Manifest keys that could carry the collecting plugin's LLVM major. The
+#: Manifest keys that could carry the COLLECTING PLUGIN'S LLVM identity. The
 #: real pack manifest is produced upstream, so this is a search rather than a
 #: fixed key -- and finding none is reported as a failure, not skipped: an
 #: unversioned pack is precisely the interchangeability hazard assertion 7 is
 #: about.
-VERSION_KEY_HINTS: tuple[str, ...] = ("llvm", "clang", "plugin", "version")
+#:
+#: Codex review: a bare "version" hint was wrong and made the assertion pass
+#: for the wrong reason. The pack manifest scripts/merge_abicheck_facts.py
+#: emits carries `abicheck_inputs_version` (the pack FORMAT version) and an
+#: empty `version`; the substring search picked up the former, so the case
+#: bumped a schema version and a rejection proved only that a malformed
+#: format version is rejected -- never that a pack from a different LLVM
+#: major is. The hints below name the producer's identity and nothing else,
+#: and PACK_SCHEMA_KEYS is excluded explicitly so a future
+#: `<something>_version` key cannot quietly re-open the same hole.
+VERSION_KEY_HINTS: tuple[str, ...] = ("llvm", "clang", "compiler", "plugin")
+
+#: Keys describing the pack's own FORMAT, never its producer. Mutating one of
+#: these tests schema validation, which is a different property.
+PACK_SCHEMA_KEYS: frozenset[str] = frozenset(
+    {"abicheck_inputs_version", "version", "kind"}
+)
 
 #: Manifest keys that could carry the declared public header roots.
 PUBLIC_ROOT_KEY_HINTS: tuple[str, ...] = ("headers", "public_headers", "public_roots")
@@ -264,21 +280,33 @@ def mutate_corrupt_pack(pack: Path) -> str:
 def mutate_wrong_llvm_major(pack: Path) -> str:
     manifest_path = _pack_manifest_path(pack)
     manifest = _load_manifest(pack)
-    keys = _matching_keys(manifest, VERSION_KEY_HINTS)
+    keys = [
+        key
+        for key in _matching_keys(manifest, VERSION_KEY_HINTS)
+        if key not in PACK_SCHEMA_KEYS
+    ]
     bumped = []
     for key in keys:
         value = manifest[key]
-        if isinstance(value, str) and value:
+        # An empty identity is no identity: a pack whose producer field is ""
+        # cannot be given the "wrong" LLVM major, so it must not count as a
+        # successful mutation.
+        if isinstance(value, str) and value.strip():
             manifest[key] = f"999{value}" if value[0].isdigit() else f"{value}-llvm999"
             bumped.append(key)
+        elif isinstance(value, bool):
+            continue
         elif isinstance(value, int):
             manifest[key] = value + 999
             bumped.append(key)
     if not bumped:
         # Not a skip. A pack carrying no producer identity at all cannot be
-        # rejected for carrying the wrong one, which is the hazard itself.
+        # rejected for carrying the wrong one, which is the hazard itself --
+        # and reporting a pass here would claim a compatibility binding that
+        # was never exercised.
         raise ScenarioError(
-            "pack manifest records no plugin/LLVM version to mutate; keys are "
+            "pack manifest records no populated plugin/LLVM identity to mutate "
+            "(the pack's own format version is not one); keys are "
             + ", ".join(sorted(manifest))
         )
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

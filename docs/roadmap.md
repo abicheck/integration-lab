@@ -204,7 +204,12 @@ need a field the pack itself must carry (a recorded plugin/LLVM version, a
 declared public-header root); a pack carrying neither is reported as a
 failure rather than skipped, because a pack with no producer identity cannot
 be rejected for having the wrong one — that is the interchangeability hazard
-itself. The job is non-gating for the same availability reason as
+itself. The producer-identity search deliberately excludes the pack's own
+format version (`abicheck_inputs_version`): mutating that tests schema
+validation, and a rejection would prove the wrong property while reading as a
+pass. The real upstream manifest carries no LLVM identity today, so this
+assertion is expected to report that as a gap with evidence rather than
+quietly claiming a compatibility binding nothing exercised. The job is non-gating for the same availability reason as
 `l4_clang_plugin` (the plugin is ABI-locked to the runner's LLVM major and
 may simply not build), but the harness fails closed and uploads its receipt
 either way.
