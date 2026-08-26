@@ -127,14 +127,56 @@ def test_demo_oracle_requires_the_head_repo_to_be_this_repository():
     assert script.index("HEAD_REPO") < script.index("demos/manifest.yaml")
 
 
-def test_a_cancelled_select_does_not_produce_a_red_equivalence_gate():
-    """`always()` alone ran cross_build_equivalence when `select` was
-    CANCELLED -- which is what happens to every superseded run -- and it then
-    failed with "select job produced no matrix". A routine supersession was
-    indistinguishable from a real cross-build disagreement.
+#: Every job that reads `select`'s matrix. A bare `always()` on any of these
+#: turns a CANCELLED select -- what happens to every superseded run when a new
+#: commit is pushed -- into "select job produced no matrix" and a red check,
+#: making a routine supersession indistinguishable from a real failure. Both
+#: were fixed together after fixing only one proved to be half a fix.
+MATRIX_CONSUMERS = ("cross_build_equivalence", "integration_gate")
+
+
+@pytest.mark.parametrize("job_id", MATRIX_CONSUMERS)
+def test_a_cancelled_select_does_not_produce_a_red_check(job_id: str):
+    document = yaml.safe_load(
+        (WORKFLOWS[0].parent / "integration-shadow.yml").read_text(encoding="utf-8")
+    )
+    condition = document["jobs"][job_id]["if"]
+    assert "needs.select.result != 'cancelled'" in condition, condition
+
+
+@pytest.mark.parametrize("job_id", MATRIX_CONSUMERS)
+def test_a_genuinely_failed_select_still_reports(job_id: str):
+    """`!= 'cancelled'`, not `== 'success'`.
+
+    Cancellation is not a result, so stepping aside for it loses nothing. A
+    genuinely failed select is different: a *skipped* required check can leave
+    a PR looking mergeable while select is broken, so these must still run and
+    go red on a real failure.
     """
     document = yaml.safe_load(
         (WORKFLOWS[0].parent / "integration-shadow.yml").read_text(encoding="utf-8")
     )
-    condition = document["jobs"]["cross_build_equivalence"]["if"]
-    assert "needs.select.result == 'success'" in condition, condition
+    condition = document["jobs"][job_id]["if"]
+    assert "== 'success'" not in condition, condition
+
+
+def test_every_job_reading_the_matrix_is_guarded():
+    """Catches a future job added with a bare always() and the same hole."""
+    document = yaml.safe_load(
+        (WORKFLOWS[0].parent / "integration-shadow.yml").read_text(encoding="utf-8")
+    )
+    unguarded = []
+    for job_id, job in document["jobs"].items():
+        if "select" not in (job.get("needs") or []):
+            continue
+        condition = str(job.get("if") or "")
+        # `build` guards by reading the matrix output directly, which is
+        # equally safe -- an empty matrix skips it.
+        if "needs.select.outputs.matrix" in condition:
+            continue
+        if "needs.select.result" not in condition:
+            unguarded.append(job_id)
+    assert not unguarded, (
+        "these jobs consume `select` but do not guard on its result, so a "
+        "cancelled select will fail them: " + ", ".join(sorted(unguarded))
+    )

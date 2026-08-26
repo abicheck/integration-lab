@@ -390,16 +390,12 @@ jobs:
   # intentionally aligned and stable."
   cross_build_equivalence:
     needs: [select, build]
-    # `always()` alone ran this job even when `select` was CANCELLED -- which
-    # is what happens to every superseded run when a new commit is pushed.
-    # With no matrix to read, the job then failed with "select job produced no
-    # matrix", and a routine supersession was indistinguishable from a real
-    # cross-build disagreement. That misread three times in one day.
-    #
-    # `select` failing is still reported -- by `select` itself going red. It
-    # does not need a second red job repeating it, and `build` already guards
-    # on the same thing (`needs.select.outputs.matrix != ''`).
-    if: always() && needs.select.result == 'success'
+    # See the identical guard on `integration_gate` for the full reasoning:
+    # a CANCELLED `select` (what happens to every superseded run) left this
+    # job with no matrix, and it failed with "select job produced no matrix"
+    # -- a routine supersession reading exactly like a real cross-build
+    # disagreement.
+    if: always() && needs.select.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -550,7 +546,20 @@ jobs:
   # and does fail for real, it just doesn't yet block a merge.
   integration_gate:
     needs: [select, build, cross_build_equivalence]
-    if: always()
+    # A CANCELLED `select` is what happens to every superseded run when a new
+    # commit is pushed. With no matrix to evaluate, a bare `always()` failed
+    # this gate with "select job produced no matrix -- cannot evaluate the
+    # integration gate", so a routine supersession was indistinguishable from
+    # a real gate failure. I misread that as real three times in one day,
+    # which is the actual cost of leaving it.
+    #
+    # `!= 'cancelled'` rather than `== 'success'` on purpose. Cancellation is
+    # not a result, so stepping aside for it loses nothing. A genuinely FAILED
+    # `select` is different: this gate is the summary check a reviewer reads,
+    # and a *skipped* required check can leave a PR looking mergeable while
+    # `select` is broken. On a real failure the gate stays red, and its "no
+    # matrix" message is then accurate rather than misleading.
+    if: always() && needs.select.result != 'cancelled'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
