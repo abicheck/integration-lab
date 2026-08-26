@@ -716,8 +716,13 @@ jobs:
         run: |
           set -euo pipefail
           # Bazel first: it is the full-coverage path and the reference the
-          # other two are compared against.
-          python3 scripts/run_scenario.py --build-system bazel --results-dir parity/bazel
+          # other two are compared against. --bazel-toolchain pins its
+          # producer to the same gcc-14 the CMake and Make legs pin, so this
+          # comparison varies the BUILD SYSTEM only. Without it the job would
+          # vary build system and compiler at once, and a compiler-specific
+          # ABI difference would read as a build-system parity failure.
+          python3 scripts/run_scenario.py --build-system bazel \
+            --bazel-toolchain gcc-14,g++-14 --results-dir parity/bazel
           python3 scripts/run_scenario.py --build-system cmake --results-dir parity/cmake
           python3 scripts/run_scenario.py --build-system make  --results-dir parity/make
 

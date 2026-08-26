@@ -64,8 +64,28 @@ def load_build_matrix(path):
     return data.get("build_systems", {})
 
 
-def run_bazel_build(*targets):
-    subprocess.run(["bazel", "build", *targets], check=True)
+def run_bazel_build(*targets, toolchain=None):
+    """Build Bazel fixture targets, optionally pinning the producer.
+
+    `toolchain` is a (cc, cxx) pair. Bazel's autoconfigured cc toolchain
+    reads CC/CXX from the repository rule's environment, so passing them as
+    --repo_env is what actually selects the compiler (the same mechanism
+    ci/backends/bazel.py uses).
+
+    Off by default, and deliberately so: scenarios.yml installs plain
+    `gcc g++`, not gcc-14, so pinning unconditionally would break the
+    existing full-coverage Bazel suite. It is switched on only where a
+    single producer is required -- the parity job, whose CMake and Make
+    legs already pin g++-14 explicitly. Without it that job varies the
+    build system AND the producer at once, so a compiler-specific ABI
+    difference would read as a build-system parity failure, or a green run
+    would be misreported as GCC 14 parity (Codex review, PR #30).
+    """
+    args = []
+    if toolchain is not None:
+        cc, cxx = toolchain
+        args += [f"--repo_env=CC={cc}", f"--repo_env=CXX={cxx}"]
+    subprocess.run(["bazel", "build", *args, *targets], check=True)
 
 
 def run_cmake_build(fixture_dir: Path, build_dir: Path) -> Path:
@@ -354,7 +374,8 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
     }
 
 
-def run_one(scenario, results_dir, build_system="bazel", build_matrix=None, scratch_dir=None):
+def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
+            scratch_dir=None, bazel_toolchain=None):
     """Build *scenario*'s fixture pair once (under *build_system*), then
     run every declared profile against it. Returns a list of per-profile
     results (length 1 for a single-oracle scenario, one per named profile
@@ -369,7 +390,9 @@ def run_one(scenario, results_dir, build_system="bazel", build_matrix=None, scra
         # new_output ARE this scenario's bazel build recipe -- every
         # scenario has always declared one, so there is no "no mapping"
         # case for bazel.
-        run_bazel_build(scenario["old_target"], scenario["new_target"])
+        run_bazel_build(
+            scenario["old_target"], scenario["new_target"], toolchain=bazel_toolchain
+        )
         old_lib = REPO_ROOT / scenario["old_output"]
         new_lib = REPO_ROOT / scenario["new_output"]
     elif build_system in _FIXTURE_DIR_BUILDERS:
@@ -420,6 +443,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--bazel-toolchain",
+        default=None,
+        metavar="CC,CXX",
+        help=(
+            "Pin the Bazel leg's producer compiler, e.g. --bazel-toolchain "
+            "gcc-14,g++-14. Required when comparing Bazel against the CMake/"
+            "Make legs, which pin g++-14 themselves: without it the "
+            "comparison varies build system and producer at once. Ignored "
+            "for --build-system cmake/make."
+        ),
+    )
+    parser.add_argument(
         "--build-matrix",
         default="scenarios/build-matrix.yaml",
         help="Path (repo-relative) to the non-bazel build-recipe mapping (ignored for --build-system bazel)",
@@ -433,6 +468,12 @@ def main():
         return 1
 
     build_matrix = load_build_matrix(REPO_ROOT / args.build_matrix) if args.build_system != "bazel" else {}
+    bazel_toolchain = None
+    if args.bazel_toolchain:
+        parts = [part.strip() for part in args.bazel_toolchain.split(",")]
+        if len(parts) != 2 or not all(parts):
+            parser.error("--bazel-toolchain expects CC,CXX (e.g. gcc-14,g++-14)")
+        bazel_toolchain = (parts[0], parts[1])
 
     if args.only:
         scenarios = [s for s in scenarios if s["name"] == args.only]
@@ -469,7 +510,9 @@ def main():
         # no build mapping for this scenario yet -- reported below as
         # skipped, never silently absent from the summary.
         profile_results = run_one(
-            scenario, results_dir, build_system=args.build_system, build_matrix=build_matrix, scratch_dir=scratch_dir
+            scenario, results_dir, build_system=args.build_system,
+            build_matrix=build_matrix, scratch_dir=scratch_dir,
+            bazel_toolchain=bazel_toolchain,
         )
         if profile_results is None:
             print(f"SKIP: no --build-system {args.build_system!r} build mapping declared for this scenario")

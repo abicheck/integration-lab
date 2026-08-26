@@ -165,3 +165,38 @@ def test_unmapped_scenario_is_skipped_not_substituted(tmp_path):
         {"name": "not_in_matrix"}, tmp_path,
         build_system="make", build_matrix={"make": {}}, scratch_dir=tmp_path,
     ) is None
+
+
+def test_bazel_build_is_unpinned_by_default(monkeypatch):
+    """scenarios.yml installs plain gcc/g++, so pinning must be opt-in."""
+    import run_scenario
+
+    calls = []
+    monkeypatch.setattr(run_scenario.subprocess, "run",
+                        lambda argv, **kw: calls.append(argv) or type("P", (), {"returncode": 0})())
+    run_scenario.run_bazel_build("//a", "//b")
+    assert calls[0] == ["bazel", "build", "//a", "//b"]
+
+
+def test_bazel_build_pins_the_producer_when_asked(monkeypatch):
+    import run_scenario
+
+    calls = []
+    monkeypatch.setattr(run_scenario.subprocess, "run",
+                        lambda argv, **kw: calls.append(argv) or type("P", (), {"returncode": 0})())
+    run_scenario.run_bazel_build("//a", toolchain=("gcc-14", "g++-14"))
+    assert "--repo_env=CC=gcc-14" in calls[0]
+    assert "--repo_env=CXX=g++-14" in calls[0]
+    # Flags must precede the targets.
+    assert calls[0].index("--repo_env=CC=gcc-14") < calls[0].index("//a")
+
+
+def test_parity_job_pins_the_bazel_leg():
+    """Otherwise the comparison varies build system AND producer at once."""
+    from pathlib import Path as _Path
+
+    workflow = (
+        _Path(__file__).resolve().parent.parent
+        / ".github" / "workflows" / "integration-shadow.yml"
+    ).read_text(encoding="utf-8")
+    assert "--bazel-toolchain gcc-14,g++-14" in workflow

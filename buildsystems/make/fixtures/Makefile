@@ -12,14 +12,19 @@
 # own OUTPUT_NAME, so run_scenario.py compares the same filename whichever
 # build system produced it.
 #
-# -Wl,-soname is load-bearing, not cosmetic. CMake sets SONAME for a SHARED
-# library by default and so does Bazel's cc_library; a bare `g++ -shared`
-# does not. Without it this recipe produced an artifact that differed from
-# the other two build systems' in a way ABICheck notices -- it reports
-# `soname_bump_recommended` on a breaking change only when there is a
-# SONAME to bump -- so three build systems each passed their own oracle
-# while disagreeing with each other. scripts/check_scenario_parity.py
-# caught exactly that on its first run; this is the fix.
+# Deliberately NO -Wl,-soname. The reference these fixtures are compared
+# against is the Bazel path, whose `cc_binary(linkshared = True)` emits no
+# SONAME -- so the oracle's expected_gating_symbols contains only API
+# symbols. CMake sets a SONAME for a SHARED library by default and a bare
+# `g++ -shared` does not, so an unadjusted pair of recipes gives all three
+# build systems a different artifact shape and ABICheck reports an extra
+# `soname_bump_recommended`/DT_SONAME finding on whichever ones have one.
+#
+# An earlier revision of this file added -Wl,-soname to match CMake. That
+# aligned Make with CMake and moved BOTH away from Bazel, turning a
+# two-way agreement into a three-way disagreement that only CI could see.
+# buildsystems/cmake/fixtures/CMakeLists.txt now suppresses its SONAME for
+# the same reason: all three recipes emit the reference shape.
 #
 # CXX is pinned by the caller (run_scenario.py passes CXX=g++-14), matching
 # ci/profiles.yaml's "no silent fallback to whatever gcc is on PATH"
@@ -43,8 +48,7 @@ all: $(OUT)
 $(OUT): $(SRC)
 	@test -f "$(SRC)" || { echo "FIXTURE_DIR=$(FIXTURE_DIR) has no lib.cc (expected the fixtures/<name>/{v1,v2} shape)" >&2; exit 1; }
 	@mkdir -p "$(BUILD_DIR)"
-	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -Wl,-soname,libimpl.so \
-	  -I"$(FIXTURE_DIR)" "$(SRC)" -o "$(OUT)"
+	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -I"$(FIXTURE_DIR)" "$(SRC)" -o "$(OUT)"
 
 clean:
 	rm -f "$(OUT)"

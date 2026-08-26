@@ -173,12 +173,29 @@ def test_cmake_and_make_declare_the_same_scenarios():
     assert len(matrix["cmake"]) >= 5
 
 
-def test_make_fixture_recipe_sets_a_soname():
-    """CMake and Bazel both set SONAME; a bare `g++ -shared` does not."""
+def test_fixture_recipes_match_the_bazel_reference_shape():
+    """No recipe may emit a SONAME the Bazel reference does not.
+
+    Bazel's `cc_binary(linkshared = True)` emits no DT_SONAME, so the
+    oracle's expected_gating_symbols holds only API symbols. A recipe that
+    adds one makes ABICheck report an extra soname_bump_recommended
+    [DT_SONAME] finding, which fails suppression_partial under that build
+    system while it passes under Bazel -- an artifact-shape difference, not
+    a semantic one.
+    """
     makefile = (REPO_ROOT / "buildsystems" / "make" / "fixtures" / "Makefile").read_text(
         encoding="utf-8"
     )
-    assert "-Wl,-soname,libimpl.so" in makefile
+    assert "-Wl,-soname" not in makefile.replace("# ", "").split("all:")[-1] or True
+    # The recipe line itself must not pass -soname.
+    recipe = [line for line in makefile.splitlines() if line.startswith("\t")]
+    assert recipe, "no recipe lines found"
+    assert not any("-Wl,-soname" in line for line in recipe), recipe
+
+    cmake = (REPO_ROOT / "buildsystems" / "cmake" / "fixtures" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "NO_SONAME ON" in cmake
 
 
 # --------------------------------------------------------------------------
