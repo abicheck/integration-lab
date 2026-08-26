@@ -359,7 +359,7 @@ def test_internal_wheel_tag_must_cover_the_filename_tag(tmp_path: Path):
          "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp312-cp312-linux_x86_64\n"},
     )
     errors = wheel.assert_wheel_identity(path, path, {})
-    assert any("does not cover the filename's own tag" in e for e in errors)
+    assert any("tags disagree" in e for e in errors), errors
 
 
 def test_matching_internal_tag_passes(tmp_path: Path):
@@ -371,15 +371,62 @@ def test_matching_internal_tag_passes(tmp_path: Path):
     assert wheel.assert_wheel_identity(path, path, {}) == []
 
 
-def test_compressed_tag_set_covering_the_filename_passes(tmp_path: Path):
-    """`cp311.cp312-abi3-linux_x86_64` legitimately covers cp311."""
+def test_compressed_tag_sets_match_when_they_expand_equally(tmp_path: Path):
+    """A compressed tag on both sides is fine when the sets are equal."""
     path = _make_wheel(
-        tmp_path, "p-1-cp311-abi3-linux_x86_64.whl",
+        tmp_path, "p-1-cp311.cp312-abi3-linux_x86_64.whl",
         {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
          "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp311.cp312-abi3-linux_x86_64\n"},
     )
+    assert not any("tags disagree" in e for e in wheel.assert_wheel_identity(path, path, {}))
+
+
+def test_a_conflicting_later_tag_is_not_ignored(tmp_path: Path):
+    """Regression guard: an early return accepted the first matching Tag and
+    never looked at the rest, so a wheel advertising two incompatible
+    targets passed (Codex review, second pass)."""
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\n"
+         "Tag: cp311-cp311-linux_x86_64\nTag: cp999-none-any\n"},
+    )
     errors = wheel.assert_wheel_identity(path, path, {})
-    assert not any("does not cover" in e for e in errors), errors
+    assert any("tags disagree" in e for e in errors), errors
+    assert any("cp999-none-any" in e for e in errors)
+
+
+def test_filename_wider_than_metadata_is_rejected(tmp_path: Path):
+    """The filename claiming a target the metadata does not is equally wrong."""
+    path = _make_wheel(
+        tmp_path, "p-1-cp311.cp312-abi3-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp311-abi3-linux_x86_64\n"},
+    )
+    assert any("tags disagree" in e for e in wheel.assert_wheel_identity(path, path, {}))
+
+
+def test_malformed_tag_is_rejected(tmp_path: Path):
+    path = _make_wheel(
+        tmp_path, "p-1-cp311-cp311-linux_x86_64.whl",
+        {EXT: b"\x7fELF", "p-1.dist-info/WHEEL":
+         "Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: only-twoparts\n"},
+    )
+    assert any("not a PEP 425 tag" in e for e in wheel.assert_wheel_identity(path, path, {}))
+
+
+@pytest.mark.parametrize(
+    "compressed,expected",
+    [
+        ("cp311-cp311-linux_x86_64", {"cp311-cp311-linux_x86_64"}),
+        ("cp311.cp312-abi3-linux_x86_64",
+         {"cp311-abi3-linux_x86_64", "cp312-abi3-linux_x86_64"}),
+        ("py2.py3-none-any", {"py2-none-any", "py3-none-any"}),
+        ("nonsense", set()),
+    ],
+)
+def test_tag_expansion(compressed, expected):
+    assert wheel.expand_tags(compressed) == expected
 
 
 def test_wheel_without_any_tag_is_rejected(tmp_path: Path):

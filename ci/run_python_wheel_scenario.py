@@ -37,7 +37,7 @@ import sys
 import sysconfig
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
@@ -94,37 +94,62 @@ def read_wheel_metadata(wheel: Path) -> Dict[str, Any]:
     }
 
 
+def expand_tags(compressed: str) -> Set[str]:
+    """Expand one PEP 425 compressed tag into its concrete tags.
+
+    `cp311.cp312-abi3-linux_x86_64.manylinux_2_17_x86_64` denotes the
+    cartesian product of the dot-separated components, which is how both a
+    wheel filename and a `.dist-info/WHEEL` Tag line may be written.
+    """
+    parts = compressed.split("-")
+    if len(parts) != 3:
+        return set()
+    pythons, abis, platforms = (part.split(".") for part in parts)
+    return {
+        f"{python}-{abi}-{platform}"
+        for python in pythons
+        for abi in abis
+        for platform in platforms
+    }
+
+
 def assert_internal_tags_match_filename(wheel: Path, meta: Dict[str, Any]) -> List[str]:
-    """The `.dist-info/WHEEL` Tag lines must agree with the filename.
+    """The `.dist-info/WHEEL` Tag lines must be exactly the filename's tags.
 
     Reading the tags and never checking them is not "identity read from both
     the filename and the packaged metadata", which is what this scenario
-    claims to do: a wheel whose filename says cp311 while its WHEEL metadata
-    says something else would have sailed through (Codex review, PR #30).
-    Installers consult the metadata, so a disagreement means the file that
-    gets installed is not the one the filename advertises.
+    claims to do (Codex review, PR #30).
+
+    Set EQUALITY, not "some tag matches". An earlier version returned as
+    soon as one Tag line covered the filename, so a wheel declaring both
+    `cp311-cp311-linux_x86_64` and a conflicting `cp999-none-any` passed
+    while advertising two incompatible targets (Codex review, second pass).
+    A well-formed wheel's filename tag set and its metadata tag set are the
+    same set, so anything present on one side and not the other is a real
+    inconsistency -- and installers resolve against the metadata, so the
+    file that gets installed would not be the one the filename advertises.
     """
     tags = meta.get("tags") or []
     if not tags:
         return [f"{wheel.name}: .dist-info/WHEEL declares no Tag"]
     name = parse_wheel_tags(wheel)
-    expected_tag = f"{name['python']}-{name['abi']}-{name['platform']}"
-    errors = []
+    from_filename = expand_tags(f"{name['python']}-{name['abi']}-{name['platform']}")
+    from_metadata: Set[str] = set()
     for tag in tags:
-        # A compressed tag set (`cp311.cp312-abi3-linux_x86_64`) expands to
-        # several concrete tags; the filename's must be among them.
-        pythons, _, rest = tag.partition("-")
-        abi, _, platform = rest.partition("-")
-        concrete = {
-            f"{one}-{abi}-{platform}" for one in pythons.split(".")
-        }
-        if expected_tag in concrete:
-            return []
-        errors.append(
-            f"{wheel.name}: .dist-info/WHEEL Tag {tag!r} does not cover the "
-            f"filename's own tag {expected_tag!r}"
-        )
-    return errors
+        expanded = expand_tags(tag)
+        if not expanded:
+            return [f"{wheel.name}: .dist-info/WHEEL Tag {tag!r} is not a PEP 425 tag"]
+        from_metadata |= expanded
+    if from_metadata == from_filename:
+        return []
+    only_metadata = sorted(from_metadata - from_filename)
+    only_filename = sorted(from_filename - from_metadata)
+    detail = []
+    if only_metadata:
+        detail.append(f"only in .dist-info/WHEEL: {only_metadata!r}")
+    if only_filename:
+        detail.append(f"only in the filename: {only_filename!r}")
+    return [f"{wheel.name}: wheel tags disagree -- " + "; ".join(detail)]
 
 
 def assert_wheel_identity(
