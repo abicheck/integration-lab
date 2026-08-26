@@ -584,3 +584,70 @@ def test_both_fields_affirmative_is_accepted():
     assert reuse.replay_reference_problems(
         {"analysis_assurance": {"depth_satisfied": True, "status": "complete"}}
     ) == []
+
+
+# --- the positive control gates the negatives (CI evidence) -------------
+
+
+def test_negative_cases_are_not_evaluated_when_the_positive_control_fails(tmp_path, monkeypatch):
+    """CI run 32954335654 is why this exists.
+
+    The positive compare failed with exit 16 ("not comparable:
+    scope_fingerprint mismatch"), and then all five runnable mutations
+    "rejected" with exit 16 too -- the SAME unrelated error. Five green
+    assertions, none of which showed a mutation had been detected.
+
+    A rejection only means something when the unmutated bundle is accepted.
+    """
+    root = _bundle(tmp_path / "bundle")
+    replay = tmp_path / "replay.json"
+    replay.write_text(json.dumps({
+        "verdict": "COMPATIBLE", "library": "libmath.so",
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                               "effective_depth": "source"},
+        "diff": {"findings": []},
+    }), encoding="utf-8")
+    # Every compare fails operationally, mutated or not -- exactly the CI shape.
+    monkeypatch.setattr(reuse, "run_compare", lambda **kw: reuse.Outcome(16, None, ["boom"]))
+    receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
+
+    control = next(a for a in receipt["assertions"]
+                   if a["assertion"] == "reuse-compare-proves-source-depth")
+    assert not control["passed"]
+    rejects = [a for a in receipt["assertions"] if a["assertion"].startswith("rejects/")]
+    assert len(rejects) == 6
+    for item in rejects:
+        assert not item["passed"], item["assertion"]
+        assert item.get("evaluated") is False
+        assert "not evaluated" in item["errors"][0]
+        assert "positive control" in item["errors"][0]
+
+
+def test_negative_cases_are_evaluated_when_the_positive_control_passes(tmp_path, monkeypatch):
+    """The gate must not disable the scenario outright."""
+    root = _bundle(tmp_path / "bundle")
+    replay = tmp_path / "replay.json"
+    replay.write_text(json.dumps({
+        "verdict": "NO_CHANGE", "library": "libmath.so",
+        "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                               "effective_depth": "source"},
+        "diff": {"findings": []},
+    }), encoding="utf-8")
+
+    clean = {"verdict": "NO_CHANGE", "library": "libmath.so", "changes": [],
+             "analysis_assurance": {"depth_satisfied": True, "status": "complete",
+                                    "effective_depth": "source"}}
+
+    def compare(**kwargs):
+        # The unmutated bundle is accepted; every mutation is rejected.
+        pristine = kwargs.get("pack") is not None and "bundle" in str(kwargs.get("header"))
+        return reuse.Outcome(0, clean, []) if pristine else reuse.Outcome(16, None, ["x"])
+
+    monkeypatch.setattr(reuse, "run_compare", compare)
+    receipt = reuse.run(root, replay, tmp_path / "work", tmp_path / "ws")
+    control = next(a for a in receipt["assertions"]
+                   if a["assertion"] == "reuse-compare-proves-source-depth")
+    assert control["passed"], control["errors"]
+    rejects = [a for a in receipt["assertions"] if a["assertion"].startswith("rejects/")]
+    assert all(a.get("evaluated") is not False for a in rejects)
+    assert any(a["passed"] for a in rejects), "mutations must still be assertable"

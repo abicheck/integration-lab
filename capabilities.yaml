@@ -345,7 +345,12 @@ capabilities:
     whose manifest records no LLVM or plugin identity -- declared as the
     plugin-pack-producer-identity expected gap. The receipt reports that assertion as
     failed on every run, so the job being non-gating never reads as the case having
-    passed.
+    passed. CI run 32954335654 further showed the reuse compare itself cannot run yet
+    (scope_fingerprint mismatch between the shipped baseline and the clean job''s dump)
+    and that the replay reference carries no analysis_assurance -- both declared as
+    expected gaps. With the positive control failing, the mutation cases are reported as
+    NOT EVALUATED rather than passed, because every one of them was rejected by that same
+    unrelated error.
 
     '
 - id: demonstration-scenario-oracle

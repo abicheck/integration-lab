@@ -69,6 +69,46 @@ expected_gaps:
     expected_failure:
       phase: producer-compiler
       reason: severities_not_yet_declared_from_a_real_run
+  # The clean-job reuse compare cannot run at all yet. CI run 32954335654
+  # reports exit 16: "'libmath.so' old='main' new='new' are not comparable:
+  # old and new snapshots do not cover the same declared surface
+  # (scope_fingerprint mismatch)". The bundle ships the committed
+  # abi/math.abicheck.json baseline, extracted under the scan job's scope
+  # contract, and the clean job re-dumps the shipped binary under a
+  # different one -- so the two snapshots are not comparable regardless of
+  # the pack.
+  #
+  # This is why the receipt matters. With the positive control failing,
+  # every mutation "rejected" with the SAME exit 16, so five assertions went
+  # green while proving nothing about whether any mutation was detected. The
+  # harness now treats the positive control as a precondition and reports
+  # those cases as not evaluated instead.
+  #
+  # Closing it means shipping a baseline snapshot extracted under the same
+  # scope contract the clean job dumps with -- either staging a snapshot the
+  # reuse job compares snapshot-to-snapshot, or passing the scan's scope
+  # flags through to the reuse compare.
+  - id: plugin-pack-reuse-scope-contract
+    status: expected_gap
+    upstream_issue: integration-lab#pack-reuse-scope-contract
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: baseline_and_reuse_dump_scope_fingerprints_differ
+
+  # The l4-clang-replay report carries no analysis_assurance block at all
+  # (CI run 32954335654), so it cannot serve as the reuse scenario's
+  # reference: agreeing with a report that proves no source-depth
+  # completeness is not evidence. The check is deliberately NOT relaxed back
+  # to accepting an absent block -- that was the hole an earlier revision
+  # had, and ci/validate_source_depth.py already treats a missing block as
+  # "source-depth satisfaction is unproven" everywhere else in this
+  # repository.
+  - id: replay-report-assurance-block
+    status: expected_gap
+    upstream_issue: abicheck#scan-report-analysis-assurance
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: replay_report_carries_no_analysis_assurance
   - id: plugin-pack-producer-identity
     status: expected_gap
     upstream_issue: integration-lab#pack-producer-identity

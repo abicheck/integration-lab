@@ -514,10 +514,12 @@ def run(bundle_root: Path, replay_report: Path, workdir: Path, workspace: Path) 
         pack=bundle.pack,
         out=reuse_report_path,
     )
+    positive_control_errors = list(reuse.depth_errors) + (
+        [] if reuse.exit_code in VERDICT_EXIT_CODES else [f"operational exit {reuse.exit_code}"]
+    )
     record(
         "reuse-compare-proves-source-depth",
-        list(reuse.depth_errors)
-        + ([] if reuse.exit_code in VERDICT_EXIT_CODES else [f"operational exit {reuse.exit_code}"]),
+        positive_control_errors,
         exit_code=reuse.exit_code,
     )
 
@@ -590,6 +592,31 @@ def run(bundle_root: Path, replay_report: Path, workdir: Path, workspace: Path) 
                 "harness_error": str(exc),
             }
         negatives.append(result)
+        # The positive control is a PRECONDITION on every negative case.
+        #
+        # CI evidence (run 32954335654) made this necessary and is the reason
+        # it exists. The positive compare failed with exit 16 -- the shipped
+        # baseline and the fresh dump were "not comparable (scope_fingerprint
+        # mismatch)" -- and then all five runnable mutations "rejected" with
+        # exit 16 too: the SAME unrelated error. Five green assertions, none
+        # of which showed the mutation had been detected at all.
+        #
+        # A rejection only means something when the unmutated bundle is
+        # accepted. Without that, this scenario is the very thing it was
+        # written to catch: a check that cannot fail, reading as evidence.
+        if positive_control_errors:
+            record(
+                f"rejects/{case_id}",
+                [
+                    "not evaluated: the positive control "
+                    "(reuse-compare-proves-source-depth) failed, so a rejection "
+                    "here is not evidence the mutation was detected -- the "
+                    "unmutated bundle is rejected too"
+                ],
+                rejection_channel=result.get("rejection_channel"),
+                evaluated=False,
+            )
+            continue
         record(
             f"rejects/{case_id}",
             []
