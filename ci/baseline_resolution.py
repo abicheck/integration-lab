@@ -76,11 +76,25 @@ REJECT_STALE_GENERATION = "stale-generation"
 # Two different extractions, silently selected by a cache's age.
 #
 # One generator identity for both sides is the invariant, so a baseline whose
-# generator is not this run's is rejected. Rejection here is cheap and safe:
-# it does not turn the gate red, it falls through to the rebuild path, which
-# regenerates with the current pin -- exactly the like-for-like comparison
-# that was wanted. An absent generator is rejected for the same reason; a
-# cache written before this field existed records an unknown extraction, and
+# generator is not this run's is rejected.
+#
+# CI evidence (run 32940533683) corrected the first version of this. I wrote
+# that "rejection here is cheap and safe: it falls through to the rebuild
+# path" -- true for the FIRST, --no-fail classify pass, and false for the
+# SECOND, fail-closed one, which runs AFTER the rebuild with nothing left to
+# fall through to. The upstream `actions/baseline` composite does not write
+# `generator_git_sha` into the manifest even though the workflow passes
+# `generator-git-sha`, so the fail-closed pass rejected a baseline the same
+# job had just built, and restore-baseline went red.
+#
+# So an ABSENT generator is only a hazard on a RESTORED baseline, where the
+# extraction really is of unknown provenance and the rebuild path is still
+# ahead. On a rebuilt one the generator is known by construction -- this run
+# handed its own pin to the action that produced it a few steps earlier --
+# and demanding that the manifest also say so tests the upstream manifest
+# format, not the comparability property. A recorded generator that DISAGREES
+# stays a rejection either way: that is a real inconsistency, not a missing
+# field. A
 # unknown is not "matching".
 REJECT_WRONG_GENERATOR = "wrong-generator"
 REJECT_UNKNOWN_GENERATOR = "unknown-generator"
@@ -268,11 +282,13 @@ def classify(
         return receipt
     if expected_generator is not None:
         recorded = receipt["manifest_generator_git_sha"]
-        if not recorded:
-            receipt["reason_selected"] = REJECT_UNKNOWN_GENERATOR
-            return receipt
-        if recorded != expected_generator:
+        if recorded and recorded != expected_generator:
             receipt["reason_selected"] = REJECT_WRONG_GENERATOR
+            return receipt
+        if not recorded and not rebuilt:
+            # Restored from cache with no recorded generator: unknown
+            # provenance, and the rebuild path is still ahead to fix it.
+            receipt["reason_selected"] = REJECT_UNKNOWN_GENERATOR
             return receipt
 
     if rebuilt:

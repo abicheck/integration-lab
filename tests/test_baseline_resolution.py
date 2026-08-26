@@ -380,17 +380,39 @@ def test_a_baseline_from_a_different_pin_is_rejected(tmp_path):
     assert receipt["expected_generator_git_sha"] == PIN
 
 
-def test_a_baseline_with_no_recorded_generator_is_rejected(tmp_path):
+def test_a_restored_baseline_with_no_recorded_generator_is_rejected(tmp_path):
     """Unknown is not "matching" -- a cache written before this field existed
-    records an unknown extraction, and that is the hazard itself."""
+    records an unknown extraction, and the rebuild path is still ahead."""
     receipt = _classify_with(tmp_path, recorded=None, expected=PIN)
     assert not receipt["usable"]
     assert receipt["reason_selected"] == br.REJECT_UNKNOWN_GENERATOR
 
 
-def test_an_empty_recorded_generator_is_rejected(tmp_path):
+def test_an_empty_recorded_generator_is_rejected_when_restored(tmp_path):
     receipt = _classify_with(tmp_path, recorded="", expected=PIN)
     assert receipt["reason_selected"] == br.REJECT_UNKNOWN_GENERATOR
+
+
+def test_a_rebuilt_baseline_with_no_recorded_generator_is_accepted(tmp_path):
+    """CI evidence (run 32940533683) corrected this.
+
+    The upstream actions/baseline composite does not write generator_git_sha
+    into the manifest even though the workflow passes generator-git-sha, so
+    demanding it rejected a baseline the same job had just built -- and the
+    SECOND, fail-closed classify pass runs after the rebuild with nothing
+    left to fall through to, so restore-baseline went red.
+
+    A rebuilt baseline's generator is known by construction: this run handed
+    its own pin to the action that produced it a few steps earlier. Requiring
+    the manifest to also say so tests the upstream manifest format, not the
+    comparability property.
+    """
+    receipt = _classify_with(tmp_path, recorded=None, expected=PIN, rebuilt=True)
+    assert receipt["usable"], receipt["reason_selected"]
+    assert receipt["reason_selected"] == br.REASON_REBUILT
+    # Still recorded, so the absent upstream field stays visible in evidence.
+    assert receipt["manifest_generator_git_sha"] is None
+    assert receipt["expected_generator_git_sha"] == PIN
 
 
 def test_the_generator_check_is_skipped_when_no_expectation_is_given(tmp_path):
@@ -401,9 +423,10 @@ def test_the_generator_check_is_skipped_when_no_expectation_is_given(tmp_path):
     assert receipt["expected_generator_git_sha"] is None
 
 
-def test_a_rebuilt_baseline_is_still_generator_checked(tmp_path):
-    """The rebuild path supplies the pin, so a mismatch there is a real bug
-    rather than a stale cache -- it must not be waved through."""
+def test_a_rebuilt_baseline_with_a_DISAGREEING_generator_is_still_rejected(tmp_path):
+    """A missing field and a contradictory one are different things: the
+    rebuild path supplies the pin, so a recorded generator that disagrees is a
+    real inconsistency and must not be waved through."""
     receipt = _classify_with(tmp_path, recorded=OLD_PIN, expected=PIN, rebuilt=True)
     assert not receipt["usable"]
     assert receipt["reason_selected"] == br.REJECT_WRONG_GENERATOR

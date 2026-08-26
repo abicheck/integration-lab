@@ -220,6 +220,17 @@ quietly claiming a compatibility binding nothing exercised. The job is non-gatin
 may simply not build), but the harness fails closed and uploads its receipt
 either way.
 
+**Baseline generator identity.** The accepted-main comparison now records
+`generator_git_sha` on both sides so a pin bump cannot make the result depend
+on whether a cache happened to survive. The check applies to *restored*
+baselines only: the upstream `actions/baseline` composite does not write that
+field into the manifest even though the workflow passes `generator-git-sha`,
+so requiring it on a *rebuilt* baseline rejected one the same job had just
+produced (CI run 32940533683). A rebuilt baseline's generator is known by
+construction. A recorded generator that *disagrees* is still rejected either
+way — a missing field and a contradictory one are different things. The
+absent upstream field stays visible in every receipt.
+
 **Item 14 — generated demonstration PRs.** Tooling done; the force-push is
 an operator step. The five `test/*` branches were all 181 commits behind
 main, so their reports were dominated by evidence-comparability problems
