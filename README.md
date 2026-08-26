@@ -299,6 +299,7 @@ _No `gap`/`planned` entries are currently declared in `capabilities.yaml`._
 
 Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expected to fall short, with the upstream issue and the phase they fall short in, rather than being reported as covered:
 
+- **plugin-pack-producer-identity** (`expected_gap`): falls short at `plugin-pack-reuse` -- `pack_manifest_records_no_producer_identity` (upstream: `integration-lab#pack-producer-identity`)
 - **producer-attribution-through-project-path** (`expected_gap`): falls short at `check-project` -- `clang_profile_not_a_contract_profile` (upstream: `abicheck#per-profile-cell-attribution`)
 - **same-binary-clang-client-only-break** (`expected_gap`): falls short at `check-project` -- `consumer_compile_not_applied` (upstream: `abicheck#consumer-compile-execution`)
 - **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)

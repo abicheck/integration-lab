@@ -35,6 +35,27 @@ expected_gaps:
   # right profile is the native project path's job, and exercising it needs
   # the Clang profile to be a contract profile with its own accepted-main
   # baseline. Declared here rather than implied by the scenario's name.
+  # The plugin-pack reuse scenario's `wrong-llvm-major` assertion cannot pass
+  # against the pack the lab actually produces: the manifest
+  # scripts/merge_abicheck_facts.py writes carries `abicheck_inputs_version`
+  # (the pack FORMAT version) and an empty `version`, and no LLVM or plugin
+  # identity at all. The harness deliberately RAISES on that shape rather than
+  # skipping, because a pack with no producer identity cannot be rejected for
+  # carrying the wrong one -- which is the interchangeability hazard itself.
+  #
+  # Declared here rather than left implicit in a permanently failing
+  # assertion. Closing it means having the pack record the LLVM major it was
+  # collected with; the aspect in tools/abicheck/facts.bzl knows the compiler
+  # it ran, so this is the lab's own to fix, not upstream's. Not done here
+  # because inventing the field without running the real plugin build would be
+  # asserting a binding nothing verified -- the exact failure this assertion
+  # exists to catch.
+  - id: plugin-pack-producer-identity
+    status: expected_gap
+    upstream_issue: integration-lab#pack-producer-identity
+    expected_failure:
+      phase: plugin-pack-reuse
+      reason: pack_manifest_records_no_producer_identity
   - id: producer-attribution-through-project-path
     status: expected_gap
     upstream_issue: abicheck#per-profile-cell-attribution

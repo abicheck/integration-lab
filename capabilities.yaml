@@ -340,7 +340,12 @@ capabilities:
     JSONL) that must each fail closed. Non-gating for the same availability reason as
     l4_clang_plugin -- the plugin may not build on a given runner image -- but the harness
     itself fails closed and the uploaded receipt records which channel each rejection came
-    through, so an upstream loosening stays visible.
+    through, so an upstream loosening stays visible. NOT yet full coverage: the
+    wrong-llvm-major assertion cannot pass against the pack the lab currently produces,
+    whose manifest records no LLVM or plugin identity -- declared as the
+    plugin-pack-producer-identity expected gap. The receipt reports that assertion as
+    failed on every run, so the job being non-gating never reads as the case having
+    passed.
 
     '
 - id: demonstration-scenario-oracle

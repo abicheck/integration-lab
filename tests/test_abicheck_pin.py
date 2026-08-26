@@ -57,8 +57,22 @@ def _workflows() -> list[Path]:
     return sorted(WORKFLOW_DIR.glob("*.yml"))
 
 
+#: `git fetch --depth 1 origin <sha>` against the abicheck remote. The
+#: l4_clang_plugin job fetches contrib/abicheck-clang-plugin this way, BUILDS
+#: it, and loads the result into the scan -- so an unreviewed revision here
+#: executes code on the runner exactly as a tampered installer URL would.
+#:
+#: Third hole of this class in the same guard, after the root `uses:` form and
+#: the raw installer URLs, and it failed identically each time: another form
+#: in the SAME file carried a valid pin, so the file looked clean while this
+#: ref went unread. Demonstrated before fixing -- changing only the fetch SHA
+#: left _refs() reporting nothing but the legacy pin.
+GIT_FETCH_REF_RE = re.compile(
+    r"git\s+fetch[^\n]*?\borigin\s+(?P<ref>[0-9a-fA-F]{7,40})\b"
+)
+
 #: Every way this repository names an ABICheck revision that then executes.
-_REF_PATTERNS = (PIP_REF_RE, USES_REF_RE, RAW_URL_REF_RE)
+_REF_PATTERNS = (PIP_REF_RE, USES_REF_RE, RAW_URL_REF_RE, GIT_FETCH_REF_RE)
 
 
 def _refs(text: str) -> set[str]:
@@ -232,3 +246,36 @@ def test_every_installer_url_resolves_to_a_reviewed_pin(pin: dict) -> None:
                 f"{match.group('ref')}, which is not a reviewed pin"
             )
     assert seen, "no installer URLs found at all; retarget this test"
+
+
+# --- the executable git-fetch form (Codex review) -----------------------
+
+
+def test_the_git_fetch_form_is_matched() -> None:
+    line = "git fetch --depth 1 origin 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+    assert _refs(line) == {"6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"}
+
+
+def test_a_tampered_fetch_sha_is_visible_even_beside_a_valid_pin() -> None:
+    """The failure mode: another form in the same file made the file look
+    clean while this ref went unread."""
+    workflow = (WORKFLOW_DIR / "abi-scan.yml").read_text(encoding="utf-8")
+    tampered = workflow.replace(
+        "git fetch --depth 1 origin 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3",
+        "git fetch --depth 1 origin " + "dead" * 10,
+    )
+    assert tampered != workflow, "the fetch line this test targets has moved"
+    assert "dead" * 10 in _refs(tampered)
+
+
+def test_every_git_fetch_of_abicheck_resolves_to_a_reviewed_pin(pin: dict) -> None:
+    """Counted explicitly, so a file whose pip spec shares the SHA cannot hide
+    a tampered fetch."""
+    reviewed = {pin["sha"], pin.get("legacy_sha"), pin.get("candidate_sha")} - {None}
+    checked = 0
+    for workflow in _workflows():
+        text = workflow.read_text(encoding="utf-8")
+        for match in GIT_FETCH_REF_RE.finditer(text):
+            checked += 1
+            assert match.group("ref") in reviewed, f"{workflow.name}: {match.group('ref')}"
+    assert checked >= 1, "no git-fetch pin was actually checked"
