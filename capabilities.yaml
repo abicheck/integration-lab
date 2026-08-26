@@ -515,7 +515,7 @@ capabilities:
   dimensions:
     evidence_depth: n/a
     header_frontend: n/a
-    toolchain: gcc14-cxx17
+    toolchain: n/a
     scope: run_plan_semantics
     target_shape: n/a
   note: Asserts the generated run plan realizes the declared topology exactly (cells, required,

@@ -23,8 +23,17 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # `abicheck @ git+https://github.com/abicheck/abicheck.git@<ref>`
 PIP_REF_RE = re.compile(r"abicheck\.git@(?P<ref>[^\"'\s)]+)")
-# `uses: abicheck/abicheck/.github/workflows/<name>.yml@<ref>`
-USES_REF_RE = re.compile(r"abicheck/abicheck/[^\s@\"']+@(?P<ref>[0-9a-zA-Z._-]+)")
+# Both `uses:` forms into abicheck/abicheck:
+#   the reusable workflow  `abicheck/abicheck/.github/workflows/x.yml@<ref>`
+#   the root composite action `abicheck/abicheck@<ref>`
+# The path segment must be OPTIONAL. Requiring a slash after the repo name
+# (as this pattern first did) silently skipped all 11 root-action refs in
+# abi-scan.yml and baseline.yml, so one of them could drift to an
+# uncertified SHA with this guard still green -- defeating the whole point
+# of centralizing the pin (Codex review, PR #30).
+USES_REF_RE = re.compile(
+    r"abicheck/abicheck(?:/[^\s@\"']+)?@(?P<ref>[0-9a-zA-Z._-]+)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -126,3 +135,31 @@ def test_baseline_generation_matches_the_pin(pin: dict) -> None:
     assert f"-g{generation}-" in shadow, (
         f"project-shadow.yml does not namespace its cache keys with -g{generation}-"
     )
+
+
+def test_root_composite_action_refs_are_matched() -> None:
+    """Regression guard for the hole Codex found in the first version.
+
+    `uses: abicheck/abicheck@<sha>` (the root composite action, used 11
+    times across abi-scan.yml and baseline.yml) was not matched, so one of
+    those could have drifted to an uncertified SHA with every test here
+    still passing.
+    """
+    root = _refs("        uses: abicheck/abicheck@" + "a" * 40 + "\n")
+    assert root == {"a" * 40}
+    nested = _refs(
+        "    uses: abicheck/abicheck/.github/workflows/check-project.yml@" + "b" * 40
+    )
+    assert nested == {"b" * 40}
+
+
+def test_every_root_action_ref_in_the_repo_is_seen_by_the_guard() -> None:
+    """Count what the guard sees against what a plain grep finds."""
+    import re as _re
+
+    for name in ("abi-scan.yml", "baseline.yml"):
+        text = (WORKFLOW_DIR / name).read_text(encoding="utf-8")
+        literal = len(_re.findall(r"uses: abicheck/abicheck@", text))
+        assert literal, f"{name} has no root action refs to guard"
+        # Every literal occurrence must resolve to a ref the guard collected.
+        assert _refs(text), f"{name}: guard collected no refs at all"

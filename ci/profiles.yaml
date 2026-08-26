@@ -99,6 +99,12 @@ profiles:
 
   - id: linux-x86_64-gcc14-cxx17-cmake-ninja
     backend: cmake
+    # Which CMakePresets.json preset this profile builds through. Read by
+    # ci/backends/cmake.py, which also reads the preset's own binaryDir --
+    # the preset used to be hard-coded in the backend, so a second cmake
+    # profile would have built with this one's compiler while reporting its
+    # own (Codex review, PR #30).
+    cmake_preset: gcc14-cxx17
     # Promoted to a native project contract after standardized build output,
     # exact GCC binding, and baseline-backed check-project coverage landed.
     contract: true
@@ -154,6 +160,7 @@ profiles:
 
   - id: linux-x86_64-clang18-cxx17-cmake-ninja
     backend: cmake
+    cmake_preset: clang18-cxx17
     # NOT a contract profile, and deliberately not in ci/event-policy.yaml
     # yet. A profile only earns `contract: true` once it has a committed
     # per-profile baseline under abi/profiles/<id>/ for check_profile.py to

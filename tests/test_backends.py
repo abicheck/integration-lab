@@ -403,3 +403,69 @@ def test_no_bazel_argv_is_assembled_outside_the_helper():
             or "exe = self._bazel_executable()" in line
             or "return [self._bazel_executable(), subcommand" in line
         ), f"raw bazel argv assembled outside _bazel_command(): {line.strip()}"
+
+
+# --------------------------------------------------------------------------
+# CMake preset must come from the profile, never a hard-coded default
+# --------------------------------------------------------------------------
+
+
+def _cmake_backend(profile_overrides=None):
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "ci"))
+    from cmake import CMakeBackend
+    from select_profiles import load_profiles
+
+    repo_root = _Path(__file__).resolve().parent.parent
+    profiles = load_profiles(repo_root / "ci" / "profiles.yaml")
+    profile = dict(profiles["linux-x86_64-gcc14-cxx17-cmake-ninja"])
+    profile.update(profile_overrides or {})
+    return CMakeBackend(profile, repo_root)
+
+
+def test_each_cmake_profile_resolves_its_own_preset_and_build_dir():
+    """A hard-coded preset builds a Clang profile with GCC and mislabels it."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "ci"))
+    from cmake import CMakeBackend
+    from select_profiles import load_profiles
+
+    repo_root = _Path(__file__).resolve().parent.parent
+    profiles = load_profiles(repo_root / "ci" / "profiles.yaml")
+    resolved = {}
+    for profile_id, profile in profiles.items():
+        if profile.get("backend") != "cmake":
+            continue
+        backend = CMakeBackend(profile, repo_root)
+        resolved[profile_id] = (backend._preset, backend._build_dir)
+    assert len(resolved) >= 2, "expected more than one cmake profile"
+    presets = [preset for preset, _ in resolved.values()]
+    build_dirs = [str(path) for _, path in resolved.values()]
+    # Two profiles sharing a preset would build with one compiler; two
+    # sharing a binaryDir would collect each other's objects.
+    assert len(set(presets)) == len(presets), resolved
+    assert len(set(build_dirs)) == len(build_dirs), resolved
+
+
+def test_profile_without_a_preset_fails_closed():
+    backend = _cmake_backend()
+    del backend.profile["cmake_preset"]
+    with pytest.raises(BackendError, match="declares no cmake_preset"):
+        _ = backend._build_dir
+
+
+def test_unknown_preset_fails_closed():
+    backend = _cmake_backend({"cmake_preset": "does-not-exist"})
+    with pytest.raises(BackendError, match="no configure preset named"):
+        _ = backend._build_dir
+
+
+def test_build_dir_comes_from_the_presets_file():
+    """Read, not assumed, so preset and output directory cannot diverge."""
+    backend = _cmake_backend({"cmake_preset": "clang18-cxx17"})
+    assert backend._build_dir.name == "build-clang18"
+    assert _cmake_backend()._build_dir.name == "build"
