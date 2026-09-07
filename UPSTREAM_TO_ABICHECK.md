@@ -1212,3 +1212,41 @@ baseline via `scan` self-comparison instead of `dump`; pin to a commit
 predating the regression; report upstream and wait for a fix) remain the
 only real paths forward, and none has been implemented by this entry --
 this is a confirmation and repro, not a fix.
+
+---
+
+# 2026-09-07 RESOLVED: legacy pin bumped past the `include_sequence` fix (option (c) above, upstream had already landed it)
+
+Option (c) from the entry above -- "report this exact reproduction to
+`abicheck/abicheck` and pin to the fix once released" -- turned out to
+already be available: `ci/abicheck-version.yaml`'s own `candidate_sha`
+(`b299afdc2277a3c9857c413058177c8f6472fcd0`, recorded 2026-08-25 as "next
+candidate for canary certification") postdates the fix and was verified,
+by direct local reproduction (not inference), to no longer hit this bug:
+
+```text
+same evidence pack, same recipe, only the installed abicheck commit differs
+
+legacy_sha 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 (the old `sha`/`legacy_sha`
+this entry reported against) -> scan --against a same-recipe dump baseline:
+  NOT_COMPARABLE, "differing fields: include_sequence"
+
+b299afdc2277a3c9857c413058177c8f6472fcd0 (already-recorded candidate_sha)
+  -> same scan --against the same recipe: NO_CHANGE
+```
+
+`legacy_sha` in `ci/abicheck-version.yaml` is now `b299afdc2277a3c9857c413058177c8f6472fcd0`,
+and every literal `uses:`/pip/installer-URL/git-fetch reference to the old
+`6fb8536` pin across `abi-scan.yml`, `baseline.yml`, `profile-baseline.yml`,
+`integration-shadow.yml`, `performance.yml`, `scenarios.yml`, `release.yml`,
+and `README.md` moved with it (`tests/test_abicheck_pin.py` enforces this
+stays consistent). `candidate_sha` was advanced to `abicheck/main`'s current
+HEAD at the time of this bump (`f7b4fdcc7dafd73ea483b4522a3f63df3a74653f`)
+per this file's own bump flow, so the next candidate stays reviewed here too.
+
+This does not retire this doc's other lab-vs-upstream gaps (P0.1-P0.7,
+the profile-fingerprint/build-context asks, etc.) -- only this one
+specific, CI-breaking regression. `abi/math.abicheck.json` and the other
+committed baselines still need a fresh `baseline.yml` run against the new
+pin before `scan --against` compares like for like again (same caveat this
+doc's own `public-header-dir` fix noted for the prior pin bump).

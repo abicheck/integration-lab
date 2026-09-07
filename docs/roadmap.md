@@ -71,10 +71,14 @@ account of what is implemented today.
    (`scripts/classify_canary_outcome.py`). What's still open: the
    classification is one signal per job, not per step (a real, documented
    scoping limitation, not a finer breakdown this PR claims), and it never
-   runs the real scanner's `--against`-a-committed-baseline path at all
-   (see `UPSTREAM_TO_ABICHECK.md`'s own P0 entry for why) -- only
-   self-comparisons, so it cannot yet catch a regression that only shows
-   up when comparing against a *different*, real baseline.
+   runs the real scanner's `--against`-a-committed-baseline path at all --
+   only self-comparisons, so it cannot yet catch a regression that only
+   shows up when comparing against a *different*, real baseline. (The
+   `include_sequence`/`scan`-vs-`dump` fingerprint bug that made this path
+   deterministically `NOT_COMPARABLE` at the old `legacy_sha` pin is fixed
+   as of the 2026-09-07 pin bump — see `UPSTREAM_TO_ABICHECK.md`'s
+   "RESOLVED" entry — but canary still doesn't exercise `--against` at
+   all, so it wouldn't have caught the regression either way.)
 7. **Expand toolchain and platform profiles based on real integration
    needs.** Additional `(compiler × standard × platform)` combinations, or
    additional build systems, added when a real integration need

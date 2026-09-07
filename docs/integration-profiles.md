@@ -280,11 +280,17 @@ Every layer's actual ABI assertion is `abicheck compare` (a self-comparison:
 an unchanged library+header against itself, or a fresh dump against the
 build it was dumped from) — deliberately never `abicheck scan --against
 <a dump-mode baseline>`. See `UPSTREAM_TO_ABICHECK.md`'s own P0 entry: that
-exact combination is a confirmed, deterministic upstream bug (a
+exact combination was a confirmed, deterministic upstream bug (a
 comparability-field divergence between `scan` mode's and `dump` mode's own
-candidate construction) that reports `NOT_COMPARABLE` for byte-identical
-inputs, independent of which commit is pinned — a canary built on that
-pattern would misreport every candidate as broken, forever.
+candidate construction) that reported `NOT_COMPARABLE` for byte-identical
+inputs at the pin in effect when that entry was written — a canary built on
+that pattern at the time would have misreported every candidate as broken.
+The bug is fixed as of the 2026-09-07 `legacy_sha` pin bump (see that
+doc's "RESOLVED" follow-up), but `canary.yml` still deliberately avoids a
+real `--against`-a-committed-baseline path: each layer's candidate SHA is
+still unreviewed at the point it runs, so a self-comparison keeps the
+canary from depending on whichever candidate-vs-baseline behavior is
+current, rather than because the path is known-broken.
 
 `classify`, the final fan-in job, turns every layer's own job `result`
 into exactly one of five outcomes (`scripts/classify_canary_outcome.py`,

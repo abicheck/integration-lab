@@ -34,10 +34,23 @@ generation: 1
 # workflows predate the native project contract and are migrating onto `sha`
 # one at a time; until then this pin is reviewed here rather than being an
 # unexplained literal in nine workflow files.
-legacy_sha: 6fb85361cf4cea67a2f444bc097cfe24cd2d99c3
+#
+# 2026-09-07 P0 bump (see UPSTREAM_TO_ABICHECK.md's "abicheck scan --against
+# reports NOT_COMPARABLE against every abicheck dump baseline" entry): the
+# prior legacy_sha (6fb8536) makes the legacy suite's required `scan
+# --against <dump baseline>` gate structurally unable to pass -- a
+# byte-identical evidence pack dumped then scanned against itself still
+# reports profile_fingerprint mismatch on `include_sequence`. Verified fixed
+# by direct local repro (g++-built library + hand-written
+# compile_commands.json, `--ast-frontend clang`, --against a same-recipe
+# dump): 6fb8536 -> NOT_COMPARABLE, b299afdc (this bump) -> NO_CHANGE. This
+# was already recorded as `candidate_sha` below, so promoting it here is the
+# certification step this file's own bump flow describes, done by direct
+# reproduction rather than a canary run.
+legacy_sha: b299afdc2277a3c9857c413058177c8f6472fcd0
 
 # Next candidate for canary certification.  Not installed by anything.
-candidate_sha: b299afdc2277a3c9857c413058177c8f6472fcd0
+candidate_sha: f7b4fdcc7dafd73ea483b4522a3f63df3a74653f
 
 # Workflows that legitimately track a moving ref instead of a pin, because
 # their whole purpose is to find out what upstream main does before it is
