@@ -308,6 +308,14 @@ def _fixture_dir_builder(build_system: str):
 
 
 def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None):
+    """Run one `abicheck compare` invocation for *scenario* under *profile*
+    (an `--ast-frontend` value, or `None` for the profile-less default),
+    assert its report against *expected*, and return the parsed report.
+
+    *new_header_override*, when given, replaces the manifest's own
+    `new_header` path -- see `_resolve_fixture_new_header()`'s docstring
+    for when and why a caller supplies one.
+    """
     name = scenario["name"]
     result_name = name if profile is None else f"{name}.{profile}"
     output_json = results_dir / f"{result_name}.json"

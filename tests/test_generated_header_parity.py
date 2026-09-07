@@ -23,6 +23,8 @@ _CMD_RE = re.compile(r'cmd\s*=\s*"\$\(location [^)]+\)\s+\$@\s+([^"]*)"')
 
 
 def _bazel_genrule_functions(version: str) -> list[str]:
+    """Return the function names declared in `<version>/BUILD.bazel`'s own
+    `gen_lib_h` genrule `cmd`, in the order they appear there."""
     text = (FIXTURE_ROOT / version / "BUILD.bazel").read_text(encoding="utf-8")
     match = _CMD_RE.search(text)
     assert match, f"could not find gen_lib_h's cmd= in {version}/BUILD.bazel"
@@ -30,15 +32,21 @@ def _bazel_genrule_functions(version: str) -> list[str]:
 
 
 def _header_functions_txt(version: str) -> list[str]:
+    """Return the function names declared in `<version>/header_functions.txt`,
+    one per non-blank line, in file order."""
     text = (FIXTURE_ROOT / version / "header_functions.txt").read_text(encoding="utf-8")
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
 def test_v1_header_functions_match_the_bazel_genrule():
+    """v1's two declarations (BUILD.bazel's genrule cmd, header_functions.txt)
+    name the same functions."""
     assert _header_functions_txt("v1") == _bazel_genrule_functions("v1")
 
 
 def test_v2_header_functions_match_the_bazel_genrule():
+    """v2's two declarations (BUILD.bazel's genrule cmd, header_functions.txt)
+    name the same functions."""
     assert _header_functions_txt("v2") == _bazel_genrule_functions("v2")
 
 
