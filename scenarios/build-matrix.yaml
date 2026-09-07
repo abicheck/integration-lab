@@ -15,16 +15,17 @@
 # scripts/run_scenario.py, never silently substituted or skipped
 # quietly).
 #
-# `cmake` and `make` now both cover every scenario whose fixture has the
-# shared `lib.cc` + `lib.h` shape the two generic recipes
-# (buildsystems/cmake/fixtures/CMakeLists.txt and
-# buildsystems/make/fixtures/Makefile) are parameterized over. That is the
-# whole declared scenario suite except `generated_header_removed_function`,
-# whose header is produced by its own Bazel genrule rather than committed
-# to the fixture directory -- there is no lib.h for a FIXTURE_DIR recipe to
-# compile against, so it stays bazel-only until the generation step itself
-# is factored out of the Bazel rule. It fails closed as "no build mapping
-# declared", never silently skipped.
+# `cmake` and `make` now cover every declared scenario, including
+# `generated_header_removed_function` (roadmap.md item 12's own "what
+# remains", closed): that fixture's header is produced by
+# fixtures/generated_header/gen_header.py at build time rather than
+# committed to the fixture directory, so buildsystems/cmake/fixtures/
+# CMakeLists.txt and buildsystems/make/fixtures/Makefile now both run
+# the SAME generator (keyed off FIXTURE_DIR/header_functions.txt, a data
+# file naming the exported functions -- see either recipe's own comment)
+# whenever a fixture opts in, instead of requiring a checked-in lib.h. A
+# scenario with no entry here still fails closed as "no build mapping
+# declared", never silently skipped -- there just isn't one today.
 #
 # Parity, not just coverage: scripts/check_scenario_parity.py compares the
 # reports these runs produce ACROSS build systems and fails unless the same
@@ -43,11 +44,14 @@
 # "run abicheck compare against libimpl.so" call regardless of which
 # build system produced it.
 #
-# The header passed to `abicheck compare` for a cmake run is NOT
-# duplicated here -- manifest.yaml's own new_header/old_header fields are
-# repo source file paths (fixtures/<name>/v2/lib.h), not build outputs,
-# so they're identical regardless of which build system compiled the
-# library and are reused as-is by run_scenario.py for every build system.
+# The header passed to `abicheck compare` is NOT duplicated here for the
+# ordinary case -- manifest.yaml's own new_header/old_header fields are
+# repo source file paths (fixtures/<name>/v2/lib.h), identical regardless
+# of which build system compiled the library. scripts/run_scenario.py's
+# _resolve_fixture_new_header() falls back to whatever THIS build system
+# actually generated only when that declared path doesn't exist under it
+# (manifest.yaml's own bazel-bin/ path for generated_header_removed_
+# function, in particular) -- see that function's own docstring.
 
 schema_version: 1
 build_systems:
@@ -70,4 +74,7 @@ build_systems:
     suppression_partial:
       old_fixture_dir: fixtures/suppression_partial/v1
       new_fixture_dir: fixtures/suppression_partial/v2
+    generated_header_removed_function:
+      old_fixture_dir: fixtures/generated_header/v1
+      new_fixture_dir: fixtures/generated_header/v2
   make: *id001

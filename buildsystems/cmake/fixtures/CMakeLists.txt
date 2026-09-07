@@ -33,6 +33,44 @@ if(NOT EXISTS "${FIXTURE_DIR_ABS}/lib.cc")
   message(FATAL_ERROR "FIXTURE_DIR=${FIXTURE_DIR_ABS} has no lib.cc (expected the fixtures/<name>/{v1,v2} shape)")
 endif()
 
+# roadmap.md item 12's own "what remains": fixtures/generated_header/ is
+# the one fixture pair whose lib.h is NOT a checked-in source file -- a
+# Bazel genrule (fixtures/generated_header/gen_header.py) produces it at
+# build time, so there is nothing under FIXTURE_DIR for a plain
+# target_include_directories(FIXTURE_DIR) to find. A fixture opts into
+# generation by shipping FIXTURE_DIR/header_functions.txt (one exported
+# function name per line -- the CMake/Make-readable counterpart of
+# whatever function list fixtures/generated_header/v{1,2}/BUILD.bazel's
+# own genrule `cmd` hardcodes; tests/test_generated_header_parity.py
+# cross-checks the two can't silently diverge).
+#
+# lib.cc's own #include is a full repo-relative path
+# ("fixtures/generated_header/v1/lib.h" -- see that file's own comment for
+# why: gcc's quote-include only resolves a bare filename against a real
+# checked-in same-directory file, and Bazel's genrule output lives at that
+# same repo-relative path under bazel-out/), so this mirrors that same
+# repo-relative path under CMAKE_BINARY_DIR and adds ITS PARENT as an
+# include root -- lib.cc itself needs no change and stays byte-identical
+# across all three build systems.
+get_filename_component(REPO_ROOT_ABS "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+file(RELATIVE_PATH FIXTURE_DIR_REL "${REPO_ROOT_ABS}" "${FIXTURE_DIR_ABS}")
+
+set(GENERATED_INCLUDE_ROOT "")
+if(EXISTS "${FIXTURE_DIR_ABS}/header_functions.txt")
+  set(GENERATED_INCLUDE_ROOT "${CMAKE_BINARY_DIR}/generated_root")
+  set(GENERATED_HEADER "${GENERATED_INCLUDE_ROOT}/${FIXTURE_DIR_REL}/lib.h")
+  file(STRINGS "${FIXTURE_DIR_ABS}/header_functions.txt" GENERATED_HEADER_FUNCTIONS)
+  get_filename_component(GENERATED_HEADER_DIR "${GENERATED_HEADER}" DIRECTORY)
+  file(MAKE_DIRECTORY "${GENERATED_HEADER_DIR}")
+  execute_process(
+    COMMAND python3 "${FIXTURE_DIR_ABS}/../gen_header.py" "${GENERATED_HEADER}" ${GENERATED_HEADER_FUNCTIONS}
+    RESULT_VARIABLE GENERATED_HEADER_RESULT
+  )
+  if(NOT GENERATED_HEADER_RESULT EQUAL 0)
+    message(FATAL_ERROR "gen_header.py failed for FIXTURE_DIR=${FIXTURE_DIR_ABS} (exit ${GENERATED_HEADER_RESULT})")
+  endif()
+endif()
+
 # Every fixture's own BUILD.bazel names its shared object target "impl"
 # (bazel-bin/fixtures/<name>/<version>/libimpl.so) -- matched here so
 # scripts/run_scenario.py's cmake path stages the same libimpl.so
@@ -49,4 +87,9 @@ add_library(impl SHARED "${FIXTURE_DIR_ABS}/lib.cc")
 # oracle under CMake/Make while it passes under Bazel.
 set_target_properties(impl PROPERTIES NO_SONAME ON)
 target_include_directories(impl PRIVATE "${FIXTURE_DIR_ABS}")
+if(GENERATED_INCLUDE_ROOT)
+  # Listed first so the generated header wins over any same-named file
+  # that might otherwise be found under FIXTURE_DIR_ABS.
+  target_include_directories(impl BEFORE PRIVATE "${GENERATED_INCLUDE_ROOT}")
+endif()
 set_target_properties(impl PROPERTIES OUTPUT_NAME "impl")

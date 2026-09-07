@@ -125,7 +125,7 @@ def test_run_one_dispatches_to_make_build_for_mapped_scenario(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         run_scenario, "run_one_profile",
-        lambda scenario, old_lib, new_lib, profile, expected, results_dir: {"ok": True},
+        lambda scenario, old_lib, new_lib, profile, expected, results_dir, **kw: {"ok": True},
     )
     scenario = {"name": "add_function", "expected_verdict": "COMPATIBLE"}
     matrix = {"make": {"add_function": {
@@ -165,6 +165,106 @@ def test_unmapped_scenario_is_skipped_not_substituted(tmp_path):
         {"name": "not_in_matrix"}, tmp_path,
         build_system="make", build_matrix={"make": {}}, scratch_dir=tmp_path,
     ) is None
+
+
+def test_load_build_matrix_covers_generated_header_scenario():
+    """roadmap.md item 12's own 'what remains', closed: the one scenario
+    whose header is a build output, not a checked-in file, now has a
+    cmake/make build-matrix entry too.
+    """
+    matrix = run_scenario.load_build_matrix(REPO_ROOT / "scenarios" / "build-matrix.yaml")
+    for build_system in ("cmake", "make"):
+        entry = matrix[build_system]["generated_header_removed_function"]
+        assert entry["old_fixture_dir"] == "fixtures/generated_header/v1"
+        assert entry["new_fixture_dir"] == "fixtures/generated_header/v2"
+
+
+def test_resolve_fixture_new_header_prefers_a_declared_checked_in_path():
+    """The ordinary case (add_function, etc.): the manifest's own
+    new_header is a real, checked-in file -- used as-is, build_dir never
+    consulted.
+    """
+    scenario = {"new_header": "fixtures/add_function/v2/lib.h"}
+    fixture_dir = REPO_ROOT / "fixtures" / "add_function" / "v2"
+    result = run_scenario._resolve_fixture_new_header(scenario, fixture_dir, Path("/does/not/exist"))
+    assert result == REPO_ROOT / "fixtures/add_function/v2/lib.h"
+
+
+def test_resolve_fixture_new_header_falls_back_to_checked_in_fixture_header(tmp_path):
+    """No declared new_header (or a declared one that doesn't exist under
+    this build system) but the fixture itself has a checked-in lib.h:
+    used directly, no generation involved.
+    """
+    fixture_dir = REPO_ROOT / "fixtures" / "remove_function" / "v2"
+    result = run_scenario._resolve_fixture_new_header({}, fixture_dir, tmp_path)
+    assert result == fixture_dir / "lib.h"
+
+
+def test_resolve_fixture_new_header_falls_back_to_the_generated_header(tmp_path):
+    """generated_header_removed_function's own shape: manifest.yaml's
+    new_header is a bazel-bin/ path that doesn't exist under cmake/make,
+    and the fixture directory itself has no checked-in lib.h -- resolves
+    to build_dir/generated_root/<repo-relative fixture path>/lib.h, the
+    same layout buildsystems/cmake/fixtures/CMakeLists.txt and
+    buildsystems/make/fixtures/Makefile both generate into.
+    """
+    fixture_dir = REPO_ROOT / "fixtures" / "generated_header" / "v2"
+    generated = tmp_path / "generated_root" / "fixtures" / "generated_header" / "v2" / "lib.h"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("// generated\n")
+    scenario = {"new_header": "bazel-bin/fixtures/generated_header/v2/lib.h"}
+    result = run_scenario._resolve_fixture_new_header(scenario, fixture_dir, tmp_path)
+    assert result == generated
+
+
+def test_resolve_fixture_new_header_fails_closed_when_nothing_exists(tmp_path):
+    """No declared path, no checked-in lib.h, no generated one either --
+    must raise, never silently return a nonexistent path.
+    """
+    fixture_dir = REPO_ROOT / "fixtures" / "generated_header" / "v2"
+    with pytest.raises(FileNotFoundError):
+        run_scenario._resolve_fixture_new_header({}, fixture_dir, tmp_path)
+
+
+def test_run_one_cmake_resolves_generated_header(tmp_path, monkeypatch):
+    """run_one()'s --build-system cmake dispatch actually plumbs the
+    resolved header through to run_one_profile as new_header_override,
+    for a scenario with no static checked-in header at all.
+    """
+    def fake_cmake_build(fixture_dir, build_dir):
+        # Simulate the CMakeLists.txt recipe's own generation step.
+        generated = build_dir / "generated_root" / fixture_dir.relative_to(REPO_ROOT) / "lib.h"
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text("// generated\n")
+        return build_dir / "libimpl.so"
+
+    seen = {}
+
+    def fake_run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None):
+        seen["new_header_override"] = new_header_override
+        return {"ok": True}
+
+    monkeypatch.setattr(run_scenario, "run_cmake_build", fake_cmake_build)
+    monkeypatch.setattr(run_scenario, "run_one_profile", fake_run_one_profile)
+
+    scenario = {
+        "name": "generated_header_removed_function",
+        "expected_verdict": "BREAKING",
+        "new_header": "bazel-bin/fixtures/generated_header/v2/lib.h",
+    }
+    matrix = {"cmake": {"generated_header_removed_function": {
+        "old_fixture_dir": "fixtures/generated_header/v1",
+        "new_fixture_dir": "fixtures/generated_header/v2",
+    }}}
+    results = run_scenario.run_one(
+        scenario, tmp_path, build_system="cmake", build_matrix=matrix, scratch_dir=tmp_path
+    )
+    assert results == [{"ok": True}]
+    expected_header = (
+        tmp_path / "generated_header_removed_function-new" / "generated_root"
+        / "fixtures" / "generated_header" / "v2" / "lib.h"
+    )
+    assert seen["new_header_override"] == expected_header
 
 
 def test_bazel_build_is_unpinned_by_default(monkeypatch):

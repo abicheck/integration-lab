@@ -197,6 +197,44 @@ def run_abicheck_compare(
     subprocess.run(cmd, check=False)
 
 
+def _resolve_fixture_new_header(scenario, fixture_dir: Path, build_dir: Path) -> Path:
+    """Resolve the header to pass `abicheck compare --header new=...` for a
+    --build-system cmake/make run.
+
+    Most scenarios declare `new_header` as a checked-in `fixtures/<name>/
+    v2/lib.h` path -- identical content regardless of which build system
+    compiled the library -- so that declared path is used whenever it
+    actually exists on disk. `generated_header_removed_function` is the
+    one scenario whose header is a Bazel build OUTPUT
+    (`bazel-bin/.../lib.h`, only ever present after a real `bazel build`):
+    for that case (or any future scenario without a checked-in header at
+    all), fall back to what THIS build actually produced -- the fixture's
+    own checked-in lib.h if it has one, else the header
+    buildsystems/{cmake,make}/fixtures' generic recipe generates into
+    `build_dir/generated_root/<repo-relative fixture path>/lib.h` when the
+    fixture ships a `header_functions.txt` (see those recipes' own
+    comments). This keeps `scenarios/manifest.yaml` itself build-system-
+    agnostic: it names ONE canonical header path, valid for whichever
+    build system can actually produce it.
+    """
+    declared = scenario.get("new_header")
+    if declared is not None:
+        declared_path = REPO_ROOT / declared
+        if declared_path.is_file():
+            return declared_path
+    checked_in = fixture_dir / "lib.h"
+    if checked_in.is_file():
+        return checked_in
+    generated = build_dir / "generated_root" / fixture_dir.relative_to(REPO_ROOT) / "lib.h"
+    if not generated.is_file():
+        raise FileNotFoundError(
+            f"no header available for {fixture_dir}: no checked-in lib.h, no generated "
+            f"header at {generated}, and the manifest's own new_header "
+            f"({scenario.get('new_header')!r}) does not exist for this build system"
+        )
+    return generated
+
+
 def _scenario_profiles(scenario):
     """Return {profile_name: expected_verdict} for *scenario*.
 
@@ -269,7 +307,7 @@ def _fixture_dir_builder(build_system: str):
     return globals()[_FIXTURE_DIR_BUILDERS[build_system]]
 
 
-def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
+def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None):
     name = scenario["name"]
     result_name = name if profile is None else f"{name}.{profile}"
     output_json = results_dir / f"{result_name}.json"
@@ -285,10 +323,11 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir):
     output_json.unlink(missing_ok=True)
     old_header = scenario.get("old_header")
     suppress = scenario.get("suppress")
+    new_header = new_header_override if new_header_override is not None else (REPO_ROOT / scenario["new_header"])
     run_abicheck_compare(
         old_lib,
         new_lib,
-        REPO_ROOT / scenario["new_header"],
+        new_header,
         output_json,
         old_header=(REPO_ROOT / old_header) if old_header else None,
         ast_frontend=profile,
@@ -385,6 +424,7 @@ def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
     comment), which the caller reports as skipped, not failed.
     """
     name = scenario["name"]
+    new_header_override = None
     if build_system == "bazel":
         # Unchanged: manifest.yaml's own old_target/new_target/old_output/
         # new_output ARE this scenario's bazel build recipe -- every
@@ -401,15 +441,26 @@ def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
             return None
         assert scratch_dir is not None, "scratch_dir is required for build_system != 'bazel'"
         builder = _fixture_dir_builder(build_system)
+        new_fixture_dir = REPO_ROOT / mapping["new_fixture_dir"]
+        new_build_dir = scratch_dir / f"{name}-new"
         old_lib = builder(REPO_ROOT / mapping["old_fixture_dir"], scratch_dir / f"{name}-old")
-        new_lib = builder(REPO_ROOT / mapping["new_fixture_dir"], scratch_dir / f"{name}-new")
+        new_lib = builder(new_fixture_dir, new_build_dir)
+        # See _resolve_fixture_new_header()'s own docstring: most scenarios
+        # resolve to the same checked-in fixtures/<name>/v2/lib.h the bazel
+        # path uses, unchanged; generated_header_removed_function resolves
+        # to what THIS build system actually generated instead of a
+        # bazel-bin/ path that only exists under --build-system bazel.
+        new_header_override = _resolve_fixture_new_header(scenario, new_fixture_dir, new_build_dir)
     else:
         known = ["bazel", *sorted(_FIXTURE_DIR_BUILDERS)]
         raise ValueError(f"unknown --build-system {build_system!r} (expected one of {known})")
 
     profiles = _scenario_profiles(scenario)
     return [
-        run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir)
+        run_one_profile(
+            scenario, old_lib, new_lib, profile, expected, results_dir,
+            new_header_override=new_header_override,
+        )
         for profile, expected in profiles.items()
     ]
 
