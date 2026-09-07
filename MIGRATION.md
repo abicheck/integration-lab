@@ -139,7 +139,7 @@ not committed anywhere. `abicheck` (the exact pinned `legacy_sha`,
 `b299afdc2277a3c9857c413058177c8f6472fcd0`) and a real CastXML were
 installed with real, working outbound network access in this session.
 
-```
+```console
 python3 -m pytest tests/ -q
   -> 813 passed, 2 skipped   (full existing suite, no regressions)
 
