@@ -89,7 +89,7 @@ jobs:
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -149,7 +149,7 @@ jobs:
       # fresh refresh from this workflow (on merge to `main`) before
       # `scan --against` it is comparable again.
       - name: Collect source-aware ABI baseline
-        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
@@ -206,7 +206,7 @@ jobs:
       # this committed baseline for no reason connected to what this
       # fixture actually validates.
       - name: Collect strings_lib ABI baseline (headers depth)
-        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
         with:
           mode: dump
           new-library: bazel-bin/strings_lib/libstrings.so
@@ -229,7 +229,7 @@ jobs:
       # pipeline, so it gets the same lightweight collection strings_lib
       # does rather than :math's own source-aware evidence pack.
       - name: Collect math_shared ABI baseline (headers depth)
-        uses: abicheck/abicheck@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3 # abicheck/main @ 6fb8536
+        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
         with:
           mode: dump
           new-library: bazel-bin/libmath_shared.so

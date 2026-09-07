@@ -412,7 +412,7 @@ abicheck-build-<profile-id>/
 # Canonical Bazel build + real ABICheck scan (needs bazel and network access
 # to install abicheck):
 bazel build //:math
-pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
+pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
 abicheck scan --sources . --depth source --against abi/math.abicheck.json
 
 # One multi-build-system profile: build, stage, and validate build-output.json
