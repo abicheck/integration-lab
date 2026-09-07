@@ -43,6 +43,45 @@ SRC := $(FIXTURE_DIR)/lib.cc
 OUT := $(BUILD_DIR)/libimpl.so
 DEP := $(BUILD_DIR)/libimpl.d
 
+# roadmap.md item 12's own "what remains": fixtures/generated_header/'s
+# lib.h is NOT a checked-in source file -- a Bazel genrule
+# (fixtures/generated_header/gen_header.py) produces it at build time, so
+# there is nothing under FIXTURE_DIR for the plain -I"$(FIXTURE_DIR)"
+# below to find. A fixture opts into generation by shipping
+# FIXTURE_DIR/header_functions.txt (one exported function name per line --
+# tests/test_generated_header_parity.py cross-checks this against
+# fixtures/generated_header/v{1,2}/BUILD.bazel's own genrule `cmd` so the
+# two can't silently diverge). lib.cc's own #include is a full
+# repo-relative path (see that fixture's own lib.cc comment for why a
+# bare filename doesn't resolve for a build-generated header), so this
+# mirrors that same repo-relative path under BUILD_DIR/generated_root and
+# adds ITS PARENT as an extra -I -- lib.cc itself needs no change and
+# stays byte-identical across all three build systems.
+REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../../..)
+GEN_MARKER := $(wildcard $(FIXTURE_DIR)/header_functions.txt)
+FIXTURE_DIR_REL := $(patsubst $(REPO_ROOT)/%,%,$(abspath $(FIXTURE_DIR)))
+
+ifneq ($(GEN_MARKER),)
+GEN_ROOT := $(BUILD_DIR)/generated_root
+GEN_HEADER := $(GEN_ROOT)/$(FIXTURE_DIR_REL)/lib.h
+GEN_SCRIPT := $(dir $(FIXTURE_DIR))gen_header.py
+INCLUDE_EXTRA := -I$(GEN_ROOT)
+
+$(GEN_HEADER): $(GEN_MARKER) $(GEN_SCRIPT)
+	@mkdir -p "$(dir $@)"
+	python3 "$(GEN_SCRIPT)" "$@" $$(cat "$(GEN_MARKER)")
+else
+GEN_HEADER :=
+INCLUDE_EXTRA :=
+endif
+
+# Make's default goal is otherwise whichever real (non-.PHONY) rule is
+# textually FIRST in the file -- the $(GEN_HEADER) rule above, when a
+# fixture opts into generation, which would make a bare `make ... ` build
+# only the header and stop. Pinned explicitly so `all` (-> $(OUT), the
+# actual shared library) stays the default regardless of rule order.
+.DEFAULT_GOAL := all
+
 .PHONY: all clean
 all: $(OUT)
 
@@ -88,10 +127,10 @@ $(STAMP): force
 	@mkdir -p "$(BUILD_DIR)"
 	@printf '%s\n' "$(FIXTURE_DIR)" | cmp -s - "$@" 2>/dev/null || printf '%s\n' "$(FIXTURE_DIR)" > "$@"
 
-$(OUT): $(SRC) $(STAMP)
+$(OUT): $(SRC) $(STAMP) $(GEN_HEADER)
 	@test -f "$(SRC)" || { echo "FIXTURE_DIR=$(FIXTURE_DIR) has no lib.cc (expected the fixtures/<name>/{v1,v2} shape)" >&2; exit 1; }
 	@mkdir -p "$(BUILD_DIR)"
-	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared -I"$(FIXTURE_DIR)" \
+	$(CXX) -std=$(CXXSTD) -O2 -g -fPIC -shared $(INCLUDE_EXTRA) -I"$(FIXTURE_DIR)" \
 	    -MMD -MP -MF "$(DEP)" "$(SRC)" -o "$(OUT)"
 
 -include $(DEP)

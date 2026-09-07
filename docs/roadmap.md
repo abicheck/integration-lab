@@ -149,8 +149,8 @@ What remains: post-repair wheel behaviour where auditwheel/delocate/
 delvewheel applies — the repaired wheel's vendored library directory,
 its rewritten RPATHs, and the dependency closure those imply.
 
-**Item 12 — build-system scenario parity: done for the shared-shape
-suite.** `scripts/run_scenario.py` gained a `--build-system make` path
+**Item 12 — build-system scenario parity: done, including the generated
+header.** `scripts/run_scenario.py` gained a `--build-system make` path
 (`buildsystems/make/fixtures/Makefile`, the Make counterpart of the generic
 CMake fixture project), and `scenarios/build-matrix.yaml` now declares
 every scenario whose fixture has the shared `lib.cc` + `lib.h` shape for
@@ -165,15 +165,35 @@ its first run this check found exactly that, a `soname_bump_recommended`
 finding CMake produced and Make did not, because a bare `g++ -shared` sets
 no SONAME while CMake and Bazel both do. The Make recipe now sets it.
 
-What remains: `generated_header_removed_function`, whose header is produced
-by its own Bazel genrule rather than committed to the fixture directory, so
-there is nothing for a `FIXTURE_DIR` recipe to compile. Factoring the
-generation step out of the Bazel rule would bring it in. The
-cross-DSO/SONAME/private-header/`_GLIBCXX_USE_CXX11_ABI` mutations named in
-the original list need new fixtures of the same shared shape before they
-can join the matrix; they are covered elsewhere (cross-DSO by
-`project-cross-dso`, SONAME by the loader-feature suite) but not yet as
-three-build-system parity cases.
+`generated_header_removed_function` — whose header used to be reachable
+only via a Bazel genrule, with nothing for a `FIXTURE_DIR` recipe to
+compile against — is closed too: the fixture now ships a
+`header_functions.txt` (one exported function name per line) alongside its
+existing Bazel genrule, and `buildsystems/cmake/fixtures/CMakeLists.txt`/
+`buildsystems/make/fixtures/Makefile` both run the identical
+`fixtures/generated_header/gen_header.py` generator when a fixture
+declares one, writing the header into a scratch directory that mirrors the
+fixture's own repo-relative path (so `lib.cc`'s own full-path `#include`
+resolves identically under all three build systems — neither `lib.cc` nor
+the Bazel genrule needed to change). The two declarations of the function
+list (the genrule's own `cmd` string and `header_functions.txt`) are not
+mechanically one source of truth, so
+`tests/test_generated_header_parity.py` cross-checks them and fails on
+drift. Verified end to end locally (real `cmake`/`make`/`g++`/`abicheck`,
+not mocked): both v1 (with `removed_function`) and v2 (without it) build
+correctly under CMake and Make, and `abicheck compare --ast-frontend
+clang` reports `BREAKING` for both, matching the Bazel-path oracle
+(`--ast-frontend castxml` could not be verified in the same local pass —
+this sandbox's apt-installed CastXML 0.6.3 is below abicheck's supported
+`>=0.6.11` floor, an environment-only gap, not a scenario bug; CI installs
+abicheck's own pinned CastXML build and is expected to pass both
+profiles).
+
+The cross-DSO/SONAME/private-header/`_GLIBCXX_USE_CXX11_ABI` mutations
+named in the original list still need new fixtures of the same shared
+shape before they can join the matrix; they are covered elsewhere
+(cross-DSO by `project-cross-dso`, SONAME by the loader-feature suite) but
+not yet as three-build-system parity cases.
 
 **Item 9 — plugin-pack reuse in a clean job.** Done. The plugin scenario now
 runs three distinct stages. `l4_clang_plugin` builds with the plugin and

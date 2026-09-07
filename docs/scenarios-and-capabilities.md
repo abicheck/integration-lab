@@ -53,13 +53,20 @@ generic, parameterized `buildsystems/cmake/fixtures/CMakeLists.txt` (one
 project, `-DFIXTURE_DIR=<path>`, not one CMakeLists.txt per fixture) and
 runs the identical `abicheck compare` oracle check against it.
 
-Populated for a deliberately small initial subset — `add_function`
-(compatible) and `remove_function` (breaking) — proving both oracle
-outcomes work under a second build system. Every other scenario has no
-`cmake` entry in `build-matrix.yaml` yet, and is reported `SKIP` with an
-explicit reason when run with `--build-system cmake`, never silently
-dropped from the summary. `.github/workflows/integration-shadow.yml`'s
-`scenarios_cmake` job runs this independently of `scenarios.yml`'s own
+`cmake` and `make` (aliased to the identical mapping — see
+`scenarios/build-matrix.yaml`'s own header comment) now cover every
+declared scenario, including `generated_header_removed_function`: its
+header used to be reachable only via a Bazel genrule, but the generic
+CMake/Make recipes now run the same generator
+(`fixtures/generated_header/gen_header.py`, keyed off a
+`header_functions.txt` data file each fixture version ships) before
+compiling, cross-checked against the Bazel genrule's own function list by
+`tests/test_generated_header_parity.py` so the two declarations can't
+silently diverge. A scenario with no `build-matrix.yaml` entry at all
+still reports `SKIP` with an explicit reason under `--build-system
+cmake`/`make`, never silently dropped from the summary.
+`.github/workflows/integration-shadow.yml`'s `scenarios_cmake`/
+`scenarios_make` jobs run this independently of `scenarios.yml`'s own
 required gate — that workflow's job is `gating: true` in
 `capabilities.yaml`, and adding a step there would need its own gating
 decision this hasn't earned yet.
@@ -68,9 +75,7 @@ decision this hasn't earned yet.
 detection-correctness scenario (every current fixture pair is
 `cc_binary(linkshared = True)`); the multi-library aggregate-plumbing and
 consumer/app-scoped gaps are covered separately by `strings_lib/` and
-`consumer/`'s own CI wiring, not by a scenario-manifest entry; every
-scenario beyond `add_function`/`remove_function` under `--build-system
-cmake`; and Make entirely (no `build-matrix.yaml` entries yet).
+`consumer/`'s own CI wiring, not by a scenario-manifest entry.
 
 ## Suppressions
 

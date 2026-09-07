@@ -249,10 +249,14 @@ pybind cross-module internals identity remains an explicit expected gap.
   and verdict everywhere it ran (`scripts/check_scenario_parity.py`).
   Provenance — paths, timings, the producing build system's own
   bookkeeping — is excluded from that comparison by construction.
-  `generated_header_removed_function` stays Bazel-only: its header comes
-  from a Bazel genrule rather than the fixture directory, so the generic
-  CMake/Make recipes have nothing to compile against. It fails closed as
-  "no build mapping declared" rather than being skipped quietly.
+  `generated_header_removed_function`'s header comes from
+  `fixtures/generated_header/gen_header.py` rather than a checked-in file
+  -- the generic CMake/Make recipes now run the same generator (keyed off
+  a `header_functions.txt` data file, cross-checked against the Bazel
+  genrule's own function list by `tests/test_generated_header_parity.py`)
+  before compiling, so all three build systems cover it. A scenario with
+  no build-matrix entry at all still fails closed as "no build mapping
+  declared" rather than being skipped quietly.
 - **Make source evidence is fail-closed.** Bear and the generated
   `compile_commands.json` are mandatory for the Make contract profile; a
   missing tool, failed capture, or a compile database whose entries are not
