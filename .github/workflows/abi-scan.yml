@@ -305,6 +305,32 @@ jobs:
             --buildfiles "$RUNNER_TEMP/bazel-buildfiles.txt" \
             --evidence-summary "$RUNNER_TEMP/bazel-evidence-summary.json"
 
+      # Diagnostic only (continue-on-error, never gates): the compare report
+      # carries L4 translation-unit COUNTS, not names, so a contract failure
+      # like "only 17/19 selected TUs parsed" cannot be attributed from the
+      # log. This prints the compile units the lab's //:math pack declared
+      # next to the units abicheck actually merged for the candidate, the
+      # replay extractor records, and every per-TU `source_abi:` failure
+      # diagnostic -- from a candidate-side dump with the gate's own
+      # sources/build-info/depth (the gate's `since` has no dump spelling, so
+      # this replays the target scope; the TU set is what is being named).
+      - name: Diagnose L4 translation-unit selection (non-gating)
+        if: always() && steps.relevance.outputs.relevant == 'true' && steps.abicheck_pip.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PACK_DIR: ${{ steps.bazel_pack.outputs.pack_dir }}
+        run: |
+          set -uo pipefail
+          args=(bazel-bin/libmath.so -H include --sources . --depth source -o "$RUNNER_TEMP/l4-diag.snapshot.json")
+          if [ -n "$PACK_DIR" ]; then args+=(--build-info "$PACK_DIR"); fi
+          abicheck dump "${args[@]}" > "$RUNNER_TEMP/l4-diag.log" 2>&1 || echo "diagnostic dump exited $?"
+          grep -iE 'error|fail|warning' "$RUNNER_TEMP/l4-diag.log" | head -60 || true
+          pack_args=()
+          if [ -n "$PACK_DIR" ]; then pack_args=(--pack "$PACK_DIR"); fi
+          python3 scripts/diagnose_l4_selection.py "${pack_args[@]}" --snapshot "$RUNNER_TEMP/l4-diag.snapshot.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

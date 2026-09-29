@@ -191,6 +191,29 @@ expected_gaps:
     status: expected_gap
     upstream_issue: "abicheck#run-plan-build-output-projection"
     expected_failure: {phase: check-project, reason: target_evidence_path_not_projected}
+  # abicheck 5ba6a5c8 (legacy_sha since 2026-09-29) emits a derived,
+  # whole-surface `public_surface_shrank <surface>` finding next to each
+  # per-symbol removal. An exact-symbol suppression rule suppresses the
+  # func_removed finding (suppressed_count stays 1, identity correct) but not
+  # the derived surface finding, so the fully-accepted removal reads
+  # COMPATIBLE instead of NO_CHANGE, and the partial case gains an extra
+  # gating `<surface>` finding. Enforced per scenario by the `expected_gap:`
+  # blocks on remove_function_suppressed / suppression_partial below
+  # (scripts/run_scenario.py): only this exact outcome is tolerated, and the
+  # scenario FAILS again once upstream fixes it. Repro:
+  # UPSTREAM_TO_ABICHECK.md, "2026-09-29: scan retirement", gap 5.
+  - id: suppression-derived-surface-findings-full
+    status: expected_gap
+    upstream_issue: abicheck#suppression-derived-surface-findings
+    expected_failure:
+      phase: scenarios
+      reason: symbol_suppression_leaves_derived_public_surface_shrank_verdict_COMPATIBLE_not_NO_CHANGE
+  - id: suppression-derived-surface-findings-partial
+    status: expected_gap
+    upstream_issue: abicheck#suppression-derived-surface-findings
+    expected_failure:
+      phase: scenarios
+      reason: symbol_suppression_leaves_derived_public_surface_shrank_as_extra_gating_finding
 
 # Producer-compiler attribution.  Every other profile in this lab is a GCC
 # 14 profile -- they vary by build system, not by the compiler that
@@ -714,6 +737,15 @@ scenarios:
     # Nothing should remain gating -- the ONE finding was the accepted
     # removal itself, now fully suppressed.
     expected_gating_symbols: []
+    expected_gap:
+      upstream_issue: abicheck#suppression-derived-surface-findings
+      reason: >
+        the exact-symbol rule suppresses func_removed, but the derived
+        public_surface_shrank finding stays unsuppressed (verdict COMPATIBLE).
+      observed:
+        verdict: COMPATIBLE
+        findings:
+          - "public_surface_shrank:<surface>"
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
@@ -757,6 +789,17 @@ scenarios:
     expected_gating_symbols:
       - _ZN8scenario12required_apiEi
       - _ZN8scenario12required_apiEl
+    expected_gap:
+      upstream_issue: abicheck#suppression-derived-surface-findings
+      reason: >
+        legacy_metric's removal is suppressed, but the derived
+        public_surface_shrank finding remains an extra gating finding.
+      observed:
+        verdict: BREAKING
+        findings:
+          - "func_added:_ZN8scenario12required_apiEl"
+          - "func_removed:_ZN8scenario12required_apiEi"
+          - "public_surface_shrank:<surface>"
     expected:
       castxml: BREAKING
       clang: BREAKING

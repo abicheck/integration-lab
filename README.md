@@ -312,6 +312,8 @@ Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expec
 - **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)
 - **pybind-cross-module-internals** (`expected_gap`): falls short at `compare` -- `binding_internals_identity_not_collected` (upstream: `abicheck#binding-abi-provider`)
 - **target-specific-source-evidence-routing** (`expected_gap`): falls short at `check-project` -- `target_evidence_path_not_projected` (upstream: `abicheck#run-plan-build-output-projection`)
+- **suppression-derived-surface-findings-full** (`expected_gap`): falls short at `scenarios` -- `symbol_suppression_leaves_derived_public_surface_shrank_verdict_COMPATIBLE_not_NO_CHANGE` (upstream: `abicheck#suppression-derived-surface-findings`)
+- **suppression-derived-surface-findings-partial** (`expected_gap`): falls short at `scenarios` -- `symbol_suppression_leaves_derived_public_surface_shrank_as_extra_gating_finding` (upstream: `abicheck#suppression-derived-surface-findings`)
 <!-- capability-matrix:gaps:end -->
 
 ## Architecture

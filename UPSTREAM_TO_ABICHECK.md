@@ -1334,6 +1334,36 @@ returns `NO_CHANGE`, and the updated coverage contract passes on that report
    compare cleanly or be refused as NOT_COMPARABLE with a
    producer-version reason, never produce findings.
 
+5. **A symbol-level suppression does not cover the derived
+   `public_surface_shrank` finding** (`abicheck#suppression-derived-surface-findings`).
+   New on `5ba6a5c8`: every per-symbol removal/addition is accompanied by a
+   whole-surface `public_surface_shrank`/`public_surface_grew <surface>`
+   finding. Local repro (g++-built `fixtures/*` pairs, clang frontend, the
+   exact `scripts/run_scenario.py` argv, both pins):
+
+   ```text
+   remove_function + suppressions/remove_function_accepted.yaml
+     b299afdc: NO_CHANGE   changes=[]                                    suppressed=1
+     5ba6a5c8: COMPATIBLE  changes=[public_surface_shrank <surface>]     suppressed=1
+   suppression_partial + suppressions/legacy_metric_removed.yaml
+     b299afdc: BREAKING    [func_removed required_apiEi, func_added required_apiEl]                          suppressed=1
+     5ba6a5c8: BREAKING    [func_removed required_apiEi, func_added required_apiEl, public_surface_shrank]   suppressed=1
+   add_function (no suppression)
+     b299afdc: COMPATIBLE  [func_added new_function]
+     5ba6a5c8: COMPATIBLE  [func_added new_function, public_surface_grew <surface>]
+   ```
+
+   A fully accepted removal therefore no longer reads NO_CHANGE, and an
+   exact-symbol rule leaves an extra gating `<surface>` finding. Declared as
+   `expected_gap` on `remove_function_suppressed` / `suppression_partial`
+   (scenarios/manifest.yaml), which tolerates only that exact outcome and
+   fails again once fixed. **Ask:** a suppression that disposes of every
+   per-symbol change a surface-count delta is derived from should dispose of
+   (or recompute) the derived finding too. `add_function` read
+   `COMPATIBLE_WITH_RISK` in CI (gcc14/Bazel) but `COMPATIBLE` locally; it is
+   NOT declared a gap until the runner's new on-mismatch findings print names
+   the risk finding.
+
 Not affected: `mode: compare` has native sticky PR comments,
 `add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
 shape, so none of those needed a lab workaround.

@@ -300,3 +300,48 @@ def test_parity_job_pins_the_bazel_leg():
         / ".github" / "workflows" / "integration-shadow.yml"
     ).read_text(encoding="utf-8")
     assert "--bazel-toolchain gcc-14,g++-14" in workflow
+
+
+class TestEvaluateExpectedGap:
+    """A declared scenario expected_gap tolerates exactly one outcome."""
+
+    GAP = {
+        "upstream_issue": "abicheck#x",
+        "reason": "r",
+        "observed": {"verdict": "COMPATIBLE", "findings": ["public_surface_shrank:<surface>"]},
+    }
+
+    def _eval(self, **kw):
+        from run_scenario import evaluate_expected_gap
+        args = dict(oracle_passed=False, actual_verdict="COMPATIBLE",
+                    actual_findings=["public_surface_shrank:<surface>"], suppression_passed=True)
+        args.update(kw)
+        return evaluate_expected_gap(self.GAP, **args)[0]
+
+    def test_no_gap_declared(self):
+        from run_scenario import evaluate_expected_gap
+        assert evaluate_expected_gap(None, oracle_passed=False, actual_verdict="X",
+                                     actual_findings=[], suppression_passed=True) == (None, None)
+
+    def test_exact_declared_outcome_matches(self):
+        assert self._eval() == "matched"
+
+    def test_oracle_passing_means_gap_closed_and_fails(self):
+        assert self._eval(oracle_passed=True) == "closed"
+
+    @pytest.mark.parametrize("kw", [
+        {"actual_verdict": "COMPATIBLE_WITH_RISK"},
+        {"actual_verdict": None},
+        {"actual_findings": None},
+        {"actual_findings": []},
+        {"actual_findings": ["public_surface_shrank:<surface>", "func_removed:x"]},
+        {"suppression_passed": False},
+    ])
+    def test_any_other_outcome_is_a_mismatch(self, kw):
+        assert self._eval(**kw) == "mismatch"
+
+    def test_incomplete_declaration_is_a_mismatch(self):
+        from run_scenario import evaluate_expected_gap
+        gap = {"upstream_issue": "a", "observed": {"verdict": "COMPATIBLE"}}
+        assert evaluate_expected_gap(gap, oracle_passed=False, actual_verdict="COMPATIBLE",
+                                     actual_findings=[], suppression_passed=True)[0] == "mismatch"
