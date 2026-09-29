@@ -166,7 +166,7 @@ jobs:
         id: abicheck_pip
         if: steps.bazel_queries.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -183,75 +183,61 @@ jobs:
             --summary-output "$RUNNER_TEMP/bazel-evidence-summary.json"
           echo "pack_dir=$RUNNER_TEMP/bazel-evidence-pack" >> "$GITHUB_OUTPUT"
 
-      # Single canonical analysis: this one scan is the gate, the source
-      # of the PR comment (rendered below, since abicheck's built-in
-      # pr-comment is a compare-mode-only no-op as of v0.5.0/main — see
-      # scripts/render_scan_comment.py), and the job summary (abicheck's
-      # native add-job-summary, which does support scan mode).
+      # Single canonical analysis: this one two-sided `mode: compare` is the
+      # gate, the source of the one sticky PR comment (the Action's native
+      # compare-mode `pr-comment`), and the job summary.
+      #
+      # 2026-09-29 migration off `mode: scan` (upstream ADR-068 hard-removed
+      # it, no deprecation window -- see UPSTREAM_TO_ABICHECK.md's
+      # "2026-09-29: scan retirement" section). The replacement for a
+      # baseline scan is exactly this shape: `mode: compare` with the old
+      # `against:` value as `old-library:` and the same `new-library:`. Every
+      # guarantee the scan step carried is kept one-for-one:
+      #   * depth: source + since: base SHA -- two-sided compare forwards
+      #     --depth/--since/--sources/--build-info (new side) exactly as scan
+      #     did (upstream action/run.sh, single-pair branch);
+      #   * trusted baseline -- `old-library:` is still the file
+      #     resolve-baseline read out of the PR's exact base commit, never
+      #     the PR's own working-tree copy;
+      #   * budget: 10m -- supported on the two-sided shape (exit 5 on
+      #     overflow, never a silent scope cut);
+      #   * independent coverage contract -- the next steps still run
+      #     scripts/check_coverage_contract.py on this same report (it now
+      #     reads compare's `layer_coverage`/`analysis_assurance`/`scope`
+      #     blocks; see that script's "Evidence source" section);
+      #   * one report, one PR comment, one verdict -- this step alone posts
+      #     a comment; every diagnostic leg below keeps pr-comment: false.
       #
       # build-info: steps.bazel_pack's output is "" when any of the three
-      # steps above didn't run or failed -- abicheck's own run.sh only adds
-      # --build-info when the value is non-empty (verified against
-      # action/run.sh's add_single_flag), so an empty value here is exactly
-      # equivalent to omitting build-info and falling back to auto-inference.
+      # steps above didn't run or failed -- the Action only adds
+      # --build-info when the value is non-empty, so an empty value here is
+      # exactly equivalent to omitting it and falling back to abicheck's own
+      # auto-inference.
       #
-      # public-header-dir: use the TYPED `public-header-dir:` input, not
-      # `extra-args`. This used to be `extra-args: '--public-header-dir
-      # include'`, which was the actual root cause of the recurring
-      # NOT_COMPARABLE/include_sequence mismatch against the committed
-      # baseline (previously mis-attributed here to an upstream,
-      # abicheck-core "known gap" -- see abicheck's own AGENTS.md "Known
-      # gaps" entry on dump-vs-scan `include_sequence` divergence, and the
-      # extensive fix history recorded there). At this pin, abicheck's
-      # `scan` mode's typed `public-header-dir` input forwards it BOTH as
-      # `--public-header-dir` (provenance scope) AND as a candidate-sided
-      # `-H new=...` header root (action.yml's own doc for this input:
-      # "keeping a `scan --against` a fresh `dump` baseline of the same
-      # inputs comparable instead of drifting apart on `include_sequence`
-      # for no real recipe difference (lab report)" -- literally this
-      # repo's own report). Passing the identical flag through raw
-      # `extra-args` instead skips that second, candidate-sided `-H`
-      # forward entirely, so `scan`'s own header extraction never expands
-      # `include/` the way `dump`'s baseline (below, and in baseline.yml,
-      # both already using the typed input) does -- an avoidable recipe
-      # mismatch between baseline and candidate, not a genuine ABI-context
-      # difference. `baseline.yml` already made this exact switch (see its
-      # own comment on `public-header-dir`); this fixes the corresponding
-      # `scan`-mode steps in this workflow to match.
-      #
-      # Deliberately NO separate `new-header:` alongside `public-header-dir`
-      # here (this used to also set `new-header: include/abicheck_lab/
-      # math.h`) -- confirmed by direct local reproduction against the
-      # pinned abicheck commit (real `bazel build //:math` evidence, both
-      # castxml and clang frontends): setting BOTH a directory
-      # `public-header-dir` root AND an explicit file `-H` root for a file
-      # already inside that directory makes the candidate's own L2 include
-      # seed derive one extra `-isystem <header's own parent dir>` entry
-      # that a `dump`-produced baseline (which only ever gets the directory
-      # root, see baseline.yml) never gets -- a second, independent,
-      # already-known-and-tracked abicheck-core divergence between `dump`'s
-      # CLI path and `scan`'s candidate resolver (upstream `AGENTS.md`
-      # "Known gaps": "PR C ... dump's real run is still not migrated" to
-      # the same shared resolver `scan`'s candidate now uses), not fixable
-      # from this workflow. `include/` here holds exactly one header
-      # (`abicheck_lab/math.h`), so `public-header-dir: include` alone
-      # already extracts and publicly-scopes it -- dropping the redundant,
-      # narrower `new-header:` avoids the extra seed slot entirely (real
-      # local repro: NOT_COMPARABLE -> NO_CHANGE) without masking any real
-      # ABI-context difference, since nothing under `include/` is excluded
-      # either way.
-      - name: ABICheck source scan (gate + canonical report)
+      # new-header: include (a DIRECTORY), not public-header-dir. A two-sided
+      # compare has no public-header-dir equivalent (upstream action.yml:
+      # "a two-sided compare has no equivalent flag"; validate-inputs.sh
+      # rejects it outside dump/audit). On dump, public-header-dir is
+      # forwarded as one more `-H` root (baseline.yml), and a directory
+      # `-H`/`--header new=` root is the same public-provenance +
+      # extraction-scope role on the candidate side -- so this keeps the
+      # historic recipe-parity rule (baseline and candidate both see exactly
+      # the `include/` directory root, and NOT an extra file root, which is
+      # what previously derived an extra -isystem include seed and
+      # NOT_COMPARABLE). scripts/check_recipe_parity.py enforces that
+      # mapping (public-header-dir on dump <-> new-header on compare).
+      - name: ABICheck source compare (gate + canonical report)
         id: scan
         if: steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
-          mode: scan
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
-          public-header-dir: include
+          new-header: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
-          against: ${{ runner.temp }}/math.base.abicheck.json
           since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
@@ -260,7 +246,7 @@ jobs:
           fail-on-breaking: true
           fail-on-api-break: true
           add-job-summary: true
-          # Latest main renders this scan JSON as the single sticky PR comment.
+          # The single sticky PR comment (native compare-mode renderer).
           pr-comment: true
 
       # Publish evidence unconditionally: a red gate is exactly when this
@@ -346,7 +332,7 @@ jobs:
         id: l2_castxml
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -380,7 +366,7 @@ jobs:
         id: l2_clang
         if: always() && steps.relevance.outputs.relevant == 'true'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -551,24 +537,25 @@ jobs:
       # keeps its own scope=changed behavior unchanged (out of scope for
       # this fix, and consistent with its own documented budget/cost
       # tradeoff for the actual PR gate).
-      # No separate `new-header:` here either, for the identical reason
-      # given on the required-gate `scan` step above (real, verified local
-      # repro: an explicit file `-H` root alongside a covering
-      # `public-header-dir` directory root derives one extra L2 include
-      # seed slot the `dump`-produced baseline never gets).
+      # Header root: `new-header: include` (the directory), for the
+      # identical reason given on the required-gate step above -- the
+      # two-sided compare equivalent of the dump baseline's
+      # `public-header-dir: include`, and never an extra file root beside
+      # it. Migrated from `mode: scan` (upstream ADR-068) the same way:
+      # `against:` -> `old-library:`.
       - name: L4 diagnostic · Clang replay (non-gating, artifact only)
         id: l4_clang_replay
         if: always() && steps.l4_replay_bazel_pack.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
-          mode: scan
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
-          public-header-dir: include
+          new-header: include
           sources: .
           build-info: ${{ steps.l4_replay_bazel_pack.outputs.pack_dir }}
           ast-frontend: clang
-          against: ${{ runner.temp }}/math.base.abicheck.json
           depth: source
           budget: 10m
           format: json
@@ -786,7 +773,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: ${{ runner.temp }}/strings.base.abicheck.json
@@ -887,7 +874,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math_shared.base.abicheck.json
@@ -1088,7 +1075,7 @@ jobs:
       - name: Install abicheck (for aggregate)
         id: install_abicheck
         continue-on-error: ${{ steps.manifest.outputs.count == '0' }}
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       - name: Aggregate per-target reports (fail-closed against the declared run-plan)
         id: aggregate_run
@@ -1110,14 +1097,12 @@ jobs:
             # introduce.
             abicheck aggregate "$RUNNER_TEMP/reports" \
               --manifest "$RUNNER_TEMP/aggregate-manifest.json" \
-              --format json \
-              -o "$RUNNER_TEMP/aggregate-report.json"
+              -o "json=$RUNNER_TEMP/aggregate-report.json"
           else
             echo 'math was not judged ABI-relevant for this PR -- nothing declared, falling back to --discovered-only (informational).'
             abicheck aggregate "$RUNNER_TEMP/reports" \
               --discovered-only \
-              --format json \
-              -o "$RUNNER_TEMP/aggregate-report.json"
+              -o "json=$RUNNER_TEMP/aggregate-report.json"
           fi
           python3 scripts/render_aggregate_summary.py "$RUNNER_TEMP/aggregate-report.json" \
             >> "$GITHUB_STEP_SUMMARY"
@@ -1410,7 +1395,7 @@ jobs:
         id: compare
         if: steps.build_base_consumer.outputs.available == 'true' || steps.build_head_consumer_fallback.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: >-
@@ -1575,7 +1560,7 @@ jobs:
         id: compare
         if: steps.build.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: compare
           old-library: ${{ runner.temp }}/math.base.abicheck.json
@@ -1734,7 +1719,7 @@ jobs:
           git init -q "$RUNNER_TEMP/abicheck-src"
           cd "$RUNNER_TEMP/abicheck-src"
           git remote add origin https://github.com/abicheck/abicheck.git
-          git fetch --depth 1 origin b299afdc2277a3c9857c413058177c8f6472fcd0
+          git fetch --depth 1 origin 5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71
           git sparse-checkout set --no-cone contrib/abicheck-clang-plugin
           git checkout FETCH_HEAD
 
@@ -1802,7 +1787,7 @@ jobs:
         id: install_abicheck
         if: steps.verify_facts.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       # The coverage contract below cross-checks the report's own L3_build
       # counts against Bazel's structural answer, and refuses (fails closed)
@@ -1890,21 +1875,27 @@ jobs:
       # asserts from the report itself, and `--policy strict_abi` is replaced
       # by the action's own fail-on-breaking/fail-on-api-break, exactly as on
       # the `scan` job.
+      #
+      # 2026-09-29: moved from `mode: scan` to `mode: compare` together with
+      # the required gate (upstream ADR-068 removed scan). Same inputs, with
+      # `against:` -> `old-library:` and `public-header-dir: include` ->
+      # `new-header: include` (see the gate step's comment for why that is
+      # the parity-preserving mapping).
       - name: Compare candidate (plugin-collected facts) against committed baseline
         id: l4_clang_plugin_compare
         if: steps.install_abicheck.outcome == 'success'
         continue-on-error: true
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
-          mode: scan
+          mode: compare
+          old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
-          public-header-dir: include
+          new-header: include
           sources: .
-          # The one deliberate difference from `scan`: the evidence comes
-          # from the clang plugin's own facts pack, not the bazel pack. That
-          # substitution IS this job.
+          # The one deliberate difference from the `scan` job's gate: the
+          # evidence comes from the clang plugin's own facts pack, not the
+          # bazel pack. That substitution IS this job.
           build-info: bazel-bin/tools/abicheck/math_abicheck_inputs
-          against: ${{ runner.temp }}/math.base.abicheck.json
           since: ${{ github.event.pull_request.base.sha }}
           depth: source
           format: json
@@ -1916,14 +1907,12 @@ jobs:
       # successful report production on the report's own evidence so an
       # implicit L3 fallback cannot appear as a green "L4 plugin" result.
       #
-      # This used to run ci/validate_source_depth.py --expected source, which
-      # requires an `analysis_assurance` block. That was a category error on
-      # my part, not a real contract: `analysis_assurance` belongs to the
-      # bare CLI's COMPARE schema, and this job (like the required `scan`
-      # gate) now produces a SCAN-schema report, which has never carried it
-      # -- verified by downloading both reports from run 32966728693, where
-      # `scan`'s own passing report has `analysis_assurance: null` too. So
-      # the old check could not pass on any report this repo produces.
+      # History: this once ran ci/validate_source_depth.py, which requires
+      # an `analysis_assurance` block that the old SCAN-schema report never
+      # carried. Since the 2026-09-29 migration this step produces a
+      # COMPARE-schema report again (which does carry
+      # `analysis_assurance`), and check_coverage_contract.py now reads
+      # that block's effective_depth/depth_satisfied too.
       #
       # scripts/check_coverage_contract.py is the checker written for this
       # schema, already used by the required gate and by baseline.yml. It is
@@ -2160,7 +2149,7 @@ jobs:
         id: install_abicheck
         if: steps.install_clang.outcome == 'success'
         continue-on-error: true
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       - name: Reuse the facts pack in this clean job
         id: reuse

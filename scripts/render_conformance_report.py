@@ -13,14 +13,13 @@ ever compared them to each other -- a producer disagreeing with its sibling
 human manually diffing two JSON artifacts by hand. This script is that
 comparison, made repeatable and machine-readable.
 
-Both `mode: compare` (l2-castxml, l2-clang, l4-clang-plugin -- a flat
-top-level `changes` list) and `mode: scan` (l4-clang-replay -- findings
-under `diff.findings`/`diff.additions`/`diff.quality`) report shapes are
-supported transparently (`_extract_findings` below): the two producer
-pairs this script is actually run against straddle both mode shapes
-(`l4-clang-replay` is `scan`, `l4-clang-plugin` is `compare`), so a
-single-shape parser would silently see one side as empty instead of
-comparing anything.
+Since the 2026-09-29 migration off the upstream-removed `mode: scan`
+(ADR-068), all four legs produce `mode: compare` reports (a flat top-level
+`changes` list), so both pairs are compare-vs-compare. The historic
+`mode: scan` shape (findings under `diff.findings`/`diff.additions`/
+`diff.quality`) is still parsed transparently (`_extract_findings` below)
+so an older archived artifact can be re-rendered; no current workflow
+produces one.
 
 Matching is a *multiset* match on ``(kind, symbol)`` (Codex review: an
 earlier revision collapsed same-key findings into a dict, silently
@@ -52,7 +51,7 @@ MARKER_TEMPLATE = "<!-- abicheck-lab-conformance-report:{key} -->"
 
 #: `compare` reports an unchanged pair as `NO_CHANGE`; `scan` reports the
 #: same "nothing gated" outcome as `COMPATIBLE` (see scenarios/manifest.yaml
-#: and render_scan_comment.py's own `_VERDICT_LINES`, respectively) -- two
+#: and the since-deleted render_scan_comment.py's `_VERDICT_LINES`, respectively) -- two
 #: spellings of the same "clean" verdict, not a real disagreement (Codex
 #: review, fresh evidence: comparing raw strings falsely flagged the L4
 #: replay/plugin pair as disagreeing on every implementation-only change).
@@ -112,7 +111,7 @@ def _report_has_values(report: dict | None) -> bool:
     A `compare`-mode report's flat ``changes`` list does; a `scan`-mode
     report's ``diff.findings``/``diff.additions``/``diff.quality`` entries
     never do -- they only ever carry ``kind``/``symbol``/``description``/
-    ``source_location`` (see ``render_scan_comment.py``, which renders the
+    ``source_location`` (see the since-deleted ``render_scan_comment.py``, which rendered the
     identical shape). Treating a scan-mode entry's *absent* old/new as an
     empty string made every shared finding in a scan-vs-compare pairing
     (l4-clang-replay vs. l4-clang-plugin, the one pairing this script
@@ -172,7 +171,7 @@ def _extract_findings(report: dict | None) -> list[dict[str, str]]:
 def _findings_truncated(report: dict | None) -> tuple[bool, dict]:
     """Whether *report*'s own ``diff.findings`` was already truncated by
     abicheck itself before this script ever saw it (``scan``-mode reports
-    only -- see ``scripts/render_scan_comment.py``'s identical check).
+    only -- the since-deleted ``scripts/render_scan_comment.py`` had the identical check).
 
     A `compare`-mode report's flat ``changes`` list has no equivalent
     truncation flag in this codebase, so this only ever fires for the

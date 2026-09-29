@@ -27,12 +27,25 @@ applies on both sides of every comparison, not just the PR side.
 
 Every field this script reads was verified against real reports downloaded
 from completed CI runs of this repo's own `scan` job and against the real
-committed baseline (not guessed). Two shapes, both handled (see
-`_coverage_by_layer`): a `scan`-mode report has `coverage` as a top-level
-list; a `dump`-mode snapshot has the same shape nested at
-`build_source.manifest.coverage`, and no top-level `coverage` or `level`
-key at all. Either way, each entry is a `{layer, status, confidence?,
-detail, elapsed_s?}` object.
+committed baseline (not guessed). Three shapes, all handled (see
+`_coverage_by_layer`): a (historic) `scan`-mode report has `coverage` as a
+top-level list; a `compare`-mode report -- what the gate produces since
+upstream ADR-068 removed `scan` (2026-09-29 migration) -- has it as a
+top-level `layer_coverage` list; a `dump`-mode snapshot has the same shape
+nested at `build_source.manifest.coverage`, and no top-level `coverage` or
+`level` key at all. Either way, each entry is a `{layer, status,
+confidence?, detail, elapsed_s?}` object.
+
+For a `compare` report two scan-only fields have structured replacements,
+both read fail-closed: effective depth comes from
+`analysis_assurance.effective_depth` (plus `depth_satisfied`, which must be
+`true`) instead of `level.depth`, and -- because compare emits no per-check
+`crosscheck:*` coverage rows -- public-header provenance comes from the
+report's `scope` block (`public_headers_applied`/`resolved` true,
+`fell_back` false). `analysis_assurance.status` itself is deliberately NOT
+required to be "complete": it also folds in source-graph narrowing that a
+`--since`-scoped PR replay always has, which this contract's own
+changed-scope rules already account for.
 
 `L4_source_abi`'s `detail` still carries free-text counts on current
 abicheck (e.g. `"scope=changed, 0/0 TUs parsed, 0/6 symbols matched, 3/6
@@ -344,6 +357,12 @@ def _coverage_by_layer(report):
     # nested one.
     coverage = report.get("coverage")
     if not coverage:
+        # Third shape (2026-09-29 scan -> compare migration): a two-sided
+        # `compare` JSON report carries the same {layer, status, confidence,
+        # detail} rows as a top-level `layer_coverage` list (verified against
+        # a real abicheck 5ba6a5c8 compare --depth source report).
+        coverage = report.get("layer_coverage")
+    if not coverage:
         coverage = (
             report.get("build_source", {})
             .get("manifest", {})
@@ -520,10 +539,48 @@ def _has_public_header_provenance(coverage):
     return any(coverage[layer].get("status") == "present" for layer in crosschecks)
 
 
+def _is_compare_report(report):
+    """A `compare`-schema JSON report (what abi-scan.yml's gate produces
+    since upstream ADR-068 removed `scan`): has `report_schema_version` and
+    a `layer_coverage` list. Such a report MUST also carry
+    `analysis_assurance` -- its absence is treated as missing evidence."""
+    return "report_schema_version" in report and "layer_coverage" in report
+
+
+def _compare_public_header_provenance(report):
+    """Positive public-header provenance evidence from a compare report.
+
+    A compare report has no per-crosscheck `crosscheck:*` coverage rows (the
+    cross-source checks reach compare as ordinary findings instead, ADR-068).
+    The structured equivalent of "the public/internal boundary was
+    established" is the report's own `scope` block: the public-header scope
+    was applied, it resolved, and it did not fall back. Allowlist, not
+    denylist: anything other than exactly those three values (including a
+    missing block) is "no provenance".
+    """
+    scope = report.get("scope")
+    if not isinstance(scope, dict):
+        return False
+    return (
+        scope.get("public_headers_applied") is True
+        and scope.get("resolved") is True
+        and scope.get("fell_back") is False
+    )
+
+
 def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target,
              require_public_header_provenance, min_export_match_ratio,
              changed_files=None, loaded_buildfiles=None,
              evidence_summary=None, evidence_summary_error=None):
+    if not isinstance(report, dict):
+        return {
+            "requested_depth": requested_depth,
+            "facts": {},
+            "failures": ["report is not a JSON object"],
+            "analysis_status": "INCOMPLETE",
+            "gate_status": "FAIL",
+            "compatibility_verdict": "NOT_FULLY_EVALUATED",
+        }
     coverage = _coverage_by_layer(report)
     # `level.depth` only exists on a `scan`-mode report. `dump`-mode
     # snapshots (baseline.yml) have no `level` key at all -- absent, not
@@ -533,11 +590,33 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
     # validate the baseline's own dump output, which has no such field).
     level = report.get("level")
     effective_depth = (level or {}).get("depth")
+    is_compare = _is_compare_report(report)
+    assurance = report.get("analysis_assurance") if is_compare else None
 
     failures = []
+    if is_compare:
+        # compare-schema report: the depth claim lives in
+        # `analysis_assurance`, which must be present (fail closed).
+        if not isinstance(assurance, dict):
+            effective_depth = None
+            failures.append(
+                "compare report carries no analysis_assurance block -- "
+                "effective evidence depth is unknown"
+            )
+        else:
+            effective_depth = assurance.get("effective_depth")
+            if effective_depth != requested_depth:
+                failures.append(
+                    f"requested depth '{requested_depth}' but effective depth was '{effective_depth}'"
+                )
+            if assurance.get("depth_satisfied") is not True:
+                failures.append(
+                    "analysis_assurance.depth_satisfied is "
+                    f"{assurance.get('depth_satisfied')!r}, not true"
+                )
     facts = {"requested_depth": requested_depth, "effective_depth": effective_depth}
 
-    if level is not None and effective_depth != requested_depth:
+    if not is_compare and level is not None and effective_depth != requested_depth:
         failures.append(
             f"requested depth '{requested_depth}' but effective depth was '{effective_depth}'"
         )
@@ -639,10 +718,19 @@ def evaluate(report, *, requested_depth, min_compile_units, require_bazel_target
                     f"< required minimum {min_export_match_ratio:.0%}"
                 )
 
-    has_provenance = _has_public_header_provenance(coverage)
+    if is_compare and not any(layer in _PROVENANCE_GATED_LAYERS for layer in coverage):
+        has_provenance = _compare_public_header_provenance(report)
+        facts["public_header_provenance_basis"] = "scope"
+    else:
+        has_provenance = _has_public_header_provenance(coverage)
+        facts["public_header_provenance_basis"] = "crosscheck"
     facts["public_header_provenance"] = has_provenance
     if require_public_header_provenance and not has_provenance:
-        failures.append("no public-header provenance (crosscheck layers skipped: supply --public-header/--public-header-dir)")
+        failures.append(
+            "no public-header provenance (crosscheck layers skipped, or the "
+            "compare report's public-header scope was not applied/resolved: "
+            "supply a public header directory root)"
+        )
 
     contract_met = not failures
     result = {

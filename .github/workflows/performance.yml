@@ -86,7 +86,7 @@ jobs:
 
       - name: Install abicheck
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       # abicheck's own snapshot cache (snapshot_cache.py) is keyed on
       # binary content + header content + relevant flags, and lives under
@@ -103,9 +103,8 @@ jobs:
           export XDG_CACHE_HOME="$RUNNER_TEMP/abicheck-cache"
           rm -rf "$XDG_CACHE_HOME"
           start_ns=$(date +%s%N)
-          abicheck dump bazel-bin/libmath.so \
+          ABICHECK_AST_FRONTEND=clang abicheck dump bazel-bin/libmath.so \
             --header include/abicheck_lab/math.h \
-            --ast-frontend clang \
             -o "$RUNNER_TEMP/math.perf.dump.json"
           end_ns=$(date +%s%N)
           echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
@@ -118,9 +117,8 @@ jobs:
           set -euo pipefail
           export XDG_CACHE_HOME="$RUNNER_TEMP/abicheck-cache"
           start_ns=$(date +%s%N)
-          abicheck dump bazel-bin/libmath.so \
+          ABICHECK_AST_FRONTEND=clang abicheck dump bazel-bin/libmath.so \
             --header include/abicheck_lab/math.h \
-            --ast-frontend clang \
             -o "$RUNNER_TEMP/math.perf.dump.warm.json"
           end_ns=$(date +%s%N)
           echo "ms=$(( (end_ns - start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
@@ -138,7 +136,7 @@ jobs:
             "abicheck_dump_warm_ms": ${{ steps.warm_dump.outputs.ms || 'null' }},
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
-            "scanner_sha": "b299afdc2277a3c9857c413058177c8f6472fcd0"
+            "scanner_sha": "5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
           }
           JSON
           python3 scripts/render_performance_summary.py \
@@ -186,7 +184,7 @@ jobs:
 
       - name: Install abicheck (pinned, same commit the `benchmark` job above uses)
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       # One cold build + one cold `abicheck dump` per profile, timed the
       # same way the `benchmark` job's own cold Bazel build/dump steps
@@ -225,9 +223,8 @@ jobs:
           staged="abicheck-build-$PROFILE_ID"
           library="$staged/$(python3 -c "import json; print(json.load(open('$staged/build-output.json'))['targets']['math']['path'])")"
           dump_start_ns=$(date +%s%N)
-          abicheck dump "$library" \
+          ABICHECK_AST_FRONTEND=clang abicheck dump "$library" \
             --header "$staged/headers/include/abicheck_lab/math.h" \
-            --ast-frontend clang \
             -o "$RUNNER_TEMP/math.perf.dump.cmake.json"
           dump_end_ns=$(date +%s%N)
           echo "dump_ms=$(( (dump_end_ns - dump_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
@@ -248,9 +245,8 @@ jobs:
           staged="abicheck-build-$PROFILE_ID"
           library="$staged/$(python3 -c "import json; print(json.load(open('$staged/build-output.json'))['targets']['math']['path'])")"
           dump_start_ns=$(date +%s%N)
-          abicheck dump "$library" \
+          ABICHECK_AST_FRONTEND=clang abicheck dump "$library" \
             --header "$staged/headers/include/abicheck_lab/math.h" \
-            --ast-frontend clang \
             -o "$RUNNER_TEMP/math.perf.dump.make.json"
           dump_end_ns=$(date +%s%N)
           echo "dump_ms=$(( (dump_end_ns - dump_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"
@@ -264,7 +260,7 @@ jobs:
           {
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
-            "scanner_sha": "b299afdc2277a3c9857c413058177c8f6472fcd0",
+            "scanner_sha": "5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71",
             "profiles": [
               {
                 "profile_id": "linux-x86_64-gcc14-cxx17-cmake-ninja",

@@ -726,7 +726,7 @@ Once the corresponding upstream work lands and is validated, the following lab c
 | `scripts/check_coverage_contract.py` | `analysis_assurance` plus assurance gate |
 | `tools/abicheck/facts.bzl` | Supported `rules_abicheck`/contrib Bazel aspect |
 | `scripts/render_conformance_report.py` | `abicheck conformance compare` |
-| `scripts/render_scan_comment.py` | Native scan PR-comment renderer |
+| ~~`scripts/render_scan_comment.py`~~ (deleted 2026-09-29) | Native compare-mode PR comment (the gate now runs `mode: compare`) |
 | Custom sticky-comment GitHub Script | Native Action comment support |
 | Baseline JSON normalization script | Canonical serializer + provenance sidecar |
 | Discovered-only aggregate wiring | Run-plan-aware fail-closed aggregate |
@@ -1250,3 +1250,91 @@ specific, CI-breaking regression. `abi/math.abicheck.json` and the other
 committed baselines still need a fresh `baseline.yml` run against the new
 pin before `scan --against` compares like for like again (same caveat this
 doc's own `public-header-dir` fix noted for the prior pin bump).
+
+---
+
+# 2026-09-29: scan retirement -- lab migrated to `mode: compare`
+
+**Upstream change.** abicheck ADR-068 hard-removed the `scan` CLI command and
+the Action's `mode: scan` (upstream `85c319c4`, 2026-09-11; no deprecation
+window -- a `mode: scan` step now fails before setup). The same CLI cleanup
+removed `compare`'s `--format`, `--lang`, `--ast-frontend`/`--compiler` and
+`--require-complete-analysis` flags (now `-o FORMAT=PATH`, and
+`.abicheck.yml` `compile:`/`assurance:` config keys, or
+`ABICHECK_AST_FRONTEND` for a per-run frontend pin), and `aggregate`'s
+`--format`.
+
+**Lab change.** `legacy_sha` moved `b299afdc` -> `5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71`
+(abicheck `main` HEAD on 2026-09-29, i.e. past the removal). Converging onto
+`sha` (`42da2d2f`, 2026-08-24) was rejected: it predates the removal, so it
+would not put the lab on the supported surface, and `sha` also drives the
+native project path's reusable workflows and baseline generation, which is a
+separate reviewed bump. Migrated paths:
+
+| Path | Was | Now |
+|---|---|---|
+| `abi-scan.yml` `scan` job (required gate; job/check name unchanged) | `mode: scan`, `against:`, `public-header-dir: include` | `mode: compare`, `old-library:` (same trusted base-commit file), `new-header: include`; `depth: source`, `since:`, `sources:`, `build-info:`, `budget: 10m`, fail-on-*, one `pr-comment` all unchanged |
+| `abi-scan.yml` L4 clang-replay and L4 clang-plugin legs | `mode: scan` | `mode: compare`, same mapping |
+| `abi-scan.yml` `aggregate` | `--format json -o P` | `-o json=P` |
+| `performance.yml`, `canary.yml` CLI dumps/compares | `--ast-frontend clang`, `--lang c++ --format json` | `ABICHECK_AST_FRONTEND=clang`, `-o json=P` |
+| `ci/real_scan.py`, `scripts/run_scenario.py`, `ci/compare_build_outputs.py` | `--format json -o P` (+ `--lang`, `--ast-frontend`) | `-o json=P`, env frontend pin, `lang` default (c++) |
+| `ci/run_plugin_pack_reuse.py` | `--ast-frontend clang --require-complete-analysis` | run-local `--config` with `compile.frontend: clang` + `assurance.require_complete: true` |
+| `scripts/check_coverage_contract.py` | read scan's `coverage` / `level.depth` / `crosscheck:*` rows | also reads compare's `layer_coverage`, `analysis_assurance.effective_depth` + `depth_satisfied` (fail closed if absent), and `scope` for public-header provenance |
+| `scripts/check_recipe_parity.py` | extra-args shadowing only | + header-root parity (baseline `public-header-dir` == gate `new-header`, no extra root) and a hard reject of `mode: scan` anywhere |
+| `scripts/render_scan_comment.py` | unused scan-report renderer | deleted |
+
+Validated locally against abicheck `5ba6a5c8` (g++-built `libmath.so`, hand
+written `compile_commands.json`, clang frontend -- no Bazel/CastXML in the
+sandbox): `compare <dump> libmath.so --header new=include --sources new=.
+--build-info new=... --depth source --since <base> --budget 10m -o json=...`
+returns `NO_CHANGE`, and the updated coverage contract passes on that report
+(effective depth source, 1/1 TUs, 3/3 symbols accounted, provenance via
+`scope`) and fails closed on each single-field weakening
+(`tests/test_check_coverage_contract_compare.py`).
+
+## Capabilities with no compare-mode equivalent (gaps, not faked)
+
+1. **Per-check `crosscheck:*` coverage rows.** A scan report listed each
+   provenance-gated cross-source check (`exported_not_public`,
+   `public_not_exported`, `private_header_leak`, `rtti_for_internal_type`)
+   with its own `present`/`skipped` status, and the lab's contract required
+   at least one `present`. A compare report has no such rows (cross-source
+   checks surface only as ordinary findings). The contract now accepts the
+   report's `scope` block (public-header scope applied, resolved, not fallen
+   back) as the provenance signal. That is weaker evidence than "a
+   provenance-gated check actually ran" -- it proves the public/internal
+   boundary was established, not that each check executed. **Ask:** emit a
+   per-check run status (ran/skipped + reason) in the compare report, e.g.
+   under `analysis_assurance` or `layer_coverage`.
+2. **The coverage-contract verdict in the PR comment.** The native compare
+   comment renders abicheck's own verdict; it cannot show the lab's
+   independent `NOT_FULLY_EVALUATED` result. The gate is still fail-closed
+   (the `Enforce gate` step fails on either outcome, and the contract result
+   is an artifact + error annotation), but a reader of the comment alone can
+   see a green-looking verdict on a red run. **Ask:** a supported way to
+   attach an external gate result to the native comment, or first-class
+   gating on `analysis_assurance` fields richer than `require_complete`
+   (P0.4) so the lab contract can be deleted.
+3. **`analysis_assurance.status` is not usable as the gate.** On a
+   `--since`-scoped replay it reports `partial` purely because source-graph
+   passes ran narrowed-scope, so `assurance.require_complete: true` would
+   fail every PR. The lab therefore keeps its own contract (depth +
+   TU/export accounting + provenance) rather than switching to the native
+   assurance axis. **Ask:** make narrowed-by-request graph scope distinct
+   from genuinely incomplete evidence in `analysis_assurance.status`.
+4. **Cross-version baselines are not like-for-like.** A local repro of a
+   `b299afdc` dump compared by `5ba6a5c8` (same binary, same headers, clang
+   frontend) reports a spurious `API_BREAK` (`func_became_inline` +
+   `public_not_exported` on the implicit `Calculator` constructor, plus
+   `header_binary_context_mismatch`); a same-version pair is `NO_CHANGE`.
+   The first gate run on this pin compares a new-pin candidate against the
+   old-pin `abi/math.abicheck.json` from the PR base, so it may go red for
+   that reason alone until `baseline.yml` regenerates the baselines on
+   `main`. **Ask:** a snapshot produced by an older abicheck should either
+   compare cleanly or be refused as NOT_COMPARABLE with a
+   producer-version reason, never produce findings.
+
+Not affected: `mode: compare` has native sticky PR comments,
+`add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
+shape, so none of those needed a lab workaround.
+

@@ -134,7 +134,8 @@ PR baseline from the candidate under test: a rebuild always uses the resolved
 accepted-main source commit's own tree, never this PR's.
 
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
-ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
+ABICheck scanner (a two-sided `mode: compare`, `depth: source` — `mode:
+scan` until upstream ADR-068 removed it) against this repo's root
 Bazel build, resolves its trusted baseline from the pull request's exact
 base commit (never the working tree), enforces an independent
 evidence-coverage contract on top of the scanner's own verdict, and
@@ -332,7 +333,7 @@ promotion criteria for the third are in
     abi-scan.yml       integration-shadow.yml  project-shadow.yml
  ┌──────────────────┐  ┌─────────────────────┐ ┌───────────────────────────┐
  │ real abicheck     │  │ ci/select_profiles  │ │ .abicheck.yml (topology)   │
- │ scan, depth:source│  │ (profiles.yaml +    │ │   │                        │
+ │ compare,d:source  │  │ (profiles.yaml +    │ │   │                        │
  │ base-SHA baseline │  │  event-policy)      │ │ baseline-ref               │
  │ coverage contract │  │   bazel cmake make  │ │   ci/baseline_resolution   │
  │ ── ONE verdict ── │  │   ci/run_profile.py │ │   │  (receipt: which       │
@@ -413,11 +414,14 @@ abicheck-build-<profile-id>/
 ## Local quick start
 
 ```bash
-# Canonical Bazel build + real ABICheck scan (needs bazel and network access
-# to install abicheck):
+# Canonical Bazel build + real ABICheck source-depth comparison against the
+# committed baseline (needs bazel and network access to install abicheck).
+# `abicheck scan` no longer exists upstream (ADR-068); this is its
+# replacement, the same shape the required gate runs:
 bazel build //:math
-pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
-abicheck scan --sources . --depth source --against abi/math.abicheck.json
+pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
+abicheck compare abi/math.abicheck.json bazel-bin/libmath.so \
+  --header new=include --sources new=. --depth source -o json=abicheck-report.json
 
 # One multi-build-system profile: build, stage, and validate build-output.json
 # only (ci/run_profile.py stops there — it does NOT run check_profile.py's

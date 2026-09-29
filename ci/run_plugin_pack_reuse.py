@@ -156,7 +156,7 @@ def run_compare(
     """Compare against *baseline* using only shipped evidence.
 
     No ``--sources``: the whole point is that this job has no source tree to
-    offer. ``--ast-frontend clang`` matches the producer side, so a
+    offer. clang as the header frontend (``compile.frontend``) matches the producer side, so a
     divergence here is a producer divergence and not a frontend one.
 
     The public-header DIRECTORY is passed alongside the file. That is not
@@ -171,15 +171,26 @@ def run_compare(
     file+directory reproduces the baseline's scope_fingerprint exactly.
     """
     out.unlink(missing_ok=True)
+    # Upstream removed `--ast-frontend` and `--require-complete-analysis`
+    # from the CLI (ADR-037 D8.1 / ADR-068 Phase 6: both are config-only
+    # now, `compile.frontend` and `assurance.require_complete`), and
+    # `--format json -o PATH` became `-o json=PATH`. The two settings are
+    # carried by an explicit, run-local `--config` so their meaning is
+    # unchanged: clang parses the headers, and an analysis whose
+    # `analysis_assurance.status` is not "complete" still exits non-zero.
+    config = out.parent / f"{out.stem}.abicheck.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "compile:\n  frontend: clang\nassurance:\n  require_complete: true\n",
+        encoding="utf-8",
+    )
     argv = [
         "abicheck", "compare", str(baseline), str(binary),
         "--header", f"new={header}",
         "--header", f"new={header.parent}",
-        "--ast-frontend", "clang",
+        "--config", str(config),
         "--depth", "source",
-        "--require-complete-analysis",
-        "--format", "json",
-        "-o", str(out),
+        "-o", f"json={out}",
         "--policy", "strict_abi",
     ]
     if pack is not None:

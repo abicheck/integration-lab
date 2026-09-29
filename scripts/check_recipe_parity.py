@@ -1,39 +1,36 @@
 #!/usr/bin/env python3
-"""Check that no `abicheck/abicheck` Action step in this repo's workflows
-passes a contract-defining CLI flag through `extra-args` -- a static guard
-against exactly the bug that produced the recurring NOT_COMPARABLE /
-`include_sequence` mismatch between the committed `math` baseline
-(baseline.yml, `mode: dump`) and the canonical PR scan (abi-scan.yml,
-`mode: scan`).
+"""Recipe-parity guards between the committed `math` baseline
+(baseline.yml, `mode: dump`) and the canonical PR gate (abi-scan.yml,
+`mode: compare` -- `mode: scan` until upstream ADR-068 removed it).
 
-Root cause (see abi-scan.yml's own comment on its `scan` step for the
-full history): the scan step passed `--public-header-dir include` through
-raw `extra-args`, while a *typed* `public-header-dir:` input already
-existed on the pinned Action and -- for `mode: scan` specifically --
-forwards the value through an extra, candidate-sided `-H new=...` header
-root that raw `extra-args` never gets (action.yml's own doc for this
-input explains why: keeping a fresh `dump` baseline and a `scan --against`
-it comparable on `include_sequence` instead of drifting apart for no real
-recipe difference). baseline.yml's `dump` steps already used the typed
-input; abi-scan.yml's `scan` steps didn't, so the two sides of one
-logical comparison were extracted through two different effective
-recipes even though both workflows *looked* like they were doing the same
-thing -- prose ("this is the same recipe") is not a contract, only a
-check like this one is.
+Two checks, both static and mechanical:
 
-This check is deliberately narrow and mechanical: it does not attempt to
-model the Action's full input surface or actually resolve an effective
-analysis recipe (that belongs in abicheck core -- see abicheck's own
-AGENTS.md "Known gaps" for the extent of that work). It only asks: for
-every `abicheck/abicheck` step in a workflow, does `extra-args` contain a
-flag that a *typed* input on the same step already exists for? If a step
-sets a typed input for a contract-defining flag, `extra-args` re-stating
-that same flag is redundant at best (and was actively wrong for
-`public-header-dir` on `scan`, per the divergence above) -- so the
-combination is rejected outright, matching the docs (`README.md` /
-`docs/` -- see the P0 recommendation this script implements) that
-`extra-args` is for temporary experimentation, not for contract-defining
-flags a typed input already covers.
+1. **No contract-defining flag through `extra-args`.** Historical root cause
+   of the recurring NOT_COMPARABLE / `include_sequence` mismatch: the scan
+   step passed `--public-header-dir include` through raw `extra-args`
+   instead of the typed input, so the Action-side wiring the typed input
+   drives (an extra candidate-sided `-H new=...` root) never happened and
+   the two sides were extracted through two different effective recipes
+   even though both workflows *looked* the same. Prose ("this is the same
+   recipe") is not a contract, only a check like this one is. For every
+   `abicheck/abicheck` step, `extra-args` may not contain a flag that a
+   typed input exists for.
+
+2. **Header-root parity for the two-sided gate** (added with the
+   2026-09-29 scan -> compare migration). A two-sided compare has no
+   `public-header-dir` input (upstream rejects it outside dump/audit); the
+   parity-preserving replacement is `new-header:` naming the SAME
+   directory the baseline dump passes as `public-header-dir` -- and no
+   extra header root beside it, which is what previously derived an extra
+   `-isystem` include seed and NOT_COMPARABLE. So every two-sided
+   `mode: compare` step with `depth: source` whose `old-library` is the
+   trusted `math.base.abicheck.json` must set `new-header` to exactly the
+   baseline's `public-header-dir`, must not set `header`/`public-header-dir`
+   itself, and no step anywhere may still use the retired `mode: scan`
+   (which upstream now fails outright).
+
+This does not attempt to model the Action's full input surface or resolve
+an effective analysis recipe (that belongs in abicheck core).
 """
 
 from __future__ import annotations
@@ -189,9 +186,9 @@ def check_step(label: str, with_block: dict[str, Any]) -> list[str]:
                 f"typed {typed_input!r} input already set on this same "
                 "step. Set only the typed input -- see this step's own "
                 "history for why the two are not equivalent (a typed "
-                "input can drive extra Action-side wiring, e.g. "
-                "`public-header-dir` on `mode: scan`, that raw extra-args "
-                "never gets)."
+                "input can drive extra Action-side wiring (historically "
+                "`public-header-dir` on the retired `mode: scan`) that raw "
+                "extra-args never gets)."
             )
         else:
             errors.append(
@@ -213,6 +210,86 @@ def check(workflows: dict[Path, dict[str, Any]]) -> list[str]:
     return errors
 
 
+#: The trusted, base-commit baseline file every gate-shaped compare reads
+#: (resolve-baseline's `baseline-temp-filename` in abi-scan.yml).
+_MATH_BASELINE_SUFFIX = "/math.base.abicheck.json"
+
+
+def _baseline_public_header_dir(workflows: dict[Path, dict[str, Any]]) -> tuple[str | None, list[str]]:
+    """`public-header-dir` of baseline.yml's source-depth `math` dump."""
+    errors: list[str] = []
+    found: set[str] = set()
+    for path, workflow in workflows.items():
+        if path.name != "baseline.yml":
+            continue
+        for label, with_block in _abicheck_steps(workflow, path):
+            if (
+                with_block.get("mode") == "dump"
+                and with_block.get("new-library") == "bazel-bin/libmath.so"
+                and with_block.get("depth") == "source"
+            ):
+                value = with_block.get("public-header-dir")
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"{label}: source-depth math baseline dump sets no public-header-dir")
+                else:
+                    found.add(value.strip())
+    if len(found) > 1:
+        errors.append(f"baseline.yml: conflicting math public-header-dir values {sorted(found)}")
+    return (next(iter(found)) if len(found) == 1 else None), errors
+
+
+def check_header_root_parity(workflows: dict[Path, dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    for path, workflow in workflows.items():
+        for label, with_block in _abicheck_steps(workflow, path):
+            if with_block.get("mode") == "scan":
+                errors.append(
+                    f"{label}: `mode: scan` was removed upstream (ADR-068, no "
+                    "deprecation window) and now fails the step; use "
+                    "`mode: compare` with the baseline as `old-library`."
+                )
+    has_baseline_workflow = any(p.name == "baseline.yml" for p in workflows)
+    if not has_baseline_workflow:
+        return errors
+    public_dir, baseline_errors = _baseline_public_header_dir(workflows)
+    errors.extend(baseline_errors)
+    gate_steps = 0
+    for path, workflow in workflows.items():
+        for label, with_block in _abicheck_steps(workflow, path):
+            old = with_block.get("old-library")
+            if not (
+                with_block.get("mode", "compare") == "compare"
+                and with_block.get("depth") == "source"
+                and isinstance(old, str)
+                and old.strip().endswith(_MATH_BASELINE_SUFFIX)
+            ):
+                continue
+            gate_steps += 1
+            for forbidden in ("header", "public-header-dir"):
+                if with_block.get(forbidden) not in (None, ""):
+                    errors.append(
+                        f"{label}: sets {forbidden!r} on a two-sided source-depth "
+                        "compare against the math baseline; use exactly "
+                        "`new-header: <baseline public-header-dir>` instead."
+                    )
+            new_header = with_block.get("new-header")
+            if public_dir is not None and (
+                not isinstance(new_header, str) or new_header.strip() != public_dir
+            ):
+                errors.append(
+                    f"{label}: new-header is {new_header!r}, but the baseline dump's "
+                    f"public-header-dir is {public_dir!r} -- the candidate must see the "
+                    "same single directory root (and nothing else) or the two sides "
+                    "diverge on include_sequence."
+                )
+    if public_dir is not None and gate_steps == 0:
+        errors.append(
+            "no two-sided source-depth compare against math.base.abicheck.json "
+            "was found -- the parity check has nothing to check (retarget it)."
+        )
+    return errors
+
+
 def main() -> int:
     workflows: dict[Path, dict[str, Any]] = {}
     for path in CHECKED_WORKFLOWS:
@@ -221,7 +298,7 @@ def main() -> int:
         with path.open() as f:
             workflows[path] = yaml.safe_load(f)
 
-    errors = check(workflows)
+    errors = check(workflows) + check_header_root_parity(workflows)
     if errors:
         print(
             f"check_recipe_parity: {len(errors)} problem(s) found:\n",
@@ -233,7 +310,8 @@ def main() -> int:
 
     print(
         "check_recipe_parity: OK -- no abicheck/abicheck step shadows a "
-        "typed contract input through extra-args"
+        "typed contract input through extra-args, and the source-depth gate's "
+        "header root matches the baseline's"
     )
     return 0
 

@@ -326,12 +326,11 @@ def _try_abicheck_compare(
             "old=profile-a",
             "--version",
             "new=profile-b",
-            "--lang",
-            "c++",
-            "--format",
-            "json",
+            # `--lang c++` (now config `compile.lang`, default c++) and
+            # `--format json` were removed upstream; `-o FORMAT=PATH` is the
+            # one export spelling.
             "-o",
-            str(out_path),
+            f"json={out_path}",
             "--policy",
             "strict_abi",
         ]

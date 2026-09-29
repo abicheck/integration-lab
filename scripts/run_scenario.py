@@ -24,6 +24,7 @@ never installs anything, so it stays runnable the same way locally.
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -167,8 +168,14 @@ def run_abicheck_compare(
     # manifest entry declares per-profile expectations (`expected:`), so
     # the same fixture pair can be run once per header frontend and
     # checked against each frontend's own oracle verdict.
+    #
+    # Upstream removed the `--ast-frontend` CLI flag (ADR-037 D8.1 /
+    # ADR-068 Phase 6: the compile context is `.abicheck.yml` `compile:`
+    # config only); `ABICHECK_AST_FRONTEND` is the documented per-run pin and
+    # applies because no project config here sets `compile.frontend`.
+    env = None
     if ast_frontend is not None:
-        cmd += ["--ast-frontend", ast_frontend]
+        env = {**os.environ, "ABICHECK_AST_FRONTEND": ast_frontend}
     # suppress is optional: a scenario declaring `suppress:` (repo-relative
     # path to a YAML rule file) proves a scenario's own gating finding
     # stops gating once suppressed, while staying visible in the report's
@@ -185,16 +192,14 @@ def run_abicheck_compare(
         "old=old",
         "--version",
         "new=new",
-        "--lang",
-        "c++",
-        "--format",
-        "json",
+        # `--lang c++` is gone upstream (config `compile.lang`, whose default
+        # is already c++); `--format json -o PATH` became `-o json=PATH`.
         "-o",
-        str(output_json),
+        f"json={output_json}",
         "--policy",
         "strict_abi",
     ]
-    subprocess.run(cmd, check=False)
+    subprocess.run(cmd, check=False, env=env)
 
 
 def _resolve_fixture_new_header(scenario, fixture_dir: Path, build_dir: Path) -> Path:

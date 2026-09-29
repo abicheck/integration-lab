@@ -30,24 +30,37 @@ sha: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
 # re-namespaces every accepted-main cache key (see project-baseline.yml).
 generation: 1
 
-# Scanner still used by the older single-target scan/scenario suite.  These
-# workflows predate the native project contract and are migrating onto `sha`
-# one at a time; until then this pin is reviewed here rather than being an
-# unexplained literal in nine workflow files.
+# Scanner used by the older single-target Bazel gate/scenario suite
+# (abi-scan.yml, baseline.yml, scenarios.yml, integration-shadow.yml,
+# profile-baseline.yml, release.yml, performance.yml).  These workflows
+# predate the native project contract and are migrating onto `sha` one at a
+# time; until then this pin is reviewed here rather than being an
+# unexplained literal in every workflow file.
 #
-# 2026-09-07 P0 bump (see UPSTREAM_TO_ABICHECK.md's "abicheck scan --against
-# reports NOT_COMPARABLE against every abicheck dump baseline" entry): the
-# prior legacy_sha (6fb8536) makes the legacy suite's required `scan
-# --against <dump baseline>` gate structurally unable to pass -- a
-# byte-identical evidence pack dumped then scanned against itself still
-# reports profile_fingerprint mismatch on `include_sequence`. Verified fixed
-# by direct local repro (g++-built library + hand-written
-# compile_commands.json, `--ast-frontend clang`, --against a same-recipe
-# dump): 6fb8536 -> NOT_COMPARABLE, b299afdc (this bump) -> NO_CHANGE. This
-# was already recorded as `candidate_sha` below, so promoting it here is the
-# certification step this file's own bump flow describes, done by direct
-# reproduction rather than a canary run.
-legacy_sha: b299afdc2277a3c9857c413058177c8f6472fcd0
+# 2026-09-29 bump (b299afdc -> 5ba6a5c8, abicheck/main HEAD): upstream
+# ADR-068 hard-removed the `scan` CLI command and the Action's `mode: scan`
+# (abicheck 85c319c4, 2026-09-11, no deprecation window), and CLI cleanup
+# removed compare's `--format`/`--lang`/`--ast-frontend`/
+# `--require-complete-analysis` flags (now `-o FORMAT=PATH` and
+# `.abicheck.yml` `compile:`/`assurance:` keys).  Every path that ran under
+# this pin has been migrated to the replacement surface -- `mode: compare`
+# (two-sided, `old-library:` = the trusted base-commit baseline) and
+# `abicheck compare -o json=PATH` -- see UPSTREAM_TO_ABICHECK.md's
+# "2026-09-29: scan retirement" section for what did and did not carry
+# over.  Converging onto `sha` (42da2d2f, 2026-08-24) was considered and
+# rejected: it predates the scan removal, so it would not move the lab onto
+# the supported surface -- and `sha` itself drives the native project path's
+# reusable workflows + baseline generation, which is a separate reviewed
+# bump.
+#
+# Baseline note: abi/*.abicheck.json were dumped by the previous pin.
+# A local cross-version repro (b299afdc dump vs 5ba6a5c8 compare, clang
+# frontend) is NOT clean -- it reports a spurious func_became_inline /
+# public_not_exported on the implicit Calculator ctor that a same-version
+# pair does not.  The first PR on this pin therefore compares a new-pin
+# candidate against an old-pin baseline; baseline.yml regenerates the
+# baseline at this pin on merge.
+legacy_sha: 5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71
 
 # Next candidate for canary certification.  Not installed by anything.
 candidate_sha: f7b4fdcc7dafd73ea483b4522a3f63df3a74653f

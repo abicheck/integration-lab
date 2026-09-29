@@ -149,6 +149,14 @@ expected_gaps:
   # had, and ci/validate_source_depth.py already treats a missing block as
   # "source-depth satisfaction is unproven" everywhere else in this
   # repository.
+  #
+  # 2026-09-29: the replay leg now runs `mode: compare` (upstream removed
+  # `scan`, ADR-068), whose report does carry `analysis_assurance`, so the
+  # "no block at all" half of this gap should close. It is deliberately NOT
+  # removed yet: the reuse check also requires `status: complete`, which a
+  # compare report can withhold for source-graph narrowing alone (see
+  # UPSTREAM_TO_ABICHECK.md, "2026-09-29: scan retirement", gap 3). Remove
+  # or re-scope this entry only after a real CI run shows the outcome.
   - id: replay-report-assurance-block
     status: expected_gap
     upstream_issue: abicheck#scan-report-analysis-assurance

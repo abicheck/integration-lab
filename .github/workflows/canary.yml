@@ -337,14 +337,15 @@ jobs:
       # A dump of the SAME build the Action step below also reads --
       # `abicheck compare` between two views of one identical binary+header
       # pair is the self-check this workflow's own header comment
-      # explains (never `scan --against`, which is the known-broken path).
+      # explains (`scan` itself no longer exists upstream -- ADR-068).
       - name: Dump self-comparison baseline
         id: dump_baseline
         if: steps.install_abicheck.outcome == 'success'
         run: |
-          abicheck dump bazel-bin/libmath.so \
+          # --ast-frontend was removed from the CLI upstream (ADR-037
+          # D8.1/ADR-068 Phase 6); the env var is the per-run spelling.
+          ABICHECK_AST_FRONTEND=clang abicheck dump bazel-bin/libmath.so \
             --header include/abicheck_lab/math.h \
-            --ast-frontend clang \
             -o "$RUNNER_TEMP/canary-self-baseline.json"
 
       - name: "Run the candidate Action (self-comparison, mode: compare)"
@@ -526,8 +527,7 @@ jobs:
           abicheck compare "$library" "$library" \
             --version "old=self" --version "new=self" \
             --header "old=$header" --header "new=$header" \
-            --lang c++ --format json \
-            -o "canary-build-integration-${{ matrix.profile }}.json" \
+            -o "json=canary-build-integration-${{ matrix.profile }}.json" \
             --policy strict_abi || true
 
       # An unchanged library+header compared against itself must report a

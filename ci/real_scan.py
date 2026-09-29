@@ -306,8 +306,9 @@ def compare_real_snapshots(old_snapshot: Path, new_snapshot: Path, out_path: Pat
     cmd = [
         sys.executable, "-m", "abicheck", "compare",
         str(old_snapshot), str(new_snapshot),
-        "--format", "json",
-        "-o", str(out_path),
+        # `-o FORMAT=PATH` is the only export spelling since upstream's CLI
+        # cleanup removed `--format` (abicheck >= the 2026-09-29 legacy_sha).
+        "-o", f"json={out_path}",
     ]
     proc = _run(cmd)
     if not out_path.is_file():
