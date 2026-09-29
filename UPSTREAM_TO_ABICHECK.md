@@ -1364,6 +1364,26 @@ returns `NO_CHANGE`, and the updated coverage contract passes on that report
    NOT declared a gap until the runner's new on-mismatch findings print names
    the risk finding.
 
+6. **Linker-reserved symbols reported as `exported_not_public`**
+   (`abicheck#linker-reserved-exported-not-public`). When the linker exports
+   `__bss_start`/`_edata`/`_end` (Bazel's default link on ubuntu-24.04 does;
+   reproduced locally with `g++ -fuse-ld=gold`, while the default bfd `ld`
+   2.42 does not), `5ba6a5c8` emits three `exported_not_public` RISK
+   findings, so a purely additive `add_function` reads
+   `COMPATIBLE_WITH_RISK`. `b299afdc` reports plain `COMPATIBLE` on the same
+   gold-linked pair. Root cause in upstream source:
+   `buildsource/cross_source_checks.py:_check_exported_not_public` iterates
+   the raw export table without the shared
+   `elf_symbol_filter.is_abi_relevant_elf_symbol` filter, whose
+   `_ELF_LINKER_ARTIFACTS` already lists exactly these names (the sibling
+   `unversioned_exported_symbol` check does apply it). Declared per build
+   system as `expected_gap` on `add_function` (Bazel only) and folded into
+   the Bazel outcomes of the two suppression gaps. Consequence for
+   `scenario_parity`: Bazel's finding set now differs from cmake/make by
+   exactly these three symbols, so the parity job reports a real (upstream-
+   caused) disagreement until this is fixed -- not relaxed in the lab.
+   **Ask:** apply `is_abi_relevant_elf_symbol` in `_check_exported_not_public`.
+
 Not affected: `mode: compare` has native sticky PR comments,
 `add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
 shape, so none of those needed a lab workaround.

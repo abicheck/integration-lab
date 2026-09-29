@@ -202,6 +202,18 @@ expected_gaps:
   # (scripts/run_scenario.py): only this exact outcome is tolerated, and the
   # scenario FAILS again once upstream fixes it. Repro:
   # UPSTREAM_TO_ABICHECK.md, "2026-09-29: scan retirement", gap 5.
+  # abicheck 5ba6a5c8 reports the linker-reserved symbols
+  # __bss_start/_edata/_end as exported_not_public (RISK) when the linker
+  # exports them (Bazel's default gold link does; bfd does not). Its
+  # cross-check skips the shared elf_symbol_filter that already lists them
+  # (_ELF_LINKER_ARTIFACTS). Enforced per scenario/build system by the
+  # `expected_gap:` blocks on add_function and the two suppression scenarios.
+  - id: linker-reserved-exported-not-public
+    status: expected_gap
+    upstream_issue: abicheck#linker-reserved-exported-not-public
+    expected_failure:
+      phase: scenarios
+      reason: linker_reserved_bss_start_edata_end_reported_exported_not_public_risk
   - id: suppression-derived-surface-findings-full
     status: expected_gap
     upstream_issue: abicheck#suppression-derived-surface-findings
@@ -679,6 +691,24 @@ scenarios:
     old_output: bazel-bin/fixtures/add_function/v1/libimpl.so
     new_output: bazel-bin/fixtures/add_function/v2/libimpl.so
     new_header: fixtures/add_function/v2/lib.h
+    expected_gap:
+      upstream_issues:
+        - abicheck#linker-reserved-exported-not-public
+      reason: >
+        Bazel's gold-linked fixture exports __bss_start/_edata/_end; the new pin
+        reports them exported_not_public (RISK), so the purely additive change
+        reads COMPATIBLE_WITH_RISK. cmake/make (bfd) builds do not export them.
+      # Exact outcomes, per --build-system. Bazel's default (gold) link
+      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
+      observed:
+        bazel:
+          verdict: COMPATIBLE_WITH_RISK
+          findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
+            - "func_added:_ZN8scenario12new_functionEi"
+            - "public_surface_grew:<surface>"
     expected:
       castxml: COMPATIBLE
       clang: COMPATIBLE
@@ -738,14 +768,31 @@ scenarios:
     # removal itself, now fully suppressed.
     expected_gating_symbols: []
     expected_gap:
-      upstream_issue: abicheck#suppression-derived-surface-findings
+      upstream_issues:
+        - abicheck#suppression-derived-surface-findings
+        - abicheck#linker-reserved-exported-not-public
       reason: >
         the exact-symbol rule suppresses func_removed, but the derived
-        public_surface_shrank finding stays unsuppressed (verdict COMPATIBLE).
+        public_surface_shrank stays unsuppressed (COMPATIBLE, not NO_CHANGE);
+        on Bazel, linker-reserved exports are also reported exported_not_public.
+      # Exact outcomes, per --build-system. Bazel's default (gold) link
+      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
       observed:
-        verdict: COMPATIBLE
-        findings:
-          - "public_surface_shrank:<surface>"
+        bazel:
+          verdict: COMPATIBLE
+          findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
+            - "public_surface_shrank:<surface>"
+        cmake:
+          verdict: COMPATIBLE
+          findings:
+            - "public_surface_shrank:<surface>"
+        make:
+          verdict: COMPATIBLE
+          findings:
+            - "public_surface_shrank:<surface>"
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
@@ -790,16 +837,37 @@ scenarios:
       - _ZN8scenario12required_apiEi
       - _ZN8scenario12required_apiEl
     expected_gap:
-      upstream_issue: abicheck#suppression-derived-surface-findings
+      upstream_issues:
+        - abicheck#suppression-derived-surface-findings
+        - abicheck#linker-reserved-exported-not-public
       reason: >
         legacy_metric's removal is suppressed, but the derived
-        public_surface_shrank finding remains an extra gating finding.
+        public_surface_shrank remains an extra gating finding; on Bazel,
+        linker-reserved exports are also reported exported_not_public.
+      # Exact outcomes, per --build-system. Bazel's default (gold) link
+      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
       observed:
-        verdict: BREAKING
-        findings:
-          - "func_added:_ZN8scenario12required_apiEl"
-          - "func_removed:_ZN8scenario12required_apiEi"
-          - "public_surface_shrank:<surface>"
+        bazel:
+          verdict: BREAKING
+          findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
+            - "func_added:_ZN8scenario12required_apiEl"
+            - "func_removed:_ZN8scenario12required_apiEi"
+            - "public_surface_shrank:<surface>"
+        cmake:
+          verdict: BREAKING
+          findings:
+            - "func_added:_ZN8scenario12required_apiEl"
+            - "func_removed:_ZN8scenario12required_apiEi"
+            - "public_surface_shrank:<surface>"
+        make:
+          verdict: BREAKING
+          findings:
+            - "func_added:_ZN8scenario12required_apiEl"
+            - "func_removed:_ZN8scenario12required_apiEi"
+            - "public_surface_shrank:<surface>"
     expected:
       castxml: BREAKING
       clang: BREAKING

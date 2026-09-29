@@ -240,7 +240,8 @@ def test_run_one_cmake_resolves_generated_header(tmp_path, monkeypatch):
 
     seen = {}
 
-    def fake_run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None):
+    def fake_run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None,
+                              build_system="bazel"):
         seen["new_header_override"] = new_header_override
         return {"ok": True}
 
@@ -306,9 +307,9 @@ class TestEvaluateExpectedGap:
     """A declared scenario expected_gap tolerates exactly one outcome."""
 
     GAP = {
-        "upstream_issue": "abicheck#x",
+        "upstream_issues": ["abicheck#x"],
         "reason": "r",
-        "observed": {"verdict": "COMPATIBLE", "findings": ["public_surface_shrank:<surface>"]},
+        "observed": {"bazel": {"verdict": "COMPATIBLE", "findings": ["public_surface_shrank:<surface>"]}},
     }
 
     def _eval(self, **kw):
@@ -342,6 +343,22 @@ class TestEvaluateExpectedGap:
 
     def test_incomplete_declaration_is_a_mismatch(self):
         from run_scenario import evaluate_expected_gap
-        gap = {"upstream_issue": "a", "observed": {"verdict": "COMPATIBLE"}}
+        gap = {"upstream_issues": ["a"], "observed": {"bazel": {"verdict": "COMPATIBLE"}}}
         assert evaluate_expected_gap(gap, oracle_passed=False, actual_verdict="COMPATIBLE",
                                      actual_findings=[], suppression_passed=True)[0] == "mismatch"
+
+
+    def test_build_system_without_declared_outcome_has_no_gap(self):
+        from run_scenario import evaluate_expected_gap
+        assert evaluate_expected_gap(self.GAP, build_system="cmake", oracle_passed=False,
+                                     actual_verdict="COMPATIBLE", actual_findings=["public_surface_shrank:<surface>"],
+                                     suppression_passed=True) == (None, None)
+
+    def test_other_build_systems_outcome_does_not_match(self):
+        from run_scenario import evaluate_expected_gap
+        gap = {"upstream_issues": ["a"], "observed": {
+            "bazel": {"verdict": "COMPATIBLE", "findings": ["a:1"]},
+            "cmake": {"verdict": "COMPATIBLE", "findings": ["b:2"]}}}
+        assert evaluate_expected_gap(gap, build_system="cmake", oracle_passed=False,
+                                     actual_verdict="COMPATIBLE", actual_findings=["a:1"],
+                                     suppression_passed=True)[0] == "mismatch"
