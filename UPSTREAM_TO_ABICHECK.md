@@ -1408,6 +1408,25 @@ returns `NO_CHANGE`, and the updated coverage contract passes on that report
    parsed"), and it is not relaxed. The gate's diagnostic step now mirrors
    the gate's exact compare with `-v` and uploads
    `abicheck-l4-selection-diagnostics`, so the next run names the two TUs.
+   **Root cause (upstream source, 5ba6a5c8).** CI run 36654011461 (4c2f56d)
+   reproduced 17/19 with the pip CLI mirroring the gate. `-v` names no TU,
+   and the report carries only counts, so the two TUs are still unnamed. The
+   selection difference itself is explained by code:
+   `frontends/cli/commands/compare.py:_embed_inline_source_side` computes
+   `build_info_raw = not _source_is_pack(build_info)` and passes
+   `dump_build_info = build_info if build_info_raw else None` to the nested
+   inline dump. A `BuildSourcePack` directory is therefore NOT given to the
+   dump that runs L4 replay (it is only merged later, out of band), so that
+   dump sees `--sources .` alone and runs abicheck's zero-config Bazel
+   inference over the whole workspace (19 compile units). `abicheck dump
+   --build-info <pack>` instead seeds `collect_inline_pack(base_build=...)`
+   from the pack (1 compile unit). The two failing TUs are therefore among
+   the 18 non-`//:math` units the inference adds; the only `//:math` unit
+   parses cleanly in the same job. The gate's diagnostic step now also
+   measures a lab-side narrowing (raw `deps(//:math)` aquery jsonproto as
+   `--build-info`, which compare does thread into the inline dump) before
+   anything gating is changed.
+
    **Ask:** compare's inline collection must select the same compile units
    as `dump` for the same `--sources`/`--build-info` (a supplied build-info
    pack scoped to a target should bound replay), and per-TU failures should

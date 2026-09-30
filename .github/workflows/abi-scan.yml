@@ -342,6 +342,26 @@ jobs:
           abicheck compare "${cmp_args[@]}" > "$RUNNER_TEMP/l4-diag.compare.log" 2>&1 || echo "diagnostic compare exited $?"
           echo "## verbose compare lines naming TUs / failures"
           grep -nE '\.(cc|cpp|cxx|c)\b|source_abi|extractor|fail' "$RUNNER_TEMP/l4-diag.compare.log" | head -120 || true
+          # Candidate narrowing, measured here before it may gate anything:
+          # compare only threads a RAW --build-info into its inline new-side
+          # dump -- a BuildSourcePack directory is routed around it, so the
+          # dump falls back to zero-config Bazel inference over `--sources .`
+          # (19 TUs). Passing the raw deps(//:math) aquery jsonproto instead
+          # should bound replay to //:math's own compile units.
+          if [ -s "$RUNNER_TEMP/bazel-aquery.json" ]; then
+            raw_args=("$RUNNER_TEMP/math.base.abicheck.json" bazel-bin/libmath.so --header new=include
+                      --sources new=. --depth source --build-info "new=$RUNNER_TEMP/bazel-aquery.json"
+                      -o "json=$RUNNER_TEMP/l4-diag.compare-rawaquery.json")
+            if [ -n "$BASE_SHA" ]; then raw_args+=(--since "$BASE_SHA"); fi
+            abicheck compare "${raw_args[@]}" > "$RUNNER_TEMP/l4-diag.compare-rawaquery.log" 2>&1 || echo "raw-aquery compare exited $?"
+            echo "## narrowing candidate (raw aquery build-info): L4 row + translation units"
+            python3 - "$RUNNER_TEMP/l4-diag.compare-rawaquery.json" <<'PY' || true
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print([c.get("detail") for c in r.get("layer_coverage") or [] if c.get("layer") == "L4_source_abi"])
+          print((r.get("analysis_assurance") or {}).get("translation_units"), r.get("verdict"))
+          PY
+          fi
 
       - name: Upload L4 selection diagnostics artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
@@ -352,6 +372,8 @@ jobs:
             ${{ runner.temp }}/l4-diag.log
             ${{ runner.temp }}/l4-diag.compare.log
             ${{ runner.temp }}/l4-diag.compare.json
+            ${{ runner.temp }}/l4-diag.compare-rawaquery.log
+            ${{ runner.temp }}/l4-diag.compare-rawaquery.json
           if-no-files-found: ignore
           retention-days: 30
 
