@@ -569,3 +569,70 @@ def test_partial_runs_still_opt_out_by_name():
     assert parity.missing_reference_leg(
         {"cmake": {}}, {"cmake": {"add_function"}}, {}, allow_partial=True
     ) == []
+
+
+class TestExpectedGapProjection:
+    """scenario_parity compares a build system with a declared, exactly
+    matching expected_gap through that gap's parity projection."""
+
+    LNK = ["exported_not_public:__bss_start", "exported_not_public:_edata", "exported_not_public:_end"]
+    GAPS = {"add_function": {
+        "upstream_issues": ["abicheck#linker-reserved-exported-not-public"],
+        "observed": {"bazel": {
+            "verdict": "COMPATIBLE_WITH_RISK",
+            "findings": LNK + ["func_added:f", "public_surface_grew:<surface>"],
+            "parity": {"verdict": "COMPATIBLE", "drop_findings": LNK},
+        }},
+    }}
+
+    @staticmethod
+    def _rep(verdict, findings):
+        changes = [{"kind": f.split(":", 1)[0], "symbol": f.split(":", 1)[1], "severity": "x"} for f in findings]
+        return {"verdict": verdict, "changes": changes}
+
+    def _results(self, bazel, cmake):
+        return {"bazel": {"add_function.clang": bazel}, "cmake": {"add_function.clang": cmake}}
+
+    def test_matching_gap_is_projected_and_agrees(self):
+        bazel = self._rep("COMPATIBLE_WITH_RISK", self.LNK + ["func_added:f", "public_surface_grew:<surface>"])
+        cmake = self._rep("COMPATIBLE", ["func_added:f", "public_surface_grew:<surface>"])
+        assert parity.compare(self._results(bazel, cmake), self.GAPS) == []
+
+    def test_without_gaps_the_same_reports_still_disagree(self):
+        bazel = self._rep("COMPATIBLE_WITH_RISK", self.LNK + ["func_added:f", "public_surface_grew:<surface>"])
+        cmake = self._rep("COMPATIBLE", ["func_added:f", "public_surface_grew:<surface>"])
+        assert parity.compare(self._results(bazel, cmake)) != []
+
+    def test_gap_mismatch_fails_closed(self):
+        bazel = self._rep("COMPATIBLE_WITH_RISK", self.LNK + ["func_added:f"])  # surface finding missing
+        cmake = self._rep("COMPATIBLE", ["func_added:f"])
+        errors = parity.compare(self._results(bazel, cmake), self.GAPS)
+        assert any("declared expected_gap does not match" in e for e in errors)
+
+    def test_real_divergence_outside_the_gap_still_fails(self):
+        bazel = self._rep("COMPATIBLE_WITH_RISK", self.LNK + ["func_added:f", "public_surface_grew:<surface>"])
+        cmake = self._rep("COMPATIBLE", ["func_added:f", "public_surface_grew:<surface>", "func_added:g"])
+        errors = parity.compare(self._results(bazel, cmake), self.GAPS)
+        assert any("findings differ" in e for e in errors)
+
+    def test_build_system_without_declared_gap_is_compared_raw(self):
+        bazel = self._rep("COMPATIBLE", ["func_added:f"])
+        cmake = self._rep("COMPATIBLE", ["func_added:f"])
+        results = {"cmake": {"add_function.clang": cmake}, "make": {"add_function.clang": bazel}}
+        assert parity.compare(results, self.GAPS) == []
+
+    def test_missing_projection_fails(self):
+        gaps = {"add_function": {"upstream_issues": ["a"], "observed": {"bazel": {
+            "verdict": "COMPATIBLE", "findings": ["func_added:f"]}}}}
+        rep = self._rep("COMPATIBLE", ["func_added:f"])
+        errors = parity.compare(self._results(rep, rep), gaps)
+        assert any("no parity projection" in e for e in errors)
+
+    def test_real_manifest_gaps_all_carry_projections(self):
+        from pathlib import Path
+        gaps = parity.scenario_gaps(Path(__file__).resolve().parent.parent / "scenarios" / "manifest.yaml")
+        assert gaps
+        for name, gap in gaps.items():
+            for bs, obs in gap["observed"].items():
+                assert "verdict" in obs["parity"], (name, bs)
+                assert set(obs["parity"]["drop_findings"]) <= set(obs["findings"]), (name, bs)

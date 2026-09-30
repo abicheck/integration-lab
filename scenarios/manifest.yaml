@@ -709,6 +709,14 @@ scenarios:
             - "exported_not_public:_end"
             - "func_added:_ZN8scenario12new_functionEi"
             - "public_surface_grew:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: COMPATIBLE
+            drop_findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
     expected:
       castxml: COMPATIBLE
       clang: COMPATIBLE
@@ -785,14 +793,32 @@ scenarios:
             - "exported_not_public:_edata"
             - "exported_not_public:_end"
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: COMPATIBLE
+            drop_findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
         cmake:
           verdict: COMPATIBLE
           findings:
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: COMPATIBLE
+            drop_findings: []
         make:
           verdict: COMPATIBLE
           findings:
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: COMPATIBLE
+            drop_findings: []
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
@@ -856,18 +882,36 @@ scenarios:
             - "func_added:_ZN8scenario12required_apiEl"
             - "func_removed:_ZN8scenario12required_apiEi"
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: BREAKING
+            drop_findings:
+            - "exported_not_public:__bss_start"
+            - "exported_not_public:_edata"
+            - "exported_not_public:_end"
         cmake:
           verdict: BREAKING
           findings:
             - "func_added:_ZN8scenario12required_apiEl"
             - "func_removed:_ZN8scenario12required_apiEi"
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: BREAKING
+            drop_findings: []
         make:
           verdict: BREAKING
           findings:
             - "func_added:_ZN8scenario12required_apiEl"
             - "func_removed:_ZN8scenario12required_apiEi"
             - "public_surface_shrank:<surface>"
+          # Build-system-neutral result for scenario_parity: this gap's
+          # outcome minus what is specific to this build system.
+          parity:
+            verdict: BREAKING
+            drop_findings: []
     expected:
       castxml: BREAKING
       clang: BREAKING
