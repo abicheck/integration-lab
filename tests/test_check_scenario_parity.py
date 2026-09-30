@@ -636,3 +636,42 @@ class TestExpectedGapProjection:
             for bs, obs in gap["observed"].items():
                 assert "verdict" in obs["parity"], (name, bs)
                 assert set(obs["parity"]["drop_findings"]) <= set(obs["findings"]), (name, bs)
+
+
+class TestKnownDivergences:
+    DIV = [{"id": "lnk", "upstream_issue": "abicheck#lnk", "build_system": "bazel",
+            "findings": {("exported_not_public", "_edata", "risk"), ("exported_not_public", "_end", "risk")}}]
+
+    @staticmethod
+    def _rep(triples, verdict="BREAKING"):
+        return {"verdict": verdict, "changes": [{"kind": k, "symbol": s, "severity": v} for k, s, v in triples]}
+
+    BASE = [("func_removed", "f", "breaking")]
+    LNK = [("exported_not_public", "_edata", "risk"), ("exported_not_public", "_end", "risk")]
+
+    def test_full_divergence_removed_and_agrees(self):
+        r = {"bazel": {"s.clang": self._rep(self.BASE + self.LNK)}, "cmake": {"s.clang": self._rep(self.BASE)}}
+        assert parity.compare(r, {}, self.DIV) == []
+
+    def test_partial_divergence_fails(self):
+        r = {"bazel": {"s.clang": self._rep(self.BASE + self.LNK[:1])}, "cmake": {"s.clang": self._rep(self.BASE)}}
+        assert any("only part of known divergence" in e for e in parity.compare(r, {}, self.DIV))
+
+    def test_other_difference_still_fails(self):
+        r = {"bazel": {"s.clang": self._rep(self.BASE + self.LNK + [("func_added", "g", "compatible")])},
+             "cmake": {"s.clang": self._rep(self.BASE)}}
+        assert any("findings differ" in e for e in parity.compare(r, {}, self.DIV))
+
+    def test_divergence_on_wrong_build_system_is_not_removed(self):
+        r = {"bazel": {"s.clang": self._rep(self.BASE)}, "cmake": {"s.clang": self._rep(self.BASE + self.LNK)}}
+        errors = parity.compare(r, {}, self.DIV)
+        assert any("findings differ" in e for e in errors) and any("has closed" in e for e in errors)
+
+    def test_never_observed_declaration_fails_as_closed(self):
+        r = {"bazel": {"s.clang": self._rep(self.BASE)}, "cmake": {"s.clang": self._rep(self.BASE)}}
+        assert any("has closed" in e for e in parity.compare(r, {}, self.DIV))
+
+    def test_real_manifest_declaration_loads(self):
+        from pathlib import Path
+        divs = parity.known_divergences(Path(__file__).resolve().parent.parent / "scenarios" / "manifest.yaml")
+        assert [d["id"] for d in divs] == ["linker-reserved-exported-not-public"]

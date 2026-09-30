@@ -306,6 +306,69 @@ def scenario_gaps(path: Path) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def known_divergences(path: Path) -> List[Dict[str, Any]]:
+    """`parity_known_divergences` from scenarios/manifest.yaml, validated."""
+    import yaml
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ParityError(f"{path}: unreadable scenario manifest: {exc}") from exc
+    out = []
+    for index, entry in enumerate(document.get("parity_known_divergences") or []):
+        findings = entry.get("findings") if isinstance(entry, dict) else None
+        if (
+            not isinstance(entry, dict)
+            or not entry.get("id")
+            or not entry.get("upstream_issue")
+            or not entry.get("build_system")
+            or not isinstance(findings, list)
+            or not findings
+            or not all(isinstance(f, list) and len(f) == 3 for f in findings)
+        ):
+            raise ParityError(
+                f"{path}: parity_known_divergences[{index}] needs id, upstream_issue, "
+                "build_system and a non-empty list of [kind, symbol, severity] findings"
+            )
+        out.append({**entry, "findings": {tuple(str(x) for x in f) for f in findings}})
+    return out
+
+
+def apply_known_divergences(
+    stem: str, build_system: str, report: Dict[str, Any],
+    divergences: List[Dict[str, Any]], applied: Dict[str, int],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Remove a declared, build-system-specific upstream divergence -- all or
+    nothing. A report carrying ALL of a divergence's exact (kind, symbol,
+    severity) findings has exactly those removed; one carrying only SOME of
+    them is an error (the divergence changed shape). Anything else in the
+    report is untouched, so a real divergence outside the declaration still
+    fails. `applied` counts uses so a declaration that never applies can be
+    reported as closed by the caller."""
+    errors: List[str] = []
+    for divergence in divergences:
+        if divergence["build_system"] != build_system:
+            continue
+        present = normalized_findings(report) & divergence["findings"]
+        if not present:
+            continue
+        if present != divergence["findings"]:
+            errors.append(
+                f"{stem}: {build_system} carries only part of known divergence "
+                f"{divergence['id']} ({sorted(present)!r}) -- its shape changed"
+            )
+            continue
+        applied[divergence["id"]] = applied.get(divergence["id"], 0) + 1
+        report = dict(report)
+        report["changes"] = [
+            c for c in report.get("changes") or []
+            if not (
+                isinstance(c, dict)
+                and (str(c.get("kind")), str(c.get("symbol")), str(c.get("severity"))) in divergence["findings"]
+            )
+        ]
+    return report, errors
+
+
 def effective_report(
     stem: str, build_system: str, report: Dict[str, Any], gaps: Dict[str, Dict[str, Any]]
 ) -> Tuple[Dict[str, Any], List[str]]:
@@ -361,10 +424,13 @@ def effective_report(
 def compare(
     results: Dict[str, Dict[str, Dict[str, Any]]],
     gaps: Dict[str, Dict[str, Any]] | None = None,
+    divergences: List[Dict[str, Any]] | None = None,
 ) -> List[str]:
     """Compare every scenario across the build systems that produced it."""
     errors: List[str] = []
     gaps = gaps or {}
+    divergences = divergences or []
+    applied: Dict[str, int] = {}
     if len(results) < 2:
         return [
             "parity needs at least two build systems' results; got "
@@ -402,6 +468,10 @@ def compare(
         for build_system, report in present.items():
             projected[build_system], gap_errors = effective_report(scenario, build_system, report, gaps)
             errors.extend(gap_errors)
+            projected[build_system], div_errors = apply_known_divergences(
+                scenario, build_system, projected[build_system], divergences, applied
+            )
+            errors.extend(div_errors)
         present = projected
         reference_bs = sorted(present)[0]
         reference = present[reference_bs]
@@ -429,6 +499,13 @@ def compare(
                     f"{scenario}: suppressed symbols differ -- {reference_bs}="
                     f"{sorted(ref_suppressed)!r} vs {build_system}={sorted(suppressed)!r}"
                 )
+    for divergence in divergences:
+        if divergence["build_system"] in results and not applied.get(divergence["id"]):
+            errors.append(
+                f"known divergence {divergence['id']} ({divergence['upstream_issue']}) was not "
+                f"observed on {divergence['build_system']} in any compared report -- it has "
+                "closed; remove the parity_known_divergences entry"
+            )
     if compared == 0:
         errors.append(
             "no scenario ran under more than one build system, so nothing was "
@@ -478,6 +555,7 @@ def main(argv=None) -> int:
         declared = load_declared(args.build_matrix)
         profiles = scenario_profiles(args.manifest)
         gaps = scenario_gaps(args.manifest)
+        divergences = known_divergences(args.manifest)
     except ParityError as exc:
         print(f"ERROR: {exc}")
         return 1
@@ -489,7 +567,7 @@ def main(argv=None) -> int:
         + missing_reference_leg(
             results, declared, profiles, allow_partial=args.allow_partial
         )
-        + compare(results, gaps)
+        + compare(results, gaps, divergences)
     )
     receipt = {
         "build_systems": sorted(results),

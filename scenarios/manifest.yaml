@@ -28,6 +28,23 @@
 #                                        frontend, and a future divergence
 #                                        would be a real cross-backend bug
 #                                        worth catching here.
+# Build-system-specific upstream divergences scripts/check_scenario_parity.py
+# removes before comparing -- all-or-nothing, by exact (kind, symbol,
+# severity), only on the named build system. A report with only part of a set
+# fails; a declaration no compared report exhibits fails as closed.
+# Bazel's default link exports the linker-reserved __bss_start/_edata/_end and
+# abicheck 5ba6a5c8 reports them as exported_not_public (RISK) on every Bazel
+# fixture; cmake/make (bfd) do not export them. UPSTREAM_TO_ABICHECK.md,
+# "2026-09-29: scan retirement", gap 6.
+parity_known_divergences:
+  - id: linker-reserved-exported-not-public
+    upstream_issue: abicheck#linker-reserved-exported-not-public
+    build_system: bazel
+    findings:
+      - [exported_not_public, __bss_start, risk]
+      - [exported_not_public, _edata, risk]
+      - [exported_not_public, _end, risk]
+
 expected_gaps:
   # The producer-compiler scenario proves ABICheck's findings diverge by
   # producer, but never hands ABICheck a profile id: it compares each
