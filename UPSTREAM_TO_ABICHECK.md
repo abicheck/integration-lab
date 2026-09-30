@@ -1384,6 +1384,35 @@ returns `NO_CHANGE`, and the updated coverage contract passes on that report
    caused) disagreement until this is fixed -- not relaxed in the lab.
    **Ask:** apply `is_abi_relevant_elf_symbol` in `_check_exported_not_public`.
 
+7. **`compare` replays more TUs than `dump` for identical evidence inputs**
+   (under investigation; the reason the required gate is red on this pin).
+   CI run 36641707907 (lab PR #33, bc61fb8), same runner, same
+   `--sources .` and same `//:math` Bazel evidence pack
+   (`aquery deps(//:math)` = 1 compile unit, `src/math.cc`):
+
+   ```text
+   abicheck dump  libmath.so -H include --sources . --build-info <pack> --depth source
+     merged CUs: 1 (src/math.cc, target //:math); source_abi:castxml scope=target, 1/1 TUs parsed, 0 failures
+   abicheck compare <base> libmath.so --header new=include --sources new=. --build-info new=<pack>
+                    --depth source --since <base-sha>   (the gate)
+     new-side replay progress 19/19; L4 row: scope=headers-only, 17/19 TUs parsed, 2 extractor failures
+   abicheck compare ... same, no --since (L4 clang-replay leg)
+     scope=target, 19/19 TUs parsed
+   ```
+
+   The only `//:math` TU parses cleanly under the same extractor in the
+   dump, so the two failing TUs are among the 18 the compare path adds
+   beyond the target's pack. The lab cannot narrow this through its inputs:
+   dump and compare receive the same `sources`/`build-info`. The lab's
+   independent contract correctly refuses the run ("only 17/19 selected TUs
+   parsed"), and it is not relaxed. The gate's diagnostic step now mirrors
+   the gate's exact compare with `-v` and uploads
+   `abicheck-l4-selection-diagnostics`, so the next run names the two TUs.
+   **Ask:** compare's inline collection must select the same compile units
+   as `dump` for the same `--sources`/`--build-info` (a supplied build-info
+   pack scoped to a target should bound replay), and per-TU failures should
+   be named in the report, not only counted.
+
 Not affected: `mode: compare` has native sticky PR comments,
 `add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
 shape, so none of those needed a lab workaround.

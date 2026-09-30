@@ -320,6 +320,7 @@ jobs:
         shell: bash
         env:
           PACK_DIR: ${{ steps.bazel_pack.outputs.pack_dir }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -uo pipefail
           args=(bazel-bin/libmath.so -H include --sources . --depth source -o "$RUNNER_TEMP/l4-diag.snapshot.json")
@@ -330,6 +331,29 @@ jobs:
           if [ -n "$PACK_DIR" ]; then pack_args=(--pack "$PACK_DIR"); fi
           python3 scripts/diagnose_l4_selection.py "${pack_args[@]}" --snapshot "$RUNNER_TEMP/l4-diag.snapshot.json" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          # The dump above selects only //:math's own TU, but the gate's
+          # compare (identical sources/build-info, plus --since) replays 19.
+          # Mirror the gate's exact compare verbosely so the per-TU replay
+          # failures are named in this log (diagnostic only).
+          cmp_args=("$RUNNER_TEMP/math.base.abicheck.json" bazel-bin/libmath.so --header new=include
+                    --sources new=. --depth source -v -o "json=$RUNNER_TEMP/l4-diag.compare.json")
+          if [ -n "$PACK_DIR" ]; then cmp_args+=(--build-info "new=$PACK_DIR"); fi
+          if [ -n "$BASE_SHA" ]; then cmp_args+=(--since "$BASE_SHA"); fi
+          abicheck compare "${cmp_args[@]}" > "$RUNNER_TEMP/l4-diag.compare.log" 2>&1 || echo "diagnostic compare exited $?"
+          echo "## verbose compare lines naming TUs / failures"
+          grep -nE '\.(cc|cpp|cxx|c)\b|source_abi|extractor|fail' "$RUNNER_TEMP/l4-diag.compare.log" | head -120 || true
+
+      - name: Upload L4 selection diagnostics artifact
+        if: always() && steps.relevance.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: abicheck-l4-selection-diagnostics
+          path: |
+            ${{ runner.temp }}/l4-diag.log
+            ${{ runner.temp }}/l4-diag.compare.log
+            ${{ runner.temp }}/l4-diag.compare.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload coverage contract result artifact
         if: always() && steps.relevance.outputs.relevant == 'true'
