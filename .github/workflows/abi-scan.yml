@@ -638,7 +638,11 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include
           sources: .
-          build-info: ${{ steps.l4_replay_bazel_pack.outputs.pack_dir }}
+          # Raw target-scoped clang aquery, not the pack directory -- same
+          # reason as the gate's build-info (compare only threads a raw
+          # --build-info into its inline replay dump; a pack dir fell back to
+          # workspace-wide inference, 19 TUs). The pack is still built.
+          build-info: ${{ steps.l4_replay_bazel_pack.outcome == 'success' && format('{0}/bazel-aquery-clang.json', runner.temp) || '' }}
           ast-frontend: clang
           depth: source
           budget: 10m
