@@ -237,7 +237,19 @@ jobs:
           new-library: bazel-bin/libmath.so
           new-header: include
           sources: .
-          build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
+          # The raw deps(//:math) aquery jsonproto, not the pack directory:
+          # abicheck 5ba6a5c8's compare only threads a RAW --build-info into
+          # the inline new-side dump that runs L4 replay; a pack directory is
+          # merged out of band, so replay fell back to zero-config inference
+          # over the whole workspace (19 TUs, 2 non-//:math extractor
+          # failures -- UPSTREAM_TO_ABICHECK.md gap 7, abicheck/abicheck#1422).
+          # Measured in CI run 36656850712 before switching: raw aquery ->
+          # 1/1 TUs parsed, 0 failures, 6/6 exports accounted. Gated on the
+          # same bazel_pack success as before, so a failed query/pack step
+          # still means "no build-info" (auto-inference), never a stale file.
+          # The pack is still built: its --summary-output is the coverage
+          # contract's independent L3 count source.
+          build-info: ${{ steps.bazel_pack.outcome == 'success' && format('{0}/bazel-aquery.json', runner.temp) || '' }}
           since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
