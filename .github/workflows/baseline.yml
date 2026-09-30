@@ -89,7 +89,7 @@ jobs:
 
       - name: Install abicheck (for the Bazel evidence-pack helper script)
         id: abicheck_pip
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
 
       - name: Build combined Bazel evidence pack (targets + compile units)
         id: bazel_pack
@@ -148,8 +148,14 @@ jobs:
       # must change" guidance): committed `abi/math.abicheck.json` needs a
       # fresh refresh from this workflow (on merge to `main`) before
       # `scan --against` it is comparable again.
+      #
+      # 2026-09-29: the PR gate is now a two-sided `mode: compare` (upstream
+      # ADR-068 removed `scan`). Its candidate-side equivalent of this
+      # step's `public-header-dir: include` is `new-header: include` -- the
+      # same single directory root -- and scripts/check_recipe_parity.py
+      # fails CI if the two ever diverge.
       - name: Collect source-aware ABI baseline
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
@@ -206,7 +212,7 @@ jobs:
       # this committed baseline for no reason connected to what this
       # fixture actually validates.
       - name: Collect strings_lib ABI baseline (headers depth)
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: dump
           new-library: bazel-bin/strings_lib/libstrings.so
@@ -229,7 +235,7 @@ jobs:
       # pipeline, so it gets the same lightweight collection strings_lib
       # does rather than :math's own source-aware evidence pack.
       - name: Collect math_shared ABI baseline (headers depth)
-        uses: abicheck/abicheck@b299afdc2277a3c9857c413058177c8f6472fcd0 # abicheck/main @ b299afdc
+        uses: abicheck/abicheck@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71 # abicheck/main @ 5ba6a5c8
         with:
           mode: dump
           new-library: bazel-bin/libmath_shared.so

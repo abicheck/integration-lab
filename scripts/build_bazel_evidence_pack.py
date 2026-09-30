@@ -30,7 +30,7 @@ wire up), producing a single `BuildEvidence` with `targets` (from cquery)
 write it out as a `BuildSourcePack` -- abicheck's own stable, versioned
 on-disk pack format (`buildsource/pack.py`) -- so `--build-info <this-dir>`
 loads it as a first-class pack (`is_pack_dir` validates the version marker
-`BuildSourcePack.write()` sets automatically; no hand-rolled JSON schema
+the pack writer (`pack_io.write()` on current abicheck) sets automatically; no hand-rolled JSON schema
 here).
 
 Every name imported here (`BazelAdapter`, `BuildSourcePack`) is abicheck's
@@ -92,7 +92,14 @@ def build_pack(cquery_path, aquery_path, workspace, output_dir, root_targets=())
 
     pack = BuildSourcePack.empty(output_dir)
     pack.build_evidence = ev
-    pack.write()
+    # abicheck ADR-061 Phase 5 moved persistence off the dataclass: newer
+    # pins spell it `pack_io.write(pack)`; older pins keep the method.
+    # Any other failure still raises -- no silent "no pack" fallback here.
+    if hasattr(pack, "write"):
+        pack.write()
+    else:
+        from abicheck.buildsource import pack_io
+        pack_io.write(pack)
 
     # `Target.id` is `"target://<label>"` (BazelAdapter's own convention --
     # see abicheck/buildsource/build_evidence.py:Target); a requested root

@@ -91,7 +91,7 @@ workflows themselves (`baseline.yml`, `abi-scan.yml`, `scenarios.yml`),
 the composite actions they call (`.github/actions/skip-check`,
 `.github/actions/resolve-baseline`), and the scripts that implement
 coverage/receipt enforcement (`normalize_baseline.py`,
-`check_coverage_contract.py`, `render_scan_comment.py`,
+`check_coverage_contract.py`,
 `paths_changed.py`, `build_bazel_evidence_pack.py`,
 `capability_receipts.py`, `emit_capability_receipt.py`,
 `emit_scenario_receipts.py`, `validate_capability_receipts.py`), plus

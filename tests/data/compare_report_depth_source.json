@@ -1,0 +1,73 @@
+{
+ "report_schema_version": "5.9",
+ "verdict": "NO_CHANGE",
+ "requested_depth": "source",
+ "layer_coverage": [
+  {
+   "layer": "L0",
+   "status": "present",
+   "confidence": "high",
+   "detail": "elf",
+   "elapsed_s": 0.0
+  },
+  {
+   "layer": "L1",
+   "status": "present",
+   "confidence": "high",
+   "detail": "DWARF",
+   "elapsed_s": 0.0
+  },
+  {
+   "layer": "L2",
+   "status": "present",
+   "confidence": "high",
+   "detail": "header-scoped",
+   "elapsed_s": 0.0
+  },
+  {
+   "layer": "L3_build",
+   "status": "present",
+   "confidence": "reduced",
+   "detail": "generic, 1 compile units, 0 targets",
+   "elapsed_s": 0.0
+  },
+  {
+   "layer": "L4_source_abi",
+   "status": "present",
+   "confidence": "high",
+   "detail": "scope=headers-only, 1/1 TUs parsed, 3/3 symbols matched, 3/3 accounted, 0 unmatched, cache 0/1 hit (0%), 1 public header(s) not reached by include graph, 0.12s",
+   "elapsed_s": 0.124
+  },
+  {
+   "layer": "L5_source_graph",
+   "status": "present",
+   "confidence": "reduced",
+   "detail": "",
+   "elapsed_s": 0.0
+  }
+ ],
+ "scope": {
+  "public_headers_applied": true,
+  "resolved": true,
+  "fell_back": false
+ },
+ "analysis_assurance": {
+  "schema_version": "1.2",
+  "status": "partial",
+  "requested_depth": "source",
+  "effective_depth": "source",
+  "depth_satisfied": true,
+  "translation_units": {
+   "selected": 2,
+   "parsed": 2,
+   "failed": 0,
+   "skipped": null
+  },
+  "export_accounting": {
+   "total": 6,
+   "source_linked": 6,
+   "internal": 0,
+   "unaccounted": 0
+  }
+ }
+}

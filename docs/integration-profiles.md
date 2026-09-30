@@ -279,7 +279,8 @@ the resolved candidate:
 Every layer's actual ABI assertion is `abicheck compare` (a self-comparison:
 an unchanged library+header against itself, or a fresh dump against the
 build it was dumped from) — deliberately never `abicheck scan --against
-<a dump-mode baseline>`. See `UPSTREAM_TO_ABICHECK.md`'s own P0 entry: that
+<a dump-mode baseline>` (and `scan` itself no longer exists: upstream
+ADR-068 removed it, and the lab migrated off it on 2026-09-29). See `UPSTREAM_TO_ABICHECK.md`'s own P0 entry: that
 exact combination was a confirmed, deterministic upstream bug (a
 comparability-field divergence between `scan` mode's and `dump` mode's own
 candidate construction) that reported `NOT_COMPARABLE` for byte-identical

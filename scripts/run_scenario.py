@@ -24,6 +24,7 @@ never installs anything, so it stays runnable the same way locally.
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -167,8 +168,14 @@ def run_abicheck_compare(
     # manifest entry declares per-profile expectations (`expected:`), so
     # the same fixture pair can be run once per header frontend and
     # checked against each frontend's own oracle verdict.
+    #
+    # Upstream removed the `--ast-frontend` CLI flag (ADR-037 D8.1 /
+    # ADR-068 Phase 6: the compile context is `.abicheck.yml` `compile:`
+    # config only); `ABICHECK_AST_FRONTEND` is the documented per-run pin and
+    # applies because no project config here sets `compile.frontend`.
+    env = None
     if ast_frontend is not None:
-        cmd += ["--ast-frontend", ast_frontend]
+        env = {**os.environ, "ABICHECK_AST_FRONTEND": ast_frontend}
     # suppress is optional: a scenario declaring `suppress:` (repo-relative
     # path to a YAML rule file) proves a scenario's own gating finding
     # stops gating once suppressed, while staying visible in the report's
@@ -185,16 +192,14 @@ def run_abicheck_compare(
         "old=old",
         "--version",
         "new=new",
-        "--lang",
-        "c++",
-        "--format",
-        "json",
+        # `--lang c++` is gone upstream (config `compile.lang`, whose default
+        # is already c++); `--format json -o PATH` became `-o json=PATH`.
         "-o",
-        str(output_json),
+        f"json={output_json}",
         "--policy",
         "strict_abi",
     ]
-    subprocess.run(cmd, check=False)
+    subprocess.run(cmd, check=False, env=env)
 
 
 def _resolve_fixture_new_header(scenario, fixture_dir: Path, build_dir: Path) -> Path:
@@ -307,7 +312,8 @@ def _fixture_dir_builder(build_system: str):
     return globals()[_FIXTURE_DIR_BUILDERS[build_system]]
 
 
-def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None):
+def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, new_header_override=None,
+                    build_system="bazel"):
     """Run one `abicheck compare` invocation for *scenario* under *profile*
     (an `--ast-frontend` value, or `None` for the profile-less default),
     assert its report against *expected*, and return the parsed report.
@@ -371,6 +377,9 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, 
         actual_gating_symbols = sorted(
             c.get("symbol") for c in (report.get("changes") or [])
         )
+        actual_findings = sorted(
+            f"{c.get('kind')}:{c.get('symbol')}" for c in (report.get("changes") or [])
+        )
         read_error = None
     except (OSError, json.JSONDecodeError) as exc:
         # abicheck failed to produce a readable report at all -- fail
@@ -379,6 +388,7 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, 
         actual_suppressed_count = None
         actual_suppressed_symbols = None
         actual_gating_symbols = None
+        actual_findings = None
         read_error = str(exc)
 
     verdict_passed = actual == expected
@@ -399,6 +409,20 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, 
         expected_gating_symbols is None
         or actual_gating_symbols == sorted(expected_gating_symbols)
     )
+    oracle_passed = (
+        verdict_passed
+        and suppressed_count_passed
+        and suppressed_symbols_passed
+        and gating_symbols_passed
+    )
+    gap_status, gap_detail = evaluate_expected_gap(
+        scenario.get("expected_gap"),
+        build_system=build_system,
+        oracle_passed=oracle_passed,
+        actual_verdict=actual,
+        actual_findings=actual_findings,
+        suppression_passed=suppressed_count_passed and suppressed_symbols_passed,
+    )
     return {
         "name": name,
         "profile": profile,
@@ -411,14 +435,63 @@ def run_one_profile(scenario, old_lib, new_lib, profile, expected, results_dir, 
         "actual_suppressed_symbols": actual_suppressed_symbols,
         "expected_gating_symbols": expected_gating_symbols,
         "actual_gating_symbols": actual_gating_symbols,
-        "passed": (
-            verdict_passed
-            and suppressed_count_passed
-            and suppressed_symbols_passed
-            and gating_symbols_passed
-        ),
+        "actual_findings": actual_findings,
+        "oracle_passed": oracle_passed,
+        # "matched" (the declared upstream gap reproduced exactly -- counts
+        # as passed), "closed" (the oracle now passes: the declaration is
+        # stale and must be removed -- counts as FAILED), "mismatch" (some
+        # other outcome -- FAILED), or None (no gap declared).
+        "expected_gap_status": gap_status,
+        "expected_gap_detail": gap_detail,
+        "passed": oracle_passed if gap_status is None else gap_status == "matched",
         "read_error": read_error,
     }
+
+
+def evaluate_expected_gap(gap, *, oracle_passed, actual_verdict, actual_findings, suppression_passed,
+                          build_system="bazel"):
+    """Judge a scenario's declared `expected_gap` against this run.
+
+    A declared gap never silences a scenario wholesale: it names the exact
+    wrong outcome upstream currently produces (`observed.verdict` and the
+    exact multiset of `observed.findings`, each `kind:symbol`), and only
+    that outcome is tolerated. The suppression audit (count + identities)
+    must still pass -- the gap is about what the suppression fails to cover,
+    never about the suppression itself. If the oracle starts passing, the
+    gap is reported "closed" and FAILS, so a fixed upstream forces the
+    declaration's removal instead of leaving a dead exemption behind.
+    """
+    if not gap:
+        return None, None
+    # The observed wrong outcome can legitimately differ by build system
+    # (e.g. Bazel's default link exports linker-reserved symbols that the
+    # cmake/make builds do not), so `observed` is keyed by --build-system. A
+    # build system with no entry has no declared gap: the ordinary oracle
+    # applies to it unchanged.
+    observed_by_bs = gap.get("observed") or {}
+    if build_system not in observed_by_bs:
+        return None, None
+    if oracle_passed:
+        return "closed", (
+            f"declared expected_gap ({gap.get('upstream_issues')}) no longer reproduces -- the "
+            "scenario's oracle now passes; remove the expected_gap block"
+        )
+    observed = observed_by_bs.get(build_system) or {}
+    want_verdict = observed.get("verdict")
+    want_findings = observed.get("findings")
+    problems = []
+    if want_verdict is None or want_findings is None:
+        problems.append("expected_gap.observed must declare both verdict and findings")
+    else:
+        if actual_verdict != want_verdict:
+            problems.append(f"verdict {actual_verdict!r} != declared gap verdict {want_verdict!r}")
+        if actual_findings is None or sorted(actual_findings) != sorted(want_findings):
+            problems.append(f"findings {actual_findings!r} != declared gap findings {sorted(want_findings)!r}")
+    if not suppression_passed:
+        problems.append("suppression audit (count/identities) did not match the oracle")
+    if problems:
+        return "mismatch", "; ".join(problems)
+    return "matched", f"known upstream gap(s) {gap.get('upstream_issues')}: {gap.get('reason', '').strip()}"
 
 
 def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
@@ -468,6 +541,7 @@ def run_one(scenario, results_dir, build_system="bazel", build_matrix=None,
         run_one_profile(
             scenario, old_lib, new_lib, profile, expected, results_dir,
             new_header_override=new_header_override,
+            build_system=build_system,
         )
         for profile, expected in profiles.items()
     ]
@@ -580,6 +654,8 @@ def main():
         for result in profile_results:
             results.append(result)
             status = "PASS" if result["passed"] else "FAIL"
+            if result.get("expected_gap_status") == "matched":
+                status = "EXPECTED_GAP"
             profile_label = f" [{result['profile']}]" if result["profile"] else ""
             suppressed_label = (
                 f" suppressed_count(expected={result['expected_suppressed_count']}, "
@@ -598,6 +674,13 @@ def main():
                 f"actual={result['actual_verdict']}{suppressed_label}{suppressed_symbols_label}"
                 + (f" (report unreadable: {result['read_error']})" if result["read_error"] else "")
             )
+            if result.get("expected_gap_detail"):
+                print(f"    expected_gap[{result['expected_gap_status']}]: {result['expected_gap_detail']}")
+            if not result["oracle_passed"]:
+                # Name the findings on every oracle miss, so a verdict change
+                # (e.g. an unexplained COMPATIBLE_WITH_RISK) is diagnosable
+                # from the CI log alone instead of needing the artifact.
+                print(f"    findings: {result.get('actual_findings')}")
 
     # summary.json's own shape (a bare list of per-profile result dicts)
     # is a load-bearing contract for scripts/emit_scenario_receipts.py

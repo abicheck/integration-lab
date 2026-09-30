@@ -134,7 +134,8 @@ PR baseline from the candidate under test: a rebuild always uses the resolved
 accepted-main source commit's own tree, never this PR's.
 
 **The canonical gate.** `.github/workflows/abi-scan.yml` runs the real
-ABICheck scanner (`mode: scan`, `depth: source`) against this repo's root
+ABICheck scanner (a two-sided `mode: compare`, `depth: source` — `mode:
+scan` until upstream ADR-068 removed it) against this repo's root
 Bazel build, resolves its trusted baseline from the pull request's exact
 base commit (never the working tree), enforces an independent
 evidence-coverage contract on top of the scanner's own verdict, and
@@ -311,6 +312,9 @@ Expected gaps from `scenarios/manifest.yaml` -- scenarios that run and are expec
 - **per-check-runtime-environment** (`expected_gap`): falls short at `project-plan` -- `environment_selector_not_supported` (upstream: `abicheck#per-cell-environment`)
 - **pybind-cross-module-internals** (`expected_gap`): falls short at `compare` -- `binding_internals_identity_not_collected` (upstream: `abicheck#binding-abi-provider`)
 - **target-specific-source-evidence-routing** (`expected_gap`): falls short at `check-project` -- `target_evidence_path_not_projected` (upstream: `abicheck#run-plan-build-output-projection`)
+- **linker-reserved-exported-not-public** (`expected_gap`): falls short at `scenarios` -- `linker_reserved_bss_start_edata_end_reported_exported_not_public_risk` (upstream: `abicheck#linker-reserved-exported-not-public`)
+- **suppression-derived-surface-findings-full** (`expected_gap`): falls short at `scenarios` -- `symbol_suppression_leaves_derived_public_surface_shrank_verdict_COMPATIBLE_not_NO_CHANGE` (upstream: `abicheck#suppression-derived-surface-findings`)
+- **suppression-derived-surface-findings-partial** (`expected_gap`): falls short at `scenarios` -- `symbol_suppression_leaves_derived_public_surface_shrank_as_extra_gating_finding` (upstream: `abicheck#suppression-derived-surface-findings`)
 <!-- capability-matrix:gaps:end -->
 
 ## Architecture
@@ -332,7 +336,7 @@ promotion criteria for the third are in
     abi-scan.yml       integration-shadow.yml  project-shadow.yml
  ┌──────────────────┐  ┌─────────────────────┐ ┌───────────────────────────┐
  │ real abicheck     │  │ ci/select_profiles  │ │ .abicheck.yml (topology)   │
- │ scan, depth:source│  │ (profiles.yaml +    │ │   │                        │
+ │ compare,d:source  │  │ (profiles.yaml +    │ │   │                        │
  │ base-SHA baseline │  │  event-policy)      │ │ baseline-ref               │
  │ coverage contract │  │   bazel cmake make  │ │   ci/baseline_resolution   │
  │ ── ONE verdict ── │  │   ci/run_profile.py │ │   │  (receipt: which       │
@@ -413,11 +417,14 @@ abicheck-build-<profile-id>/
 ## Local quick start
 
 ```bash
-# Canonical Bazel build + real ABICheck scan (needs bazel and network access
-# to install abicheck):
+# Canonical Bazel build + real ABICheck source-depth comparison against the
+# committed baseline (needs bazel and network access to install abicheck).
+# `abicheck scan` no longer exists upstream (ADR-068); this is its
+# replacement, the same shape the required gate runs:
 bazel build //:math
-pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
-abicheck scan --sources . --depth source --against abi/math.abicheck.json
+pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
+abicheck compare abi/math.abicheck.json bazel-bin/libmath.so \
+  --header new=include --sources new=. --depth source -o json=abicheck-report.json
 
 # One multi-build-system profile: build, stage, and validate build-output.json
 # only (ci/run_profile.py stops there — it does NOT run check_profile.py's

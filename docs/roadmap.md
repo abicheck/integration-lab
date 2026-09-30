@@ -127,9 +127,12 @@ candidate upstream SHA
     -> reviewed merge
 ```
 
-The legacy single-target scan/scenario suite still runs on a second pin
+The legacy single-target gate/scenario suite still runs on a second pin
 (`legacy_sha`), reviewed in the same file, and is migrating onto `sha` one
-workflow at a time.
+workflow at a time. Since 2026-09-29 `legacy_sha` is abicheck main
+`5ba6a5c8` — past upstream's hard removal of `scan` (ADR-068) — and every
+path on it uses `mode: compare` / `abicheck compare -o json=...`; see
+`UPSTREAM_TO_ABICHECK.md`'s "2026-09-29: scan retirement" section.
 
 ## Declared follow-ups
 

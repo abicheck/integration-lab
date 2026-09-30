@@ -37,15 +37,6 @@
 # open) could make a degraded scan report the contract as satisfied
 # without review (Codex review). Same boundary as the gate it's part of.
 #
-# scripts/render_scan_comment.py doesn't gate anything itself, but it runs
-# with the same job's `pull-requests: write` token and produces the
-# bot-authored "canonical report" comment everyone reads as the gate's
-# result. An unreviewed same-repo PR could change it to claim a passing
-# verdict or omit a failed coverage-contract section while the actual
-# gate code -- and its real (failing) outcome -- is untouched (Codex
-# review). Same trust boundary: the reader-facing report is as much a
-# part of "what the gate says" as the check that produces exit codes.
-#
 # scripts/paths_changed.py decides whether the scan job's gating steps
 # run at all (abi-scan.yml has no workflow-level path filter anymore --
 # see that file's `on:` block for why). A PR that weakens it to always
@@ -100,7 +91,6 @@ abi/** @napetrov
 .github/actions/resolve-baseline/** @napetrov
 scripts/normalize_baseline.py @napetrov
 scripts/check_coverage_contract.py @napetrov
-scripts/render_scan_comment.py @napetrov
 scripts/paths_changed.py @napetrov
 scripts/build_bazel_evidence_pack.py @napetrov
 scripts/capability_receipts.py @napetrov

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from check_recipe_parity import CHECKED_WORKFLOWS, check, check_step
+from check_recipe_parity import CHECKED_WORKFLOWS, check, check_header_root_parity, check_step
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -167,3 +167,71 @@ class TestRealWorkflows:
             workflow = yaml.safe_load(f)
         errors = check({path: workflow})
         assert errors == [], "\n".join(errors)
+
+
+class TestHeaderRootParity:
+    """The scan -> compare migration's parity rule: a two-sided source-depth
+    compare against the trusted math baseline must see exactly the baseline
+    dump's `public-header-dir` as its `new-header`, and nothing else."""
+
+    BASELINE = Path("baseline.yml")
+    GATE = Path("abi-scan.yml")
+    BASE = "${{ runner.temp }}/math.base.abicheck.json"
+
+    def _baseline(self, public_dir="include"):
+        return _workflow({"collect": {"steps": [_step({
+            "mode": "dump", "new-library": "bazel-bin/libmath.so",
+            "public-header-dir": public_dir, "depth": "source",
+        })]}})
+
+    def _gate(self, **with_extra):
+        block = {"mode": "compare", "old-library": self.BASE,
+                 "new-library": "bazel-bin/libmath.so", "depth": "source"}
+        block.update(with_extra)
+        return _workflow({"scan": {"steps": [_step(block)]}})
+
+    @pytest.mark.parametrize("public_dir", ["include", "include/abicheck_lab", "hdrs"])
+    def test_matching_directory_root_is_clean(self, public_dir):
+        errors = check_header_root_parity({
+            self.BASELINE: self._baseline(public_dir),
+            self.GATE: self._gate(**{"new-header": public_dir}),
+        })
+        assert errors == []
+
+    @pytest.mark.parametrize("new_header", [
+        "include/abicheck_lab/math.h",   # a file root instead of the directory
+        "include/abicheck_lab",          # a narrower directory
+        "include include/abicheck_lab/math.h",  # directory + an extra file root
+        None,                            # no header root at all
+    ])
+    def test_any_other_candidate_root_is_rejected(self, new_header):
+        extra = {} if new_header is None else {"new-header": new_header}
+        errors = check_header_root_parity({
+            self.BASELINE: self._baseline("include"),
+            self.GATE: self._gate(**extra),
+        })
+        assert len(errors) == 1 and "new-header" in errors[0]
+
+    @pytest.mark.parametrize("forbidden", ["header", "public-header-dir"])
+    def test_both_sided_or_dump_only_header_inputs_are_rejected(self, forbidden):
+        errors = check_header_root_parity({
+            self.BASELINE: self._baseline(),
+            self.GATE: self._gate(**{"new-header": "include", forbidden: "include"}),
+        })
+        assert any(forbidden in e for e in errors)
+
+    def test_retired_scan_mode_is_rejected_anywhere(self):
+        wf = _workflow({"x": {"steps": [_step({"mode": "scan", "new-library": "a.so"})]}})
+        errors = check_header_root_parity({Path("other.yml"): wf})
+        assert len(errors) == 1 and "mode: scan" in errors[0]
+
+    def test_no_gate_step_at_all_fails_closed(self):
+        errors = check_header_root_parity({self.BASELINE: self._baseline()})
+        assert any("nothing to check" in e for e in errors)
+
+    def test_real_workflows_satisfy_parity(self):
+        workflows = {}
+        for path in CHECKED_WORKFLOWS:
+            with path.open() as f:
+                workflows[path] = yaml.safe_load(f)
+        assert check_header_root_parity(workflows) == []

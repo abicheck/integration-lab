@@ -125,10 +125,10 @@ jobs:
           set -euo pipefail
           backend="$(python3 ci/print_profile_backend.py --profile-id "$PROFILE_ID")"
           if [ "$backend" = "cmake" ] || [ "$backend" = "make" ]; then
-            pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@b299afdc2277a3c9857c413058177c8f6472fcd0"
+            pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71"
             curl --proto '=https' --tlsv1.2 -fsSL \
               --output "$RUNNER_TEMP/install-castxml.sh" \
-              "https://raw.githubusercontent.com/abicheck/abicheck/b299afdc2277a3c9857c413058177c8f6472fcd0/action/install-castxml.sh"
+              "https://raw.githubusercontent.com/abicheck/abicheck/5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71/action/install-castxml.sh"
             bash "$RUNNER_TEMP/install-castxml.sh"
           else
             echo "profile '$PROFILE_ID' is backend '$backend' -- real scanner not needed"
