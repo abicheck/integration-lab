@@ -8,6 +8,7 @@ class Calculator {
   Calculator() = default;
   int add(int left, int right) const;
   int multiply(int left, int right) const;
+  int subtract(int left, int right) const;
 };
 
 int api_version();
