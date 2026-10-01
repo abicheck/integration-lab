@@ -6,7 +6,10 @@
 // verify against instead of being unenforceable for this diff.
 namespace abicheck_lab {
 
-int Calculator::add(int left, int right) const { return left + right; }
+int Calculator::add(int left, int right) const {
+  const int result = left + right;
+  return result;
+}
 int Calculator::multiply(int left, int right) const { return left * right; }
 int api_version() { return 1; }
 
