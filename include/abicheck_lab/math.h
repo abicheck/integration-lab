@@ -7,7 +7,7 @@ class Calculator {
  public:
   Calculator() = default;
   int add(int left, int right) const;
-  int multiply(int left, int right) const;
+  long multiply(long left, long right) const;
 };
 
 int api_version();
