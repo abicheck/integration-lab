@@ -6,7 +6,7 @@ namespace abicheck_lab {
 class Calculator {
  public:
   Calculator() = default;
-  int add(int left, int right) const;
+  int add(int left, int right = 0) const;
   int multiply(int left, int right) const;
 };
 
