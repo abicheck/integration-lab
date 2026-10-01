@@ -1,0 +1,289 @@
+name: Validate fresh-to-fresh extraction
+
+on:
+  pull_request: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-fresh-to-fresh-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  ABICHECK_SHA: 5b529896eff680203230ec1a635c669ee3334d6e
+
+jobs:
+  fresh-to-fresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare base worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base-tree" \
+            "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build HEAD and BASE libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel build //:math
+          (
+            cd "$RUNNER_TEMP/base-tree"
+            bazel build //:math
+          )
+
+      - name: Capture HEAD target-scoped Bazel evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/head-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/head-aquery.json"
+          bazel query 'buildfiles(deps(//:math))' \
+            > "$RUNNER_TEMP/head-buildfiles.txt"
+
+      - name: Capture BASE target-scoped Bazel evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/base-tree"
+          bazel cquery --output=jsonproto 'deps(//:math)' \
+            > "$RUNNER_TEMP/base-cquery.json"
+          bazel aquery --output=jsonproto --include_param_files \
+            "mnemonic('^(CppCompile|CCompile|CcCompile|ObjcCompile|ObjcppCompile|CppModuleCompile|CppLink|CppArchive|CcLink)$', deps(//:math))" \
+            > "$RUNNER_TEMP/base-aquery.json"
+
+      - name: Install exact fresh upstream for evidence helpers
+        run: >-
+          python3 -m pip install --quiet
+          "abicheck @ git+https://github.com/abicheck/abicheck.git@$ABICHECK_SHA"
+
+      - name: Build HEAD and BASE evidence packs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/head-cquery.json" \
+            --aquery "$RUNNER_TEMP/head-aquery.json" \
+            --workspace "$(pwd)" \
+            --output "$RUNNER_TEMP/head-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/head-evidence-summary.json"
+          python3 scripts/build_bazel_evidence_pack.py \
+            --cquery "$RUNNER_TEMP/base-cquery.json" \
+            --aquery "$RUNNER_TEMP/base-aquery.json" \
+            --workspace "$RUNNER_TEMP/base-tree" \
+            --output "$RUNNER_TEMP/base-evidence-pack" \
+            --root-target "//:math" \
+            --summary-output "$RUNNER_TEMP/base-evidence-summary.json"
+
+      - name: Fresh dump of BASE with current main
+        id: dump_base
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: dump
+          new-library: ${{ runner.temp }}/base-tree/bazel-bin/libmath.so
+          new-header: ${{ runner.temp }}/base-tree/include/abicheck_lab/math.h
+          public-header-dir: ${{ runner.temp }}/base-tree/include
+          sources: ${{ runner.temp }}/base-tree
+          build-info: ${{ runner.temp }}/base-evidence-pack
+          depth: source
+          ast-frontend: castxml
+          dependency-source: conda-forge-gcc14
+          output-file: ${{ runner.temp }}/fresh-base.abi.json
+          add-job-summary: true
+
+      - name: Fresh dump of HEAD with current main
+        id: dump_head
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: dump
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          public-header-dir: include
+          sources: .
+          build-info: ${{ runner.temp }}/head-evidence-pack
+          depth: source
+          ast-frontend: castxml
+          dependency-source: conda-forge-gcc14
+          output-file: ${{ runner.temp }}/fresh-head.abi.json
+          add-job-summary: true
+
+      - name: Compare fresh BASE snapshot to fresh HEAD snapshot
+        id: compare_fresh
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: compare
+          old-library: ${{ runner.temp }}/fresh-base.abi.json
+          new-library: ${{ runner.temp }}/fresh-head.abi.json
+          depth: source
+          policy: strict_abi
+          dependency-source: conda-forge-gcc14
+          format: json
+          output-file: ${{ runner.temp }}/fresh-to-fresh-compare.json
+          extra-args: '--require-complete-analysis'
+          fail-on-breaking: true
+          fail-on-api-break: true
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Scan HEAD against freshly generated BASE
+        id: scan_fresh
+        continue-on-error: true
+        uses: abicheck/abicheck@5b529896eff680203230ec1a635c669ee3334d6e
+        with:
+          mode: scan
+          new-library: bazel-bin/libmath.so
+          new-header: include/abicheck_lab/math.h
+          public-header-dir: include
+          sources: .
+          build-info: ${{ runner.temp }}/head-evidence-pack
+          against: ${{ runner.temp }}/fresh-base.abi.json
+          since: ${{ github.event.pull_request.base.sha }}
+          depth: source
+          budget: 10m
+          ast-frontend: castxml
+          policy: strict_abi
+          dependency-source: conda-forge-gcc14
+          format: json
+          output-file: ${{ runner.temp }}/fresh-to-fresh-scan.json
+          fail-on-breaking: true
+          fail-on-api-break: true
+          add-job-summary: true
+          pr-comment: false
+
+      - name: Check fresh scan source-depth coverage
+        id: coverage_fresh
+        if: always() && steps.scan_fresh.outputs.report-path != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/changed-files.txt"
+          python3 scripts/check_coverage_contract.py \
+            "$RUNNER_TEMP/fresh-to-fresh-scan.json" \
+            -o "$RUNNER_TEMP/fresh-to-fresh-coverage.json" \
+            --requested-depth source \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --buildfiles "$RUNNER_TEMP/head-buildfiles.txt" \
+            --evidence-summary "$RUNNER_TEMP/head-evidence-summary.json"
+
+      - name: Enforce fresh-to-fresh result
+        if: always()
+        shell: bash
+        env:
+          DUMP_BASE_OUTCOME: ${{ steps.dump_base.outcome }}
+          DUMP_HEAD_OUTCOME: ${{ steps.dump_head.outcome }}
+          COMPARE_OUTCOME: ${{ steps.compare_fresh.outcome }}
+          COMPARE_VERDICT: ${{ steps.compare_fresh.outputs.verdict }}
+          COMPARE_EXIT: ${{ steps.compare_fresh.outputs.exit-code }}
+          SCAN_OUTCOME: ${{ steps.scan_fresh.outcome }}
+          SCAN_VERDICT: ${{ steps.scan_fresh.outputs.verdict }}
+          SCAN_EXIT: ${{ steps.scan_fresh.outputs.exit-code }}
+          COVERAGE_OUTCOME: ${{ steps.coverage_fresh.outcome }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+
+          def load(name):
+              path = root / name
+              if not path.is_file():
+                  print(f"MISSING: {path}")
+                  return None
+              data = json.loads(path.read_text(encoding="utf-8"))
+              print(f"\n=== {name} ===")
+              print("verdict:", data.get("verdict"))
+              print("reason:", data.get("reason"))
+              print("analysis_assurance:", data.get("analysis_assurance"))
+              return data
+
+          compare = load("fresh-to-fresh-compare.json")
+          scan = load("fresh-to-fresh-scan.json")
+          coverage = load("fresh-to-fresh-coverage.json")
+
+          for key in (
+              "DUMP_BASE_OUTCOME", "DUMP_HEAD_OUTCOME",
+              "COMPARE_OUTCOME", "COMPARE_VERDICT", "COMPARE_EXIT",
+              "SCAN_OUTCOME", "SCAN_VERDICT", "SCAN_EXIT",
+              "COVERAGE_OUTCOME",
+          ):
+              print(f"{key}={os.environ.get(key)!r}")
+
+          errors = []
+          if os.environ.get("DUMP_BASE_OUTCOME") != "success":
+              errors.append("fresh BASE dump failed")
+          if os.environ.get("DUMP_HEAD_OUTCOME") != "success":
+              errors.append("fresh HEAD dump failed")
+          if os.environ.get("COMPARE_OUTCOME") != "success" or compare is None:
+              errors.append("fresh-to-fresh compare failed or produced no report")
+          if os.environ.get("SCAN_OUTCOME") != "success" or scan is None:
+              errors.append("fresh scan against fresh baseline failed or produced no report")
+          if os.environ.get("COVERAGE_OUTCOME") != "success" or coverage is None:
+              errors.append("fresh scan coverage contract failed")
+
+          safe = {"NO_CHANGE", "COMPATIBLE", "COMPATIBLE_WITH_RISK"}
+          if compare and compare.get("verdict") not in safe:
+              errors.append(f"fresh compare verdict is not safe: {compare.get('verdict')!r}")
+          if scan and scan.get("verdict") not in safe:
+              errors.append(f"fresh scan verdict is not safe: {scan.get('verdict')!r}")
+
+          if compare:
+              assurance = compare.get("analysis_assurance")
+              if not isinstance(assurance, dict):
+                  errors.append("fresh compare has no analysis_assurance")
+              else:
+                  if assurance.get("requested_depth") != "source":
+                      errors.append(
+                          "fresh compare did not record requested_depth=source: "
+                          f"{assurance.get('requested_depth')!r}"
+                      )
+                  if assurance.get("status") != "complete":
+                      errors.append(
+                          "fresh compare assurance is not complete: "
+                          f"{assurance.get('status')!r}"
+                      )
+
+          if errors:
+              print("\nFRESH-TO-FRESH VALIDATION FAILED")
+              for item in errors:
+                  print(" -", item)
+              raise SystemExit(1)
+          print("\nFRESH-TO-FRESH VALIDATION PASSED")
+          PY
+
+      - name: Upload fresh-to-fresh evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fresh-to-fresh-validation
+          path: |
+            ${{ runner.temp }}/fresh-base.abi.json
+            ${{ runner.temp }}/fresh-head.abi.json
+            ${{ runner.temp }}/fresh-to-fresh-compare.json
+            ${{ runner.temp }}/fresh-to-fresh-scan.json
+            ${{ runner.temp }}/fresh-to-fresh-coverage.json
+            ${{ runner.temp }}/base-evidence-summary.json
+            ${{ runner.temp }}/head-evidence-summary.json
+          if-no-files-found: warn
+          retention-days: 30
