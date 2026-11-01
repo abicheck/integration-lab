@@ -672,6 +672,8 @@ class TestKnownDivergences:
         assert any("has closed" in e for e in parity.compare(r, {}, self.DIV))
 
     def test_real_manifest_declaration_loads(self):
+        # abicheck 966cd1f9 closed linker-reserved-exported-not-public, so
+        # the real manifest declares no build-system divergence any more.
         from pathlib import Path
         divs = parity.known_divergences(Path(__file__).resolve().parent.parent / "scenarios" / "manifest.yaml")
-        assert [d["id"] for d in divs] == ["linker-reserved-exported-not-public"]
+        assert divs == []
