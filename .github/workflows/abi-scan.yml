@@ -193,9 +193,12 @@ jobs:
       # baseline scan is exactly this shape: `mode: compare` with the old
       # `against:` value as `old-library:` and the same `new-library:`. Every
       # guarantee the scan step carried is kept one-for-one:
-      #   * depth: source + since: base SHA -- two-sided compare forwards
-      #     --depth/--since/--sources/--build-info (new side) exactly as scan
-      #     did (upstream action/run.sh, single-pair branch);
+      #   * depth: source -- two-sided compare forwards --depth/--sources/
+      #     --build-info (new side) exactly as scan did. No `since:` any more
+      #     (abicheck 966cd1f9): a since-scoped replay of a PR that touches no
+      #     C/C++ source selects 0 TUs, effective depth drops to `build`, and
+      #     abicheck now exits 7 (evidence contract) instead of passing. A
+      #     full target replay of //:math is cheap and never zero-TU;
       #   * trusted baseline -- `old-library:` is still the file
       #     resolve-baseline read out of the PR's exact base commit, never
       #     the PR's own working-tree copy;
@@ -250,7 +253,6 @@ jobs:
           # The pack is still built: its --summary-output is the coverage
           # contract's independent L3 count source.
           build-info: ${{ steps.bazel_pack.outcome == 'success' && format('{0}/bazel-aquery.json', runner.temp) || '' }}
-          since: ${{ github.event.pull_request.base.sha }}
           depth: source
           budget: 10m
           format: json
@@ -332,7 +334,6 @@ jobs:
         shell: bash
         env:
           PACK_DIR: ${{ steps.bazel_pack.outputs.pack_dir }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -uo pipefail
           args=(bazel-bin/libmath.so -H include --sources . --depth source -o "$RUNNER_TEMP/l4-diag.snapshot.json")
@@ -350,7 +351,6 @@ jobs:
           cmp_args=("$RUNNER_TEMP/math.base.abicheck.json" bazel-bin/libmath.so --header new=include
                     --sources new=. --depth source -v -o "json=$RUNNER_TEMP/l4-diag.compare.json")
           if [ -n "$PACK_DIR" ]; then cmp_args+=(--build-info "new=$PACK_DIR"); fi
-          if [ -n "$BASE_SHA" ]; then cmp_args+=(--since "$BASE_SHA"); fi
           abicheck compare "${cmp_args[@]}" > "$RUNNER_TEMP/l4-diag.compare.log" 2>&1 || echo "diagnostic compare exited $?"
           echo "## verbose compare lines naming TUs / failures"
           grep -nE '\.(cc|cpp|cxx|c)\b|source_abi|extractor|fail' "$RUNNER_TEMP/l4-diag.compare.log" | head -120 || true
@@ -364,7 +364,6 @@ jobs:
             raw_args=("$RUNNER_TEMP/math.base.abicheck.json" bazel-bin/libmath.so --header new=include
                       --sources new=. --depth source --build-info "new=$RUNNER_TEMP/bazel-aquery.json"
                       -o "json=$RUNNER_TEMP/l4-diag.compare-rawaquery.json")
-            if [ -n "$BASE_SHA" ]; then raw_args+=(--since "$BASE_SHA"); fi
             abicheck compare "${raw_args[@]}" > "$RUNNER_TEMP/l4-diag.compare-rawaquery.log" 2>&1 || echo "raw-aquery compare exited $?"
             echo "## narrowing candidate (raw aquery build-info): L4 row + translation units"
             python3 - "$RUNNER_TEMP/l4-diag.compare-rawaquery.json" <<'PY' || true
@@ -1984,7 +1983,6 @@ jobs:
           # evidence comes from the clang plugin's own facts pack, not the
           # bazel pack. That substitution IS this job.
           build-info: bazel-bin/tools/abicheck/math_abicheck_inputs
-          since: ${{ github.event.pull_request.base.sha }}
           depth: source
           format: json
           output-file: abicheck-l4-clang-plugin.json
