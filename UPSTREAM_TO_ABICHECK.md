@@ -1264,7 +1264,7 @@ removed `compare`'s `--format`, `--lang`, `--ast-frontend`/`--compiler` and
 `ABICHECK_AST_FRONTEND` for a per-run frontend pin), and `aggregate`'s
 `--format`.
 
-**Lab change.** `legacy_sha` moved `b299afdc` -> `966cd1f9fddf0112f4ced6df665bf1317f1c3880`
+**Lab change.** `legacy_sha` moved `b299afdc` -> `5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71`
 (abicheck `main` HEAD on 2026-09-29, i.e. past the removal). Converging onto
 `sha` (`42da2d2f`, 2026-08-24) was rejected: it predates the removal, so it
 would not put the lab on the supported surface, and `sha` also drives the
@@ -1447,7 +1447,7 @@ lab had to change, by upstream cause:
 | Upstream change | Lab migration |
 |---|---|
 | ADR-091 R1: `--version` → `--label` (dump/compare) | `ci/real_scan.py`, `ci/compare_build_outputs.py`, `scripts/run_scenario.py`, `canary.yml` |
-| ADR-091 Action renames: `ast-frontend` → `frontend`, `new-version` → `new-label`, `public-header-dir` → `public-header-dirs` (old names are tombstones that fail the step) | `abi-scan.yml`, `baseline.yml`, `canary.yml`; `scripts/check_recipe_parity.py` reads the new input names |
+| ADR-091 Action renames: `ast-frontend`/`frontend` → `set: compile.frontend=…`, `new-version` → `new-label`, `public-header-dir`/`public-header-dirs` → `header` (retired names fail the step) | `abi-scan.yml`, `baseline.yml`, `canary.yml`; `scripts/check_recipe_parity.py` reads the new input names |
 | `--format`/path-only `-o` retired; one `-o FORMAT=PATH` | every `ci/run_*_scenario.py`, `ci/validate_aggregate_fail_closed.py` |
 | `dump --ast-frontend` retired | `--set compile.frontend=clang` (`ci/run_depth_scenario.py`) |
 | `compare --require-complete-analysis` retired | `--set assurance.require_complete=true` |

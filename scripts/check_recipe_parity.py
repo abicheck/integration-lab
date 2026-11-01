@@ -80,10 +80,11 @@ CHECKED_WORKFLOWS = _discover_workflows()
 # this check's job is to catch a *local* workflow mistake, not to track
 # the Action's own input surface.
 _TYPED_INPUT_TO_FLAGS: dict[str, tuple[str, ...]] = {
-    "header": ("-H", "--header"),
+    # `--public-header-dir` was forwarded as -H; the Action retired
+    # `public-header-dirs` in favour of `header` (ADR-091).
+    "header": ("-H", "--header", "--public-header-dir"),
     "old-header": ("--old-header",),
     "new-header": ("--new-header",),
-    "public-header-dirs": ("--public-header-dir",),
     "build-target": ("--build-target",),
     "include": ("-I", "--include"),
     "old-include": ("--old-include",),
@@ -91,7 +92,6 @@ _TYPED_INPUT_TO_FLAGS: dict[str, tuple[str, ...]] = {
     "sources": ("--sources",),
     "build-info": ("--build-info",),
     "depth": ("--depth",),
-    "frontend": ("--ast-frontend",),
     "compiler": ("--compiler",),
     "policy": ("--policy",),
     "suppress": ("--suppress",),
@@ -228,9 +228,9 @@ def _baseline_public_header_dir(workflows: dict[Path, dict[str, Any]]) -> tuple[
                 and with_block.get("new-library") == "bazel-bin/libmath.so"
                 and with_block.get("depth") == "source"
             ):
-                value = with_block.get("public-header-dirs")
+                value = with_block.get("header")
                 if not isinstance(value, str) or not value.strip():
-                    errors.append(f"{label}: source-depth math baseline dump sets no public-header-dirs")
+                    errors.append(f"{label}: source-depth math baseline dump sets no header")
                 else:
                     found.add(value.strip())
     if len(found) > 1:
@@ -265,7 +265,7 @@ def check_header_root_parity(workflows: dict[Path, dict[str, Any]]) -> list[str]
             ):
                 continue
             gate_steps += 1
-            for forbidden in ("header", "public-header-dirs"):
+            for forbidden in ("header",):
                 if with_block.get(forbidden) not in (None, ""):
                     errors.append(
                         f"{label}: sets {forbidden!r} on a two-sided source-depth "

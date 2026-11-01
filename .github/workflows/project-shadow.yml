@@ -188,7 +188,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 1 \
+            --expected-generation 2 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
@@ -300,7 +300,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 1 \
+            --expected-generation 2 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \

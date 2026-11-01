@@ -422,7 +422,7 @@ jobs:
           old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          frontend: castxml
+          set: compile.frontend=castxml
           format: json
           output-file: abicheck-l2-castxml.json
           fail-on-breaking: false
@@ -456,7 +456,7 @@ jobs:
           old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           format: json
           output-file: abicheck-l2-clang.json
           fail-on-breaking: false
@@ -643,7 +643,7 @@ jobs:
           # --build-info into its inline replay dump; a pack dir fell back to
           # workspace-wide inference, 19 TUs). The pack is still built.
           build-info: ${{ steps.l4_replay_bazel_pack.outcome == 'success' && format('{0}/bazel-aquery-clang.json', runner.temp) || '' }}
-          frontend: clang
+          set: compile.frontend=clang
           depth: source
           budget: 10m
           format: json
@@ -867,7 +867,7 @@ jobs:
           old-library: ${{ runner.temp }}/strings.base.abicheck.json
           new-library: bazel-bin/strings_lib/libstrings.so
           new-header: strings_lib/include/abicheck_lab/strings.h
-          frontend: clang
+          set: compile.frontend=clang
           format: json
           output-file: abi-report-strings.json
           fail-on-breaking: false
@@ -968,7 +968,7 @@ jobs:
           old-library: ${{ runner.temp }}/math_shared.base.abicheck.json
           new-library: bazel-bin/libmath_shared.so
           new-header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           format: json
           output-file: abi-report-math-shared.json
           fail-on-breaking: false
@@ -1492,7 +1492,7 @@ jobs:
                 || format('{0}/math.base.abicheck.json', runner.temp) }}
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           used-by: >-
             ${{ steps.build_base_consumer.outputs.available == 'true'
                 && format('{0}/base-worktree/bazel-bin/consumer/consumer_app', runner.temp)
@@ -1654,7 +1654,7 @@ jobs:
           old-library: ${{ runner.temp }}/math.base.abicheck.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           format: json
           output-file: abicheck-toolchain-${{ matrix.id }}.json
           fail-on-breaking: false

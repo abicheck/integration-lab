@@ -358,7 +358,7 @@ jobs:
           old-library: ${{ runner.temp }}/canary-self-baseline.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           format: json
           output-file: canary-action-contract.json
           fail-on-breaking: true

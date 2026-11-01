@@ -159,7 +159,7 @@ jobs:
         with:
           mode: dump
           new-library: bazel-bin/libmath.so
-          public-header-dirs: include
+          header: include
           sources: .
           build-info: ${{ steps.bazel_pack.outputs.pack_dir }}
           depth: source
@@ -217,7 +217,7 @@ jobs:
           mode: dump
           new-library: bazel-bin/strings_lib/libstrings.so
           header: strings_lib/include/abicheck_lab/strings.h
-          frontend: clang
+          set: compile.frontend=clang
           new-label: main-${{ github.sha }}
           output-file: ${{ runner.temp }}/strings.raw.abicheck.json
           fail-on-breaking: true
@@ -240,7 +240,7 @@ jobs:
           mode: dump
           new-library: bazel-bin/libmath_shared.so
           header: include/abicheck_lab/math.h
-          frontend: clang
+          set: compile.frontend=clang
           new-label: main-${{ github.sha }}
           output-file: ${{ runner.temp }}/math_shared.raw.abicheck.json
           fail-on-breaking: true

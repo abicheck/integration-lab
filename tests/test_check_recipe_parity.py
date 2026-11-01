@@ -38,7 +38,7 @@ class TestCheckStep:
     def test_extra_args_shadowing_a_flag_the_typed_input_also_sets_is_rejected(self):
         with_block = {
             "mode": "scan",
-            "public-header-dirs": "include",
+            "header": "include",
             "extra-args": "--public-header-dir include",
         }
         errors = check_step("fake:step", with_block)
@@ -69,7 +69,7 @@ class TestCheckStep:
         assert check_step("fake:step", with_block) == []
 
     def test_no_extra_args_at_all_is_fine(self):
-        with_block = {"mode": "scan", "public-header-dirs": "include"}
+        with_block = {"mode": "scan", "header": "include"}
         assert check_step("fake:step", with_block) == []
 
     def test_a_github_actions_expression_in_extra_args_is_not_mis_tokenized(self):
@@ -122,7 +122,7 @@ class TestCheckWorkflow:
                             {
                                 "mode": "scan",
                                 "new-header": "include/abicheck_lab/math.h",
-                                "public-header-dirs": "include",
+                                "header": "include",
                             }
                         )
                     ]
@@ -181,7 +181,7 @@ class TestHeaderRootParity:
     def _baseline(self, public_dir="include"):
         return _workflow({"collect": {"steps": [_step({
             "mode": "dump", "new-library": "bazel-bin/libmath.so",
-            "public-header-dirs": public_dir, "depth": "source",
+            "header": public_dir, "depth": "source",
         })]}})
 
     def _gate(self, **with_extra):
@@ -212,7 +212,7 @@ class TestHeaderRootParity:
         })
         assert len(errors) == 1 and "new-header" in errors[0]
 
-    @pytest.mark.parametrize("forbidden", ["header", "public-header-dirs"])
+    @pytest.mark.parametrize("forbidden", ["header"])
     def test_both_sided_or_dump_only_header_inputs_are_rejected(self, forbidden):
         errors = check_header_root_parity({
             self.BASELINE: self._baseline(),
