@@ -788,13 +788,16 @@ scenarios:
     old_header: fixtures/remove_function/v1/lib.h
     new_header: fixtures/remove_function/v2/lib.h
     suppress: suppressions/remove_function_accepted.yaml
-    expected_suppressed_count: 1
+    # abicheck 966cd1f9 also suppresses the derived public_surface_shrank
+    # that the accepted removal causes, so the audit trail lists both.
+    expected_suppressed_count: 2
     # Codex review: count alone doesn't prove WHICH finding was
     # suppressed -- pin the actual symbol identity too.
     expected_suppressed_symbols:
+      - "<surface>"
       - _ZN8scenario16removed_functionEi
-    # Nothing should remain gating -- the ONE finding was the accepted
-    # removal itself, now fully suppressed.
+    # Nothing should remain gating -- the accepted removal and the surface
+    # shrink it derives are both suppressed.
     expected_gating_symbols: []
     expected_gap:
       upstream_issues:
@@ -822,24 +825,8 @@ scenarios:
             - "exported_not_public:__bss_start"
             - "exported_not_public:_edata"
             - "exported_not_public:_end"
-        cmake:
-          verdict: COMPATIBLE
-          findings:
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings: []
-        make:
-          verdict: COMPATIBLE
-          findings:
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings: []
+        # cmake/make: closed upstream (abicheck 966cd1f9 suppresses the
+        # derived public_surface_shrank too) -- the ordinary oracle applies.
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
