@@ -358,7 +358,7 @@ jobs:
           old-library: ${{ runner.temp }}/canary-self-baseline.json
           new-library: bazel-bin/libmath.so
           new-header: include/abicheck_lab/math.h
-          ast-frontend: clang
+          frontend: clang
           format: json
           output-file: canary-action-contract.json
           fail-on-breaking: true
@@ -525,7 +525,7 @@ jobs:
           library="$staged/$(python3 -c "import json; d=json.load(open('$staged/build-output.json')); print(d['targets']['math']['path'])")"
           header="$staged/headers/include/abicheck_lab/math.h"
           abicheck compare "$library" "$library" \
-            --version "old=self" --version "new=self" \
+            --label "old=self" --label "new=self" \
             --header "old=$header" --header "new=$header" \
             -o "json=canary-build-integration-${{ matrix.profile }}.json" \
             --policy strict_abi || true

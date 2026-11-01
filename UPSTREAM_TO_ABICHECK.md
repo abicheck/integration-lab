@@ -1264,7 +1264,7 @@ removed `compare`'s `--format`, `--lang`, `--ast-frontend`/`--compiler` and
 `ABICHECK_AST_FRONTEND` for a per-run frontend pin), and `aggregate`'s
 `--format`.
 
-**Lab change.** `legacy_sha` moved `b299afdc` -> `5ba6a5c84c07e504d4b1df8cbed0cf59abd5aa71`
+**Lab change.** `legacy_sha` moved `b299afdc` -> `966cd1f9fddf0112f4ced6df665bf1317f1c3880`
 (abicheck `main` HEAD on 2026-09-29, i.e. past the removal). Converging onto
 `sha` (`42da2d2f`, 2026-08-24) was rejected: it predates the removal, so it
 would not put the lab on the supported surface, and `sha` also drives the
@@ -1436,3 +1436,40 @@ Not affected: `mode: compare` has native sticky PR comments,
 `add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
 shape, so none of those needed a lab workaround.
 
+
+## 2026-11-01: pin bump to `966cd1f9` (ADR-091 option vocabulary, storage v2)
+
+Both pins (`sha` and `legacy_sha` in `ci/abicheck-version.yaml`) moved to
+abicheck `966cd1f9fddf0112f4ced6df665bf1317f1c3880` (main, 2026-11-01);
+`generation` moved 1 → 2 so accepted-main caches re-namespace. What the
+lab had to change, by upstream cause:
+
+| Upstream change | Lab migration |
+|---|---|
+| ADR-091 R1: `--version` → `--label` (dump/compare) | `ci/real_scan.py`, `ci/compare_build_outputs.py`, `scripts/run_scenario.py`, `canary.yml` |
+| ADR-091 Action renames: `ast-frontend` → `frontend`, `new-version` → `new-label`, `public-header-dir` → `public-header-dirs` (old names are tombstones that fail the step) | `abi-scan.yml`, `baseline.yml`, `canary.yml`; `scripts/check_recipe_parity.py` reads the new input names |
+| `--format`/path-only `-o` retired; one `-o FORMAT=PATH` | every `ci/run_*_scenario.py`, `ci/validate_aggregate_fail_closed.py` |
+| `dump --ast-frontend` retired | `--set compile.frontend=clang` (`ci/run_depth_scenario.py`) |
+| `compare --require-complete-analysis` retired | `--set assurance.require_complete=true` |
+| `compare --env-matrix FILE` retired | config `deployment:` block via `--config` (`ci/run_runtime_floor_scenario.py`) |
+| `aggregate --run-plan` retired | `aggregate --manifest <run-plan.json>` (shape-detected) |
+| `project validate-build DIR` retired | `project validate DIR` (shape-detected) |
+| Snapshots are storage v2 (`sections.<name>.payload`) | `snapshot_payload()` in `ci/run_depth_scenario.py`/`ci/real_scan.py`; `scripts/normalize_baseline.py` normalizes each payload |
+
+Behavior changes observed by real local runs and re-pinned:
+
+- `l2-green-l4-macro-break` headers stage: compare assurance is now
+  `complete` (public surface resolves from the dumped header), was
+  `partial` (scope fallback).
+- producer-compiler GCC leg: the `_Z11lab_consumei` → `_Z11lab_consumex`
+  overload pair is now one `func_params_changed` (breaking) instead of
+  `func_removed` + `func_added`.
+
+**Open upstream defect — snapshot cache ignores `.pyi` stubs.** Two dumps of
+byte-identical extension binaries with different sibling `_core.pyi` stubs
+share one snapshot-cache entry: the second dump is a cache hit that carries
+the *first* side's `python_api` (its `source_path` even names the other
+side's stub), so `pybind-keyword-renamed` reports `NO_CHANGE` instead of
+`API_BREAK`. The lab runs those scenarios with a fresh `XDG_CACHE_HOME` per
+invocation (`run_command(..., isolated_cache=True)`); the fix belongs in
+abicheck's dump cache key (`workflows/dump/cache/key.py`).

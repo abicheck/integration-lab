@@ -89,7 +89,7 @@ def test_rebuild_uses_the_source_commits_own_recipe(restore: dict) -> None:
     assert step["working-directory"] == "accepted-main-src"
     build = _named(restore, "Rebuild the accepted-main baseline-set")
     assert build["with"]["project-ref"] == "${{ needs.baseline-ref.outputs.sha }}"
-    assert build["with"]["baseline-generation"] == "1"
+    assert build["with"]["baseline-generation"] == "2"
     assert build["with"]["validation"] == "strict"
 
 

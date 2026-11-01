@@ -83,7 +83,7 @@ _TYPED_INPUT_TO_FLAGS: dict[str, tuple[str, ...]] = {
     "header": ("-H", "--header"),
     "old-header": ("--old-header",),
     "new-header": ("--new-header",),
-    "public-header-dir": ("--public-header-dir",),
+    "public-header-dirs": ("--public-header-dir",),
     "build-target": ("--build-target",),
     "include": ("-I", "--include"),
     "old-include": ("--old-include",),
@@ -91,7 +91,7 @@ _TYPED_INPUT_TO_FLAGS: dict[str, tuple[str, ...]] = {
     "sources": ("--sources",),
     "build-info": ("--build-info",),
     "depth": ("--depth",),
-    "ast-frontend": ("--ast-frontend",),
+    "frontend": ("--ast-frontend",),
     "compiler": ("--compiler",),
     "policy": ("--policy",),
     "suppress": ("--suppress",),
@@ -228,9 +228,9 @@ def _baseline_public_header_dir(workflows: dict[Path, dict[str, Any]]) -> tuple[
                 and with_block.get("new-library") == "bazel-bin/libmath.so"
                 and with_block.get("depth") == "source"
             ):
-                value = with_block.get("public-header-dir")
+                value = with_block.get("public-header-dirs")
                 if not isinstance(value, str) or not value.strip():
-                    errors.append(f"{label}: source-depth math baseline dump sets no public-header-dir")
+                    errors.append(f"{label}: source-depth math baseline dump sets no public-header-dirs")
                 else:
                     found.add(value.strip())
     if len(found) > 1:
@@ -265,7 +265,7 @@ def check_header_root_parity(workflows: dict[Path, dict[str, Any]]) -> list[str]
             ):
                 continue
             gate_steps += 1
-            for forbidden in ("header", "public-header-dir"):
+            for forbidden in ("header", "public-header-dirs"):
                 if with_block.get(forbidden) not in (None, ""):
                     errors.append(
                         f"{label}: sets {forbidden!r} on a two-sided source-depth "

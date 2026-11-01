@@ -389,6 +389,22 @@ def normalize_version(report):
 
 
 def normalize(report, repo_root_marker):
+    # Storage-v2 snapshots (`schema_version` + `sections`) split the former
+    # flat document into `sections.<name>.payload` blocks whose keys are the
+    # old root keys, so every root-relative path above applies unchanged
+    # inside each payload. Normalize each payload as if it were the root.
+    sections = report.get("sections") if isinstance(report, dict) else None
+    if isinstance(sections, dict):
+        normalized_sections = {}
+        for name, section in sections.items():
+            if isinstance(section, dict) and isinstance(section.get("payload"), dict):
+                section = {**section, "payload": _normalize_flat(section["payload"], repo_root_marker)}
+            normalized_sections[name] = section
+        return {**report, "sections": normalized_sections}
+    return _normalize_flat(report, repo_root_marker)
+
+
+def _normalize_flat(report, repo_root_marker):
     report = strip_volatile_paths(report)
     report = normalize_paths(report, repo_root_marker)
     report = normalize_timing_prose(report)

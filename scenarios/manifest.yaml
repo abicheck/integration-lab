@@ -263,8 +263,8 @@ producer_scenarios:
         cxx: clang++-18
         standard: c++17
     expect:
-      # GCC sees int -> long long: _Z11lab_consumei is removed and
-      # _Z11lab_consumex added, a real L0 break with no headers needed.
+      # GCC sees int -> long long: _Z11lab_consumei becomes
+      # _Z11lab_consumex, a real L0 break with no headers needed.
       affected_profiles:
         - linux-x86_64-gcc14-cxx17-cmake-ninja
       # Clang sees `long` on both sides: _Z11lab_consumel is unchanged.
@@ -281,10 +281,13 @@ producer_scenarios:
           # 32954335596 (job 98132563801, commit 475c6ef) actually wrote --
           # not from a local approximation. A reclassification that kept the
           # BREAKING verdict but downgraded either breaking finding now fails.
+          #
+          # abicheck 966cd1f9 pairs the removed/added mangled overload into
+          # one func_params_changed finding (keyed on the old symbol) instead
+          # of a func_removed + func_added pair; still breaking.
           findings:
             - {kind: typedef_base_changed, symbol: client_word, severity: breaking}
-            - {kind: func_removed, symbol: _Z11lab_consumei, severity: breaking}
-            - {kind: func_added, symbol: _Z11lab_consumex, severity: compatible}
+            - {kind: func_params_changed, symbol: _Z11lab_consumei, severity: breaking}
         linux-x86_64-clang18-cxx17-cmake-ninja:
           verdict: NO_CHANGE
           findings: []
@@ -637,13 +640,14 @@ depth_scenarios:
         # Dump-side. This is the half that detects a depth fallback.
         effective_depth: headers
         findings: []
-        # Compare-side. `status: partial` is honest, not a concession: for
-        # this fixture --scope-public-headers cannot resolve a public
-        # surface and falls back to the full export table. That channel is
-        # orthogonal to depth, and pinning the real value here means a
-        # change in it fails the scenario instead of being absorbed.
+        # Compare-side. Under the pre-966cd1f9 pins public-header scoping
+        # could not resolve this fixture's surface and fell back to the full
+        # export table (`status: partial`). Current abicheck resolves the
+        # surface from the dumped header (header/DWARF/L0 contexts all
+        # `clean`), so the honest value is `complete`. Pinning the real
+        # value means a change in it still fails the scenario.
         compare_assurance:
-          status: partial
+          status: complete
           fact_set_comparability: not_applicable
           l3_context_status: not_evaluated
       source:

@@ -153,7 +153,7 @@ def compare_case(case: Dict[str, Any], fixture: Path, output: Path, cc: str) -> 
     report_path = output / f"{case_id}-report.json"
     run_command(
         ["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-         "--format", "json", "-o", str(report_path)],
+         "-o", f"json={report_path}"],
         verdict_report=report_path,
     )
     report = json.loads(report_path.read_text(encoding="utf-8"))

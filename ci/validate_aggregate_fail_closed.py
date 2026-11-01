@@ -28,8 +28,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as reports_dir:
         output = Path(reports_dir) / "aggregate.json"
         result = subprocess.run([
-            "abicheck", "aggregate", reports_dir, "--run-plan", str(args.run_plan),
-            "--format", "json", "--output", str(output),
+            "abicheck", "aggregate", reports_dir, "--manifest", str(args.run_plan),
+            "-o", f"json={output}",
         ])
         if not output.is_file():
             print("ERROR: aggregate did not write its result")

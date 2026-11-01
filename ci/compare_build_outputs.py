@@ -322,9 +322,9 @@ def _try_abicheck_compare(
             "compare",
             str(library_a),
             str(library_b),
-            "--version",
+            "--label",
             "old=profile-a",
-            "--version",
+            "--label",
             "new=profile-b",
             # `--lang c++` (now config `compile.lang`, default c++) and
             # `--format json` were removed upstream; `-o FORMAT=PATH` is the

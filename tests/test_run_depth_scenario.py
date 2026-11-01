@@ -84,21 +84,24 @@ def test_partial_assurance_fails_the_source_stage_with_its_notes():
     assert any("two TUs unaccounted" in error for error in errors)
 
 
-def test_headers_stage_tolerates_its_orthogonal_partial_assurance():
-    """`partial` there comes from public-surface scoping, not from depth."""
+def test_headers_stage_accepts_the_assurance_current_abicheck_reports():
+    """Current abicheck resolves this fixture's public surface: `complete`."""
     expected = _expected()["headers"]
     report = {
         "verdict": "NO_CHANGE",
         "changes": [],
         "operational_errors": [],
         "analysis_assurance": {
-            "status": "partial",
+            "status": "complete",
             "fact_set_comparability": "not_applicable",
             "l3_context_status": "not_evaluated",
-            "notes": ["scope_resolved is False"],
+            "notes": [],
         },
     }
     assert _assert_report(report, expected) == []
+    # The old scope-fallback value is now a change and must fail.
+    report["analysis_assurance"]["status"] = "partial"
+    assert _assert_report(report, expected) != []
 
 
 def test_headers_stage_still_fails_if_that_channel_changes():
@@ -145,11 +148,14 @@ def test_source_stage_demands_complete_assurance():
 
 
 def test_source_compare_requests_complete_analysis():
-    """--require-complete-analysis must be on the source-depth compare."""
+    """The complete-analysis floor must be on the source-depth compare.
+
+    Upstream retired `--require-complete-analysis` (ADR-091); the floor is
+    now the config key `assurance.require_complete`, set via `--set`."""
     import inspect
 
     source = inspect.getsource(run_depth_scenario.run)
-    assert "--require-complete-analysis" in source
+    assert "assurance.require_complete=true" in source
     assert 'if depth == "source"' in source
 
 
@@ -160,3 +166,19 @@ def test_dump_side_gates_both_requested_and_effective_depth():
     source = inspect.getsource(run_depth_scenario.run)
     assert 'provenance.get("requested_depth") != depth' in source
     assert 'provenance.get("effective_depth") != expected_effective' in source
+
+
+def test_snapshot_payload_reads_storage_v2_sections():
+    """Current abicheck nests the former root keys under sections.*.payload."""
+    sectioned = {
+        "schema_version": 2,
+        "sections": {
+            "provenance": {"payload": {"dump_provenance": {"effective_depth": "source"}}},
+            "binary": {"payload": {"elf": {}}},
+        },
+    }
+    view = run_depth_scenario.snapshot_payload(sectioned)
+    assert view["dump_provenance"] == {"effective_depth": "source"}
+    assert "elf" in view
+    flat = {"dump_provenance": {"effective_depth": "headers"}}
+    assert run_depth_scenario.snapshot_payload(flat) is flat

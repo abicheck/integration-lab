@@ -151,6 +151,25 @@ class RealScanError(RuntimeError):
     pass
 
 
+
+def snapshot_payload(document: dict) -> dict:
+    """Flatten a storage-v2 snapshot's `sections.*.payload` into one view.
+
+    Current abicheck writes snapshots as `{schema_version, sections:
+    {<name>: {payload: {...}}}}`; each payload holds what used to be the
+    document root's keys (e.g. `dump_provenance` lives in
+    `sections.provenance.payload`). A flat legacy snapshot is returned as-is.
+    """
+    sections = document.get("sections") if isinstance(document, dict) else None
+    if not isinstance(sections, dict):
+        return document if isinstance(document, dict) else {}
+    merged: dict = {}
+    for section in sections.values():
+        payload = section.get("payload") if isinstance(section, dict) else None
+        if isinstance(payload, dict):
+            merged.update(payload)
+    return merged
+
 def target_source_suffix(target: str) -> str:
     suffix = TARGET_SOURCE_FILE.get(target)
     if suffix is None:
@@ -241,7 +260,7 @@ def dump_real_snapshot(
         "--build-info", str(compile_db),
         "--sources", str(sources_root),
         "--depth", "source",
-        "--version", version,
+        "--label", version,
         "-o", str(out_path),
     ]
     proc = _run(cmd)
@@ -280,7 +299,7 @@ def dump_real_snapshot(
     # evidence depth: ..." stdout banner -- the banner is prose meant for
     # a terminal, not a stable machine-readable contract (CodeRabbit
     # review, PR #25).
-    dump_provenance = snapshot.get("dump_provenance")
+    dump_provenance = snapshot_payload(snapshot).get("dump_provenance")
     resolved_depth = dump_provenance.get("effective_depth") if isinstance(dump_provenance, dict) else None
     if resolved_depth != "source":
         raise RealScanError(
