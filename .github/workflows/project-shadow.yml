@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  ABICHECK_REF: 966cd1f9fddf0112f4ced6df665bf1317f1c3880
+  ABICHECK_REF: d58ab551f5c167dd5664180ae9bd42f73f100ca4
 
 jobs:
   baseline-ref:
@@ -325,7 +325,7 @@ jobs:
   project:
     needs: [build, restore-baseline, baseline-ref]
     if: needs.baseline-ref.outputs.native_ready == 'true'
-    uses: abicheck/abicheck/.github/workflows/check-project.yml@966cd1f9fddf0112f4ced6df665bf1317f1c3880
+    uses: abicheck/abicheck/.github/workflows/check-project.yml@d58ab551f5c167dd5664180ae9bd42f73f100ca4
     with:
       config-path: .abicheck.yml
       toolchain-bindings-path: ci/toolchain-bindings.yml
@@ -347,6 +347,6 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Assert complete native run plan
         run: python3 ci/validate_run_plan.py --config .abicheck.yml --run-plan native-plan/run-plan.json
-      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - name: Prove aggregate fails on missing required reports
         run: python3 ci/validate_aggregate_fail_closed.py --run-plan native-plan/run-plan.json

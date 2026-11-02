@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Prove cross-DSO provider signature break
         # Explicit compiler, not the runner default: capabilities.yaml
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Prove L2 green and L4 macro break
         run: python3 ci/run_depth_scenario.py --cxx g++-14
@@ -59,7 +59,7 @@ jobs:
       # fails closed on a missing one rather than skipping it, because an
       # attribution aggregate computed from one producer proves nothing.
       - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14 clang-18
-      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - name: Prove producer-compiler attribution
         run: python3 ci/run_producer_compiler_scenario.py
       - if: always()
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Prove emitted loader/runtime feature drift is detected
         # The emitted feature set depends on the producer, so pinning the
@@ -96,7 +96,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pybind11 scikit-build-core pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pybind11 scikit-build-core pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       # Builds both wheels itself, from the same package with different
       # stubs, so the two sides differ only in what this scenario changes.
       - name: Compare the actual built wheels
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - run: sudo apt-get update -y && sudo apt-get install -y gcc-14 g++-14
       - name: Verify deterministic LABRT runtime-floor matrix
         run: python3 ci/run_runtime_floor_scenario.py --cc gcc-14
@@ -131,7 +131,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           persist-credentials: false
-      - run: pip install --quiet pybind11 pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+      - run: pip install --quiet pybind11 pyyaml "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
       - name: Build scikit-build-core wheel
         run: python -m pip wheel --no-deps bindings/python -w python-extension-results/wheels
       - name: Prove stub-only pybind11 API break

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  ABICHECK_REF: 966cd1f9fddf0112f4ced6df665bf1317f1c3880
+  ABICHECK_REF: d58ab551f5c167dd5664180ae9bd42f73f100ca4
 
 jobs:
   build:
@@ -47,7 +47,7 @@ jobs:
 
   publish:
     needs: build
-    uses: abicheck/abicheck/.github/workflows/update-main-baseline.yml@966cd1f9fddf0112f4ced6df665bf1317f1c3880
+    uses: abicheck/abicheck/.github/workflows/update-main-baseline.yml@d58ab551f5c167dd5664180ae9bd42f73f100ca4
     with:
       build-output-artifact-prefix: abicheck-build-
       key-prefix: integration-lab-main

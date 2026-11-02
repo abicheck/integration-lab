@@ -1473,3 +1473,12 @@ side's stub), so `pybind-keyword-renamed` reports `NO_CHANGE` instead of
 `API_BREAK`. The lab runs those scenarios with a fresh `XDG_CACHE_HOME` per
 invocation (`run_command(..., isolated_cache=True)`); the fix belongs in
 abicheck's dump cache key (`workflows/dump/cache/key.py`).
+
+**Follow-up (2026-11-02): pin moved again to `d58ab551`** (abicheck#1898
+merge). At `966cd1f9` the reusable `check-project.yml` itself still ran
+`abicheck project plan ... -o run-plan.json` (path-only `-o`, retired by the
+same commit's CLI), so `project / Generate run-plan` exited 64 for every
+caller. #1898 fixed that line and added
+`tests/test_workflow_cli_invocations.py`, which parses every shipped
+workflow/action `abicheck` line against the CLI. `d58ab551` is `966cd1f9`
+plus that one fix, so `generation` stays 2.

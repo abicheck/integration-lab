@@ -86,7 +86,7 @@ jobs:
 
       - name: Install abicheck
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
 
       # abicheck's own snapshot cache (snapshot_cache.py) is keyed on
       # binary content + header content + relevant flags, and lives under
@@ -136,7 +136,7 @@ jobs:
             "abicheck_dump_warm_ms": ${{ steps.warm_dump.outputs.ms || 'null' }},
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
-            "scanner_sha": "966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+            "scanner_sha": "d58ab551f5c167dd5664180ae9bd42f73f100ca4"
           }
           JSON
           python3 scripts/render_performance_summary.py \
@@ -184,7 +184,7 @@ jobs:
 
       - name: Install abicheck (pinned, same commit the `benchmark` job above uses)
         id: install_abicheck
-        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@966cd1f9fddf0112f4ced6df665bf1317f1c3880"
+        run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
 
       # One cold build + one cold `abicheck dump` per profile, timed the
       # same way the `benchmark` job's own cold Bazel build/dump steps
@@ -260,7 +260,7 @@ jobs:
           {
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
-            "scanner_sha": "966cd1f9fddf0112f4ced6df665bf1317f1c3880",
+            "scanner_sha": "d58ab551f5c167dd5664180ae9bd42f73f100ca4",
             "profiles": [
               {
                 "profile_id": "linux-x86_64-gcc14-cxx17-cmake-ninja",
