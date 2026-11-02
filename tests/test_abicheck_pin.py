@@ -261,7 +261,7 @@ def test_a_tampered_fetch_sha_is_visible_even_beside_a_valid_pin() -> None:
     clean while this ref went unread."""
     workflow = (WORKFLOW_DIR / "abi-scan.yml").read_text(encoding="utf-8")
     tampered = workflow.replace(
-        "git fetch --depth 1 origin d58ab551f5c167dd5664180ae9bd42f73f100ca4",
+        "git fetch --depth 1 origin 99839901d702137d2954ed18ba25f8ef468ba9ed",
         "git fetch --depth 1 origin " + "dead" * 10,
     )
     assert tampered != workflow, "the fetch line this test targets has moved"

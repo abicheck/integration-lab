@@ -1482,3 +1482,11 @@ caller. #1898 fixed that line and added
 `tests/test_workflow_cli_invocations.py`, which parses every shipped
 workflow/action `abicheck` line against the CLI. `d58ab551` is `966cd1f9`
 plus that one fix, so `generation` stays 2.
+
+**Follow-up (2026-11-02): pin moved to `99839901`** (abicheck#1893). At
+`d58ab551` every bundle cell (`project / sdk@…#accepted-main@binary`) failed
+`SCOPE_INCOMPLETE`: `actions/baseline` stores bundle binaries as
+`binaries/<member>` (`core`) while `check-project.yml` staged candidates by
+basename (`libcore.so`), and `compare DIR DIR` pairs by file name, so no
+member paired. #1893 stages each member under its target id. Fact
+extraction is unchanged, so `generation` stays 2.

@@ -420,7 +420,7 @@ abicheck-build-<profile-id>/
 # `abicheck scan` no longer exists upstream (ADR-068); this is its
 # replacement, the same shape the required gate runs:
 bazel build //:math
-pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@d58ab551f5c167dd5664180ae9bd42f73f100ca4"
+pip install "abicheck @ git+https://github.com/abicheck/abicheck.git@99839901d702137d2954ed18ba25f8ef468ba9ed"
 abicheck compare abi/math.abicheck.json bazel-bin/libmath.so \
   --header new=include --sources new=. --depth source -o json=abicheck-report.json
 

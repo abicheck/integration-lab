@@ -23,7 +23,7 @@ repository: abicheck/abicheck
 
 # Scanner used by the native project path (.abicheck.yml, project-shadow.yml,
 # project-baseline.yml, depth-scenarios.yml).
-sha: d58ab551f5c167dd5664180ae9bd42f73f100ca4
+sha: 99839901d702137d2954ed18ba25f8ef468ba9ed
 
 # 2026-11-01: moved 42da2d2f -> 966cd1f9 together with legacy_sha (see
 # UPSTREAM_TO_ABICHECK.md "2026-11-01: pin bump"); generation 1 -> 2.
@@ -66,7 +66,7 @@ generation: 2
 # 2026-11-01 bump (5ba6a5c8 -> 966cd1f9): both pins now name the same SHA;
 # see UPSTREAM_TO_ABICHECK.md "2026-11-01: pin bump" for the ADR-091 CLI
 # and Action migrations this required.
-legacy_sha: d58ab551f5c167dd5664180ae9bd42f73f100ca4
+legacy_sha: 99839901d702137d2954ed18ba25f8ef468ba9ed
 
 # Next candidate for canary certification.  Not installed by anything.
 candidate_sha: f7b4fdcc7dafd73ea483b4522a3f63df3a74653f
