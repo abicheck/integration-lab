@@ -132,3 +132,23 @@ def test_normalize_rewrites_reachable_source_surface_and_source_graph():
     # The documented, still-open gap: dict keys are untouched.
     mappings = normalized["build_source"]["source_abi"]["mappings"]["public_header_to_target"]
     assert "/home/user/integration-lab/include/x.h" in mappings
+
+
+def test_normalize_applies_root_paths_inside_each_storage_v2_payload():
+    """A sectioned snapshot is normalized payload by payload, as if each were the root."""
+    from normalize_baseline import normalize
+
+    raw = {
+        "schema_version": 2,
+        "sections": {
+            "provenance": {"section_kind": "provenance", "payload": {
+                "created_at": "2026-11-01T00:00:00Z", "git_commit": "abc", "version": "main-deadbeef",
+            }},
+            "binary": {"section_kind": "binary", "payload": {"source_mtime": 1, "build_id": "x", "elf": {}}},
+        },
+    }
+    out = normalize(raw, "integration-lab")
+    assert out["schema_version"] == 2
+    assert out["sections"]["provenance"]["payload"] == {"version": "main"}
+    assert out["sections"]["binary"]["payload"] == {"elf": {}}
+    assert out["sections"]["binary"]["section_kind"] == "binary"

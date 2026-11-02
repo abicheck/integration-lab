@@ -343,6 +343,27 @@ _PROVENANCE_GATED_LAYERS = frozenset({
 })
 
 
+
+def flatten_sectioned_snapshot(document):
+    """View a storage-v2 snapshot (`sections.<name>.payload`) as a flat one.
+
+    Current abicheck writes `dump` snapshots as `{schema_version, sections}`;
+    each payload holds what used to be root keys (`build_source` lives in
+    `sections.build.payload`, `dump_provenance` in `sections.provenance.
+    payload`). Root keys win on a clash, so compare reports and flat legacy
+    snapshots pass through unchanged.
+    """
+    sections = document.get("sections") if isinstance(document, dict) else None
+    if not isinstance(sections, dict):
+        return document
+    merged = {}
+    for section in sections.values():
+        payload = section.get("payload") if isinstance(section, dict) else None
+        if isinstance(payload, dict):
+            merged.update(payload)
+    merged.update({k: v for k, v in document.items() if k != "sections"})
+    return merged
+
 def _coverage_by_layer(report):
     # Two real, verified shapes: a `scan`-mode report has `coverage` as a
     # top-level list (`ScanOutcome.to_dict()`); a `dump`-mode snapshot (the
@@ -816,6 +837,7 @@ def main():
             json.dump(result, fh, indent=2)
         return 1
 
+    report = flatten_sectioned_snapshot(report)
     result = evaluate(
         report,
         requested_depth=args.requested_depth,

@@ -188,9 +188,9 @@ def run_abicheck_compare(
     if suppress is not None:
         cmd += ["--suppress", str(suppress)]
     cmd += [
-        "--version",
+        "--label",
         "old=old",
-        "--version",
+        "--label",
         "new=new",
         # `--lang c++` is gone upstream (config `compile.lang`, whose default
         # is already c++); `--format json -o PATH` became `-o json=PATH`.

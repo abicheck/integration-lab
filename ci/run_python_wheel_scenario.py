@@ -556,9 +556,9 @@ def run(manifest: Path, output: Path) -> List[str]:
             new = wheels[case.get("new", "new")]
         report_path = output / f"{case_id}-report.json"
         run_command(
-            ["abicheck", "compare", str(old), str(new), "--format", "json",
-             "-o", str(report_path)],
+            ["abicheck", "compare", str(old), str(new), "-o", f"json={report_path}"],
             verdict_report=report_path,
+            isolated_cache=True,
         )
         report = json.loads(report_path.read_text(encoding="utf-8"))
         case_errors = assert_report(report, case["expect"])

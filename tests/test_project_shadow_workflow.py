@@ -57,7 +57,7 @@ def test_prefix_restore_is_allowed_only_as_transport(restore: dict) -> None:
     step = _named(restore, "Restore accepted-main baseline")
     assert "restore-keys" in step["with"]
     receipt = _named(restore, "Require a receipted, identity-matched baseline")
-    assert "--expected-generation 1" in receipt["run"]
+    assert "--expected-generation 2" in receipt["run"]
     assert '--selected "$SOURCE_COMMIT"' in receipt["run"]
     assert '--profile "$PROFILE"' in receipt["run"]
     # No --no-fail on the second pass: this one is the gate.
@@ -89,7 +89,7 @@ def test_rebuild_uses_the_source_commits_own_recipe(restore: dict) -> None:
     assert step["working-directory"] == "accepted-main-src"
     build = _named(restore, "Rebuild the accepted-main baseline-set")
     assert build["with"]["project-ref"] == "${{ needs.baseline-ref.outputs.sha }}"
-    assert build["with"]["baseline-generation"] == "1"
+    assert build["with"]["baseline-generation"] == "2"
     assert build["with"]["validation"] == "strict"
 
 

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  ABICHECK_REF: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+  ABICHECK_REF: 99839901d702137d2954ed18ba25f8ef468ba9ed
 
 jobs:
   build:
@@ -34,7 +34,7 @@ jobs:
         run: |
           abicheck project validate .abicheck.yml --toolchain-bindings ci/toolchain-bindings.yml
           python3 ci/run_profile.py --profile-id "$PROFILE"
-          abicheck project validate-build "abicheck-build-$PROFILE"
+          abicheck project validate "abicheck-build-$PROFILE"
           python3 ci/validate_project_foundation.py \
             --config .abicheck.yml --profiles ci/profiles.yaml \
             --build-root "abicheck-build-$PROFILE"
@@ -47,11 +47,11 @@ jobs:
 
   publish:
     needs: build
-    uses: abicheck/abicheck/.github/workflows/update-main-baseline.yml@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+    uses: abicheck/abicheck/.github/workflows/update-main-baseline.yml@99839901d702137d2954ed18ba25f8ef468ba9ed
     with:
       build-output-artifact-prefix: abicheck-build-
       key-prefix: integration-lab-main
       head-sha: ${{ github.sha }}
       depth: binary
-      baseline-generation: '1'
+      baseline-generation: '2'
       validation: strict

@@ -1436,3 +1436,57 @@ Not affected: `mode: compare` has native sticky PR comments,
 `add-job-summary`, `budget`, `since`, and `depth: source` on the two-sided
 shape, so none of those needed a lab workaround.
 
+
+## 2026-11-01: pin bump to `966cd1f9` (ADR-091 option vocabulary, storage v2)
+
+Both pins (`sha` and `legacy_sha` in `ci/abicheck-version.yaml`) moved to
+abicheck `966cd1f9fddf0112f4ced6df665bf1317f1c3880` (main, 2026-11-01);
+`generation` moved 1 → 2 so accepted-main caches re-namespace. What the
+lab had to change, by upstream cause:
+
+| Upstream change | Lab migration |
+|---|---|
+| ADR-091 R1: `--version` → `--label` (dump/compare) | `ci/real_scan.py`, `ci/compare_build_outputs.py`, `scripts/run_scenario.py`, `canary.yml` |
+| ADR-091 Action renames: `ast-frontend`/`frontend` → `set: compile.frontend=…`, `new-version` → `new-label`, `public-header-dir`/`public-header-dirs` → `header` (retired names fail the step) | `abi-scan.yml`, `baseline.yml`, `canary.yml`; `scripts/check_recipe_parity.py` reads the new input names |
+| `--format`/path-only `-o` retired; one `-o FORMAT=PATH` | every `ci/run_*_scenario.py`, `ci/validate_aggregate_fail_closed.py` |
+| `dump --ast-frontend` retired | `--set compile.frontend=clang` (`ci/run_depth_scenario.py`) |
+| `compare --require-complete-analysis` retired | `--set assurance.require_complete=true` |
+| `compare --env-matrix FILE` retired | config `deployment:` block via `--config` (`ci/run_runtime_floor_scenario.py`) |
+| `aggregate --run-plan` retired | `aggregate --manifest <run-plan.json>` (shape-detected) |
+| `project validate-build DIR` retired | `project validate DIR` (shape-detected) |
+| Snapshots are storage v2 (`sections.<name>.payload`) | `snapshot_payload()` in `ci/run_depth_scenario.py`/`ci/real_scan.py`; `scripts/normalize_baseline.py` normalizes each payload |
+
+Behavior changes observed by real local runs and re-pinned:
+
+- `l2-green-l4-macro-break` headers stage: compare assurance is now
+  `complete` (public surface resolves from the dumped header), was
+  `partial` (scope fallback).
+- producer-compiler GCC leg: the `_Z11lab_consumei` → `_Z11lab_consumex`
+  overload pair is now one `func_params_changed` (breaking) instead of
+  `func_removed` + `func_added`.
+
+**Open upstream defect — snapshot cache ignores `.pyi` stubs.** Two dumps of
+byte-identical extension binaries with different sibling `_core.pyi` stubs
+share one snapshot-cache entry: the second dump is a cache hit that carries
+the *first* side's `python_api` (its `source_path` even names the other
+side's stub), so `pybind-keyword-renamed` reports `NO_CHANGE` instead of
+`API_BREAK`. The lab runs those scenarios with a fresh `XDG_CACHE_HOME` per
+invocation (`run_command(..., isolated_cache=True)`); the fix belongs in
+abicheck's dump cache key (`workflows/dump/cache/key.py`).
+
+**Follow-up (2026-11-02): pin moved again to `d58ab551`** (abicheck#1898
+merge). At `966cd1f9` the reusable `check-project.yml` itself still ran
+`abicheck project plan ... -o run-plan.json` (path-only `-o`, retired by the
+same commit's CLI), so `project / Generate run-plan` exited 64 for every
+caller. #1898 fixed that line and added
+`tests/test_workflow_cli_invocations.py`, which parses every shipped
+workflow/action `abicheck` line against the CLI. `d58ab551` is `966cd1f9`
+plus that one fix, so `generation` stays 2.
+
+**Follow-up (2026-11-02): pin moved to `99839901`** (abicheck#1893). At
+`d58ab551` every bundle cell (`project / sdk@…#accepted-main@binary`) failed
+`SCOPE_INCOMPLETE`: `actions/baseline` stores bundle binaries as
+`binaries/<member>` (`core`) while `check-project.yml` staged candidates by
+basename (`libcore.so`), and `compare DIR DIR` pairs by file name, so no
+member paired. #1893 stages each member under its target id. Fact
+extraction is unchanged, so `generation` stays 2.

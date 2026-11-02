@@ -11,6 +11,25 @@ import yaml
 from scenario_command import run_command
 
 
+
+def snapshot_payload(document: dict) -> dict:
+    """Flatten a storage-v2 snapshot's `sections.*.payload` into one view.
+
+    Current abicheck writes snapshots as `{schema_version, sections:
+    {<name>: {payload: {...}}}}`; each payload holds what used to be the
+    document root's keys (e.g. `dump_provenance` lives in
+    `sections.provenance.payload`). A flat legacy snapshot is returned as-is.
+    """
+    sections = document.get("sections") if isinstance(document, dict) else None
+    if not isinstance(sections, dict):
+        return document if isinstance(document, dict) else {}
+    merged: dict = {}
+    for section in sections.values():
+        payload = section.get("payload") if isinstance(section, dict) else None
+        if isinstance(payload, dict):
+            merged.update(payload)
+    return merged
+
 def _assert_report(report: dict, expected: dict) -> list[str]:
     """Assert the verdict, the findings, AND the assurance behind them.
 
@@ -101,12 +120,12 @@ def run(manifest: Path, scenario_id: str, output: Path, cxx: str) -> list[str]:
             snapshot = output / f"{side}-{depth}.json"
             command = ["abicheck", "dump", str(output / f"{side}.so"),
                        "--header", str(root / "api.h"), "--depth", depth,
-                       "--ast-frontend", "clang", "-o", str(snapshot)]
+                       "--set", "compile.frontend=clang", "-o", str(snapshot)]
             if depth == "source":
                 command += ["--sources", str(root), "--build-info",
                             str(output / f"{side}-compile_commands.json")]
             run_command(command)
-            provenance = json.loads(snapshot.read_text()).get("dump_provenance", {})
+            provenance = snapshot_payload(json.loads(snapshot.read_text())).get("dump_provenance", {})
             # Both halves: requested proves the scenario asked for the depth
             # it claims to test, effective proves the scanner delivered it.
             # An L4 run that silently degraded to L2 shows up here and
@@ -125,8 +144,8 @@ def run(manifest: Path, scenario_id: str, output: Path, cxx: str) -> list[str]:
             snapshots.append(snapshot)
         report_path = output / f"report-{depth}.json"
         compare_command = ["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-                           "--format", "json", "--policy", "strict_abi",
-                           "-o", str(report_path)]
+                           "--policy", "strict_abi",
+                           "-o", f"json={report_path}"]
         if depth == "source":
             # Asks the scanner itself to treat incomplete assurance as a
             # failure.  Note the exit contribution is folded with max, so a
@@ -134,7 +153,7 @@ def run(manifest: Path, scenario_id: str, output: Path, cxx: str) -> list[str]:
             # documents intent and catches the clean-verdict case, while
             # _assert_report()'s require_complete check is what actually
             # gates this scenario's API_BREAK stage.
-            compare_command.append("--require-complete-analysis")
+            compare_command += ["--set", "assurance.require_complete=true"]
         run_command(compare_command, verdict_report=report_path)
         report = json.loads(report_path.read_text())
         errors.extend(

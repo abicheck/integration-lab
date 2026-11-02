@@ -32,18 +32,7 @@
 # removes before comparing -- all-or-nothing, by exact (kind, symbol,
 # severity), only on the named build system. A report with only part of a set
 # fails; a declaration no compared report exhibits fails as closed.
-# Bazel's default link exports the linker-reserved __bss_start/_edata/_end and
-# abicheck 5ba6a5c8 reports them as exported_not_public (RISK) on every Bazel
-# fixture; cmake/make (bfd) do not export them. UPSTREAM_TO_ABICHECK.md,
-# "2026-09-29: scan retirement", gap 6.
-parity_known_divergences:
-  - id: linker-reserved-exported-not-public
-    upstream_issue: abicheck#linker-reserved-exported-not-public
-    build_system: bazel
-    findings:
-      - [exported_not_public, __bss_start, risk]
-      - [exported_not_public, _edata, risk]
-      - [exported_not_public, _end, risk]
+parity_known_divergences: []
 
 expected_gaps:
   # The producer-compiler scenario proves ABICheck's findings diverge by
@@ -219,24 +208,6 @@ expected_gaps:
   # (scripts/run_scenario.py): only this exact outcome is tolerated, and the
   # scenario FAILS again once upstream fixes it. Repro:
   # UPSTREAM_TO_ABICHECK.md, "2026-09-29: scan retirement", gap 5.
-  # abicheck 5ba6a5c8 reports the linker-reserved symbols
-  # __bss_start/_edata/_end as exported_not_public (RISK) when the linker
-  # exports them (Bazel's default gold link does; bfd does not). Its
-  # cross-check skips the shared elf_symbol_filter that already lists them
-  # (_ELF_LINKER_ARTIFACTS). Enforced per scenario/build system by the
-  # `expected_gap:` blocks on add_function and the two suppression scenarios.
-  - id: linker-reserved-exported-not-public
-    status: expected_gap
-    upstream_issue: abicheck#linker-reserved-exported-not-public
-    expected_failure:
-      phase: scenarios
-      reason: linker_reserved_bss_start_edata_end_reported_exported_not_public_risk
-  - id: suppression-derived-surface-findings-full
-    status: expected_gap
-    upstream_issue: abicheck#suppression-derived-surface-findings
-    expected_failure:
-      phase: scenarios
-      reason: symbol_suppression_leaves_derived_public_surface_shrank_verdict_COMPATIBLE_not_NO_CHANGE
   - id: suppression-derived-surface-findings-partial
     status: expected_gap
     upstream_issue: abicheck#suppression-derived-surface-findings
@@ -263,8 +234,8 @@ producer_scenarios:
         cxx: clang++-18
         standard: c++17
     expect:
-      # GCC sees int -> long long: _Z11lab_consumei is removed and
-      # _Z11lab_consumex added, a real L0 break with no headers needed.
+      # GCC sees int -> long long: _Z11lab_consumei becomes
+      # _Z11lab_consumex, a real L0 break with no headers needed.
       affected_profiles:
         - linux-x86_64-gcc14-cxx17-cmake-ninja
       # Clang sees `long` on both sides: _Z11lab_consumel is unchanged.
@@ -281,10 +252,13 @@ producer_scenarios:
           # 32954335596 (job 98132563801, commit 475c6ef) actually wrote --
           # not from a local approximation. A reclassification that kept the
           # BREAKING verdict but downgraded either breaking finding now fails.
+          #
+          # abicheck 966cd1f9 pairs the removed/added mangled overload into
+          # one func_params_changed finding (keyed on the old symbol) instead
+          # of a func_removed + func_added pair; still breaking.
           findings:
             - {kind: typedef_base_changed, symbol: client_word, severity: breaking}
-            - {kind: func_removed, symbol: _Z11lab_consumei, severity: breaking}
-            - {kind: func_added, symbol: _Z11lab_consumex, severity: compatible}
+            - {kind: func_params_changed, symbol: _Z11lab_consumei, severity: breaking}
         linux-x86_64-clang18-cxx17-cmake-ninja:
           verdict: NO_CHANGE
           findings: []
@@ -637,13 +611,14 @@ depth_scenarios:
         # Dump-side. This is the half that detects a depth fallback.
         effective_depth: headers
         findings: []
-        # Compare-side. `status: partial` is honest, not a concession: for
-        # this fixture --scope-public-headers cannot resolve a public
-        # surface and falls back to the full export table. That channel is
-        # orthogonal to depth, and pinning the real value here means a
-        # change in it fails the scenario instead of being absorbed.
+        # Compare-side. Under the pre-966cd1f9 pins public-header scoping
+        # could not resolve this fixture's surface and fell back to the full
+        # export table (`status: partial`). Current abicheck resolves the
+        # surface from the dumped header (header/DWARF/L0 contexts all
+        # `clean`), so the honest value is `complete`. Pinning the real
+        # value means a change in it still fails the scenario.
         compare_assurance:
-          status: partial
+          status: complete
           fact_set_comparability: not_applicable
           l3_context_status: not_evaluated
       source:
@@ -708,32 +683,6 @@ scenarios:
     old_output: bazel-bin/fixtures/add_function/v1/libimpl.so
     new_output: bazel-bin/fixtures/add_function/v2/libimpl.so
     new_header: fixtures/add_function/v2/lib.h
-    expected_gap:
-      upstream_issues:
-        - abicheck#linker-reserved-exported-not-public
-      reason: >
-        Bazel's gold-linked fixture exports __bss_start/_edata/_end; the new pin
-        reports them exported_not_public (RISK), so the purely additive change
-        reads COMPATIBLE_WITH_RISK. cmake/make (bfd) builds do not export them.
-      # Exact outcomes, per --build-system. Bazel's default (gold) link
-      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
-      observed:
-        bazel:
-          verdict: COMPATIBLE_WITH_RISK
-          findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
-            - "func_added:_ZN8scenario12new_functionEi"
-            - "public_surface_grew:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
     expected:
       castxml: COMPATIBLE
       clang: COMPATIBLE
@@ -784,58 +733,17 @@ scenarios:
     old_header: fixtures/remove_function/v1/lib.h
     new_header: fixtures/remove_function/v2/lib.h
     suppress: suppressions/remove_function_accepted.yaml
-    expected_suppressed_count: 1
+    # abicheck 966cd1f9 also suppresses the derived public_surface_shrank
+    # that the accepted removal causes, so the audit trail lists both.
+    expected_suppressed_count: 2
     # Codex review: count alone doesn't prove WHICH finding was
     # suppressed -- pin the actual symbol identity too.
     expected_suppressed_symbols:
+      - "<surface>"
       - _ZN8scenario16removed_functionEi
-    # Nothing should remain gating -- the ONE finding was the accepted
-    # removal itself, now fully suppressed.
+    # Nothing should remain gating -- the accepted removal and the surface
+    # shrink it derives are both suppressed.
     expected_gating_symbols: []
-    expected_gap:
-      upstream_issues:
-        - abicheck#suppression-derived-surface-findings
-        - abicheck#linker-reserved-exported-not-public
-      reason: >
-        the exact-symbol rule suppresses func_removed, but the derived
-        public_surface_shrank stays unsuppressed (COMPATIBLE, not NO_CHANGE);
-        on Bazel, linker-reserved exports are also reported exported_not_public.
-      # Exact outcomes, per --build-system. Bazel's default (gold) link
-      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
-      observed:
-        bazel:
-          verdict: COMPATIBLE
-          findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
-        cmake:
-          verdict: COMPATIBLE
-          findings:
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings: []
-        make:
-          verdict: COMPATIBLE
-          findings:
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: COMPATIBLE
-            drop_findings: []
     expected:
       castxml: NO_CHANGE
       clang: NO_CHANGE
@@ -882,53 +790,21 @@ scenarios:
     expected_gap:
       upstream_issues:
         - abicheck#suppression-derived-surface-findings
-        - abicheck#linker-reserved-exported-not-public
       reason: >
         legacy_metric's removal is suppressed, but the derived
-        public_surface_shrank remains an extra gating finding; on Bazel,
-        linker-reserved exports are also reported exported_not_public.
-      # Exact outcomes, per --build-system. Bazel's default (gold) link
-      # exports linker-reserved __bss_start/_edata/_end; cmake/make (bfd) do not.
+        public_surface_shrank remains an extra gating finding.
       observed:
-        bazel:
-          verdict: BREAKING
-          findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
-            - "func_added:_ZN8scenario12required_apiEl"
-            - "func_removed:_ZN8scenario12required_apiEi"
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: BREAKING
-            drop_findings:
-            - "exported_not_public:__bss_start"
-            - "exported_not_public:_edata"
-            - "exported_not_public:_end"
-        cmake:
+        bazel: &suppression_partial_gap
           verdict: BREAKING
           findings:
             - "func_added:_ZN8scenario12required_apiEl"
             - "func_removed:_ZN8scenario12required_apiEi"
             - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
           parity:
             verdict: BREAKING
             drop_findings: []
-        make:
-          verdict: BREAKING
-          findings:
-            - "func_added:_ZN8scenario12required_apiEl"
-            - "func_removed:_ZN8scenario12required_apiEi"
-            - "public_surface_shrank:<surface>"
-          # Build-system-neutral result for scenario_parity: this gap's
-          # outcome minus what is specific to this build system.
-          parity:
-            verdict: BREAKING
-            drop_findings: []
+        cmake: *suppression_partial_gap
+        make: *suppression_partial_gap
     expected:
       castxml: BREAKING
       clang: BREAKING

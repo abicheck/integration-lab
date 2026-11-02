@@ -342,7 +342,7 @@ def test_resolve_cli_keeps_a_source_change_exact(tmp_path: Path) -> None:
 # new pin and compared like for like. Rejecting here is cheap -- it falls
 # through to the rebuild path rather than turning the gate red.
 
-PIN = "42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+PIN = "99839901d702137d2954ed18ba25f8ef468ba9ed"
 OLD_PIN = "6fb85361cf4cea67a2f444bc097cfe24cd2d99c3"
 
 

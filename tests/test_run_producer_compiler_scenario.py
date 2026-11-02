@@ -204,11 +204,13 @@ def test_declaration_covers_every_producer_with_findings(declared: dict):
 
 
 def test_the_breaking_producer_declares_the_mangled_symbol_pair(declared: dict):
-    """The width change must be asserted through the symbols it produces."""
+    """The width change must be asserted through the symbol it changes.
+
+    abicheck pairs the int/long-long mangled overloads into one
+    func_params_changed finding keyed on the old symbol."""
     gcc = declared["expect"]["producers"][GCC]
-    symbols = {f["symbol"] for f in gcc["findings"]}
-    assert "_Z11lab_consumei" in symbols
-    assert "_Z11lab_consumex" in symbols
+    findings = {(f["kind"], f["symbol"]) for f in gcc["findings"]}
+    assert ("func_params_changed", "_Z11lab_consumei") in findings
 
 
 def test_project_path_attribution_is_declared_as_a_gap():
@@ -279,16 +281,17 @@ def test_half_declared_severities_are_a_declaration_error():
 
 
 def test_the_declared_severities_are_the_ones_ci_observed():
-    """Pins the transcription itself. These are the values CI run 32954335596
-    (job 98132563801) wrote into attribution.json -- not a local guess."""
+    """Pins the transcription itself. Originally CI run 32954335596 (job
+    98132563801); re-transcribed for abicheck 966cd1f9 from a real run of
+    ci/run_producer_compiler_scenario.py, which now reports the overload
+    pair as one func_params_changed finding."""
     doc = yaml.safe_load(
         (REPO_ROOT / "scenarios" / "manifest.yaml").read_text(encoding="utf-8")
     )
     producers = doc["producer_scenarios"][0]["expect"]["producers"]
     gcc = producers["linux-x86_64-gcc14-cxx17-cmake-ninja"]["findings"]
     assert {(f["kind"], f["symbol"], f["severity"]) for f in gcc} == {
-        ("func_added", "_Z11lab_consumex", "compatible"),
-        ("func_removed", "_Z11lab_consumei", "breaking"),
+        ("func_params_changed", "_Z11lab_consumei", "breaking"),
         ("typedef_base_changed", "client_word", "breaking"),
     }
     assert producers["linux-x86_64-clang18-cxx17-cmake-ninja"]["findings"] == []

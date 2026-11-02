@@ -45,7 +45,7 @@ def run(manifest: Path, output: Path, cc: str) -> list[str]:
               "-o", str(directory / "libmath.so")])
     report_path = output / "report.json"
     run_command(["abicheck", "compare", str(output / "old"), str(output / "new"),
-                 "--format", "json", "-o", str(report_path)], verdict_report=report_path)
+                 "-o", f"json={report_path}"], verdict_report=report_path)
     return _oracle(json.loads(report_path.read_text()), scenario["expect"])
 
 

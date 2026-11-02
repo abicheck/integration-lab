@@ -52,12 +52,12 @@ def run(manifest: Path, output: Path, cxx: str) -> list[str]:
         shutil.copy2(stubs / f"{side}.pyi", side_dir / "_core.pyi")
         hashes.append(hashlib.sha256(binary.read_bytes()).hexdigest())
         snapshot = output / f"{side}.json"
-        run_command(["abicheck", "dump", str(binary), "-o", str(snapshot)])
+        run_command(["abicheck", "dump", str(binary), "-o", str(snapshot)], isolated_cache=True)
         snapshots.append(snapshot)
     report_path = output / "report.json"
     run_command(["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-                 "--format", "json", "--policy", "strict_abi", "-o", str(report_path)],
-                verdict_report=report_path)
+                 "--policy", "strict_abi", "-o", f"json={report_path}"],
+                verdict_report=report_path, isolated_cache=True)
     return _oracle(json.loads(report_path.read_text()), scenario["expect"], hashes)
 
 

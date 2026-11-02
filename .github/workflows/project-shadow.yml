@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  ABICHECK_REF: 42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+  ABICHECK_REF: 99839901d702137d2954ed18ba25f8ef468ba9ed
 
 jobs:
   baseline-ref:
@@ -105,7 +105,7 @@ jobs:
       - name: Build and validate standardized output
         run: |
           python3 ci/run_profile.py --profile-id "$PROFILE"
-          abicheck project validate-build "abicheck-build-$PROFILE"
+          abicheck project validate "abicheck-build-$PROFILE"
           python3 ci/validate_project_foundation.py \
             --config .abicheck.yml \
             --profiles ci/profiles.yaml \
@@ -141,7 +141,7 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       REQUESTED_PR_BASE: ${{ needs.baseline-ref.outputs.requested_pr_base }}
       SOURCE_COMMIT: ${{ needs.baseline-ref.outputs.sha }}
-      PRIMARY_KEY: integration-lab-main-g1-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
+      PRIMARY_KEY: integration-lab-main-g2-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
@@ -159,7 +159,7 @@ jobs:
           # can never be accepted as the comparison baseline -- it is
           # rejected as wrong-project-ref, with both refs in the receipt.
           restore-keys: |
-            integration-lab-main-g1-${{ matrix.profile }}-
+            integration-lab-main-g2-${{ matrix.profile }}-
       - name: List available accepted-main cache keys
         continue-on-error: true
         env:
@@ -188,7 +188,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 1 \
+            --expected-generation 2 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
@@ -232,7 +232,7 @@ jobs:
           # The source commit's own recipe, not this PR's -- a baseline
           # built by the candidate's build scripts would not be a baseline.
           python3 ci/run_profile.py --profile-id "$PROFILE"
-          abicheck project validate-build "abicheck-build-$PROFILE"
+          abicheck project validate "abicheck-build-$PROFILE"
       - name: Check out abicheck at the reviewed pin
         if: steps.classify.outputs.usable != 'true'
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -278,7 +278,7 @@ jobs:
           project-ref: ${{ needs.baseline-ref.outputs.sha }}
           profile: ${{ matrix.profile }}
           depth: binary
-          baseline-generation: '1'
+          baseline-generation: '2'
           generator-git-sha: ${{ env.ABICHECK_REF }}
           validation: strict
           snapshot-compression: none
@@ -300,7 +300,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 1 \
+            --expected-generation 2 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
@@ -325,12 +325,12 @@ jobs:
   project:
     needs: [build, restore-baseline, baseline-ref]
     if: needs.baseline-ref.outputs.native_ready == 'true'
-    uses: abicheck/abicheck/.github/workflows/check-project.yml@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7
+    uses: abicheck/abicheck/.github/workflows/check-project.yml@99839901d702137d2954ed18ba25f8ef468ba9ed
     with:
       config-path: .abicheck.yml
       toolchain-bindings-path: ci/toolchain-bindings.yml
       expected-project-ref: ${{ needs.baseline-ref.outputs.sha }}
-      expected-baseline-generation: '1'
+      expected-baseline-generation: '2'
 
   plan-oracle:
     needs: project
@@ -347,6 +347,6 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Assert complete native run plan
         run: python3 ci/validate_run_plan.py --config .abicheck.yml --run-plan native-plan/run-plan.json
-      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@42da2d2f947d9eaa42e7d5f334bd2098bb5f08e7"
+      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@99839901d702137d2954ed18ba25f8ef468ba9ed"
       - name: Prove aggregate fails on missing required reports
         run: python3 ci/validate_aggregate_fail_closed.py --run-plan native-plan/run-plan.json

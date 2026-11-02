@@ -124,3 +124,21 @@ def test_missing_bazel_summary_fails_closed():
 @pytest.mark.parametrize("bad", [[], None, "x", 3])
 def test_non_object_report_fails_closed(bad):
     assert _eval(bad)["gate_status"] == "FAIL"
+
+
+def test_sectioned_dump_snapshot_exposes_build_source_coverage():
+    """A storage-v2 dump snapshot reads like its flat legacy shape."""
+    from check_coverage_contract import _coverage_by_layer, flatten_sectioned_snapshot
+
+    row = {"layer": "L4_source_abi", "status": "present", "detail": "1/1 TUs parsed"}
+    flat = {"build_source": {"manifest": {"coverage": [row]}}, "version": "main"}
+    sectioned = {
+        "schema_version": 2,
+        "sections": {
+            "build": {"payload": {"build_source": flat["build_source"]}},
+            "provenance": {"payload": {"version": "main"}},
+        },
+    }
+    assert _coverage_by_layer(flatten_sectioned_snapshot(sectioned)) == {"L4_source_abi": row}
+    assert flatten_sectioned_snapshot(flat) is flat
+    assert _coverage_by_layer(sectioned) == {}  # the bug: root-only lookup sees nothing

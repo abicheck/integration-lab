@@ -62,9 +62,14 @@ def run(manifest: Path, output: Path, cc: str) -> list[str]:
     for name, matrix in matrices.items():
         report_path = output / f"report-{name}.json"
         command = ["abicheck", "compare", str(snapshots[0]), str(snapshots[1]),
-                   "--format", "json", "--policy", "strict_abi", "-o", str(report_path)]
+                   "--policy", "strict_abi", "-o", f"json={report_path}"]
         if matrix:
-            command += ["--env-matrix", str(matrix)]
+            # Upstream retired `compare --env-matrix FILE` (ADR-091): the
+            # environment matrix is now the project config's `deployment:`
+            # block, so the side file is embedded there verbatim.
+            config = output / f"config-{name}.yml"
+            config.write_text(yaml.safe_dump({"deployment": yaml.safe_load(matrix.read_text())}))
+            command += ["--config", str(config)]
         run_command(command, verdict_report=report_path)
         errors.extend(f"{name}: {error}" for error in _oracle(
             json.loads(report_path.read_text()), scenario["expect"][name]))
