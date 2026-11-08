@@ -32,6 +32,7 @@ OUT_OF_SCOPE = {
     "profile-baseline.yml": "baseline maintenance, not validation",
     "project-baseline.yml": "baseline maintenance, not validation",
     "release.yml": "release-contract publication, not validation",
+    "abi-report-pr.yml": "publishes abi-scan.yml's fork-PR comment; runs no checks",
     # Measurement rather than correctness.
     "performance.yml": "perf trend measurement, not correctness",
     # Certifies a CANDIDATE scanner version on a schedule -- it answers "is

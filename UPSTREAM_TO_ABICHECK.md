@@ -1490,3 +1490,22 @@ plus that one fix, so `generation` stays 2.
 basename (`libcore.so`), and `compare DIR DIR` pairs by file name, so no
 member paired. #1893 stages each member under its target id. Fact
 extraction is unchanged, so `generation` stays 2.
+
+## 2026-11-08: pin bump to `6b3fc3f8` — fork-PR comments (abicheck#1945)
+
+Both pins move `99839901` → `6b3fc3f8`, baseline generation 2 → 3 (the range
+carries clang-layout and ADR-062 D19 storage fact changes, so every
+accepted-main cache key is re-namespaced `-g3-`).
+
+What the lab now exercises from abicheck#1945:
+
+- `abi-scan.yml`'s gate step sets `pr-comment-via: auto`. A same-repository
+  PR still posts the sticky comment directly; a fork's or Dependabot's
+  read-only run uploads `abicheck-pr-report` instead of hitting a 403.
+- `abi-report-pr.yml` is the trusted `workflow_run` publisher: one call to
+  upstream `report-pr.yml` with `expect-workflow: abi-scan.yml` and the
+  gate's `fail-on-breaking`/`fail-on-api-break` mirrored for rendering.
+  `tests/test_fork_pr_reporting.py` keeps producer and publisher in step.
+
+Not yet proven end to end: `workflow_run` only fires from the default
+branch, so the publisher's first real run is the first fork PR after merge.
