@@ -33,11 +33,25 @@ def test_gate_step_uses_auto_delivery() -> None:
 
 
 def test_only_the_gate_step_comments() -> None:
-    for job in _load("abi-scan.yml")["jobs"].values():
-        for step in job.get("steps", []):
-            via = (step.get("with") or {}).get("pr-comment-via")
-            if via is not None:
-                assert step.get("id") == "scan"
+    """Every abicheck Action step except the gate opts out explicitly.
+
+    The Action's `pr-comment` defaults to true, so a diagnostic leg that
+    omits the input overwrites the gate's sticky comment (it did: the L4
+    clang-plugin leg replaced the gate's verdict on PR #35).
+    """
+    for name in sorted(p.name for p in WF.glob("*.yml")):
+        for job in (_load(name).get("jobs") or {}).values():
+            for step in job.get("steps", []) or []:
+                uses = step.get("uses", "")
+                if not uses.startswith("abicheck/abicheck@"):
+                    continue
+                w = step.get("with") or {}
+                if w.get("mode") != "compare":
+                    continue  # the Action comments only in compare mode
+                if name == "abi-scan.yml" and step.get("id") == "scan":
+                    continue
+                assert w.get("pr-comment") is False, (name, step.get("name"))
+                assert "pr-comment-via" not in w, (name, step.get("name"))
 
 
 def test_publisher_triggers_on_the_producer_by_its_name() -> None:

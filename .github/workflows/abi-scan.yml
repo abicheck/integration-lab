@@ -1993,6 +1993,9 @@ jobs:
           output-file: abicheck-l4-clang-plugin.json
           fail-on-breaking: true
           fail-on-api-break: true
+          # The Action defaults pr-comment to true; without this the L4 leg
+          # overwrote the gate's sticky comment with its own verdict.
+          pr-comment: false
 
       # A plugin-shaped pack is not sufficient proof of an L4 check. Gate
       # successful report production on the report's own evidence so an
