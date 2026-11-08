@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  ABICHECK_REF: 99839901d702137d2954ed18ba25f8ef468ba9ed
+  ABICHECK_REF: 6b3fc3f834e41a2fa4fede2246d3bdab4dc6356e
 
 jobs:
   baseline-ref:
@@ -141,7 +141,7 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       REQUESTED_PR_BASE: ${{ needs.baseline-ref.outputs.requested_pr_base }}
       SOURCE_COMMIT: ${{ needs.baseline-ref.outputs.sha }}
-      PRIMARY_KEY: integration-lab-main-g2-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
+      PRIMARY_KEY: integration-lab-main-g3-${{ matrix.profile }}-${{ needs.baseline-ref.outputs.sha }}
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
@@ -159,7 +159,7 @@ jobs:
           # can never be accepted as the comparison baseline -- it is
           # rejected as wrong-project-ref, with both refs in the receipt.
           restore-keys: |
-            integration-lab-main-g2-${{ matrix.profile }}-
+            integration-lab-main-g3-${{ matrix.profile }}-
       - name: List available accepted-main cache keys
         continue-on-error: true
         env:
@@ -188,7 +188,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 2 \
+            --expected-generation 3 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
@@ -278,7 +278,7 @@ jobs:
           project-ref: ${{ needs.baseline-ref.outputs.sha }}
           profile: ${{ matrix.profile }}
           depth: binary
-          baseline-generation: '2'
+          baseline-generation: '3'
           generator-git-sha: ${{ env.ABICHECK_REF }}
           validation: strict
           snapshot-compression: none
@@ -300,7 +300,7 @@ jobs:
             --requested "$REQUESTED_PR_BASE" \
             --selected "$SOURCE_COMMIT" \
             --profile "$PROFILE" \
-            --expected-generation 2 \
+            --expected-generation 3 \
             --expected-generator "$ABICHECK_REF" \
             --primary-key "$PRIMARY_KEY" \
             --matched-key "$MATCHED_KEY" \
@@ -325,12 +325,12 @@ jobs:
   project:
     needs: [build, restore-baseline, baseline-ref]
     if: needs.baseline-ref.outputs.native_ready == 'true'
-    uses: abicheck/abicheck/.github/workflows/check-project.yml@99839901d702137d2954ed18ba25f8ef468ba9ed
+    uses: abicheck/abicheck/.github/workflows/check-project.yml@6b3fc3f834e41a2fa4fede2246d3bdab4dc6356e
     with:
       config-path: .abicheck.yml
       toolchain-bindings-path: ci/toolchain-bindings.yml
       expected-project-ref: ${{ needs.baseline-ref.outputs.sha }}
-      expected-baseline-generation: '2'
+      expected-baseline-generation: '3'
 
   plan-oracle:
     needs: project
@@ -347,6 +347,6 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Assert complete native run plan
         run: python3 ci/validate_run_plan.py --config .abicheck.yml --run-plan native-plan/run-plan.json
-      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@99839901d702137d2954ed18ba25f8ef468ba9ed"
+      - run: pip install --quiet "abicheck @ git+https://github.com/abicheck/abicheck.git@6b3fc3f834e41a2fa4fede2246d3bdab4dc6356e"
       - name: Prove aggregate fails on missing required reports
         run: python3 ci/validate_aggregate_fail_closed.py --run-plan native-plan/run-plan.json

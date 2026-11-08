@@ -1,0 +1,34 @@
+name: ABICheck PR report (fork publisher)
+
+# Trusted half of fork-PR reporting (abicheck#1945, upstream ADR-073).
+#
+# abi-scan.yml runs on `pull_request`; on a fork (or Dependabot) its token is
+# read-only, so the Action's `pr-comment-via: auto` uploads the report as the
+# `abicheck-pr-report` artifact instead of posting. This workflow runs in the
+# base repository's context after that run completes, verifies the producer
+# run and the analysed commit (actions/verify-source-run), and posts the same
+# sticky comment. It never checks out or executes contributor code.
+#
+# Same-repository PRs post directly from abi-scan.yml and upload nothing;
+# report-pr.yml then skips with `no-artifact` (require-artifact: false).
+#
+# `workflow_run` only fires for the copy of this file on the default branch,
+# so this takes effect after merge, not on the PR that adds it.
+on:
+  workflow_run:
+    workflows: ["ABICheck PR scan"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    uses: abicheck/abicheck/.github/workflows/report-pr.yml@6b3fc3f834e41a2fa4fede2246d3bdab4dc6356e
+    with:
+      expect-workflow: .github/workflows/abi-scan.yml
+      # Mirror abi-scan.yml's gate (fail-on-breaking + fail-on-api-break).
+      gate-breaking: true
+      gate-api-break: true
